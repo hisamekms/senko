@@ -158,6 +158,7 @@ pub struct UpdateTaskParams {
 pub struct ListTasksFilter {
     pub status: Option<TaskStatus>,
     pub tag: Option<String>,
+    pub depends_on: Option<i64>,
     pub ready: bool,
 }
 
@@ -166,6 +167,7 @@ impl Default for ListTasksFilter {
         Self {
             status: None,
             tag: None,
+            depends_on: None,
             ready: false,
         }
     }

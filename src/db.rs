@@ -280,6 +280,13 @@ pub fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Tas
         param_values.push(Box::new(tag.clone()));
     }
 
+    if let Some(dep_id) = filter.depends_on {
+        conditions.push(
+            "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ?)".to_string(),
+        );
+        param_values.push(Box::new(dep_id));
+    }
+
     if filter.ready {
         conditions.push("t.status = 'todo'".to_string());
         conditions.push(
@@ -618,6 +625,7 @@ mod tests {
             &ListTasksFilter {
                 status: Some(TaskStatus::Draft),
                 tag: None,
+                depends_on: None,
                 ready: false,
             },
         )
@@ -630,6 +638,7 @@ mod tests {
             &ListTasksFilter {
                 status: Some(TaskStatus::Todo),
                 tag: None,
+                depends_on: None,
                 ready: false,
             },
         )
@@ -657,6 +666,7 @@ mod tests {
             &ListTasksFilter {
                 status: None,
                 tag: Some("rust".to_string()),
+                depends_on: None,
                 ready: false,
             },
         )
@@ -748,6 +758,7 @@ mod tests {
             &ListTasksFilter {
                 status: None,
                 tag: None,
+                depends_on: None,
                 ready: true,
             },
         ).unwrap();
