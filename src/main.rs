@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 
 use anyhow::Result;
@@ -43,7 +44,11 @@ enum Command {
     /// Manage task dependencies
     Deps,
     /// Install a skill
-    SkillInstall,
+    SkillInstall {
+        /// Output directory for SKILL.md
+        #[arg(long)]
+        output_dir: Option<PathBuf>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -58,8 +63,18 @@ fn main() -> Result<()> {
         Command::Complete => todo!("complete"),
         Command::Cancel => todo!("cancel"),
         Command::Deps => todo!("deps"),
-        Command::SkillInstall => todo!("skill-install"),
+        Command::SkillInstall { output_dir } => skill_install(output_dir),
     }
+}
+
+const SKILL_MD_CONTENT: &str = include_str!("skill_md.txt");
+
+fn skill_install(output_dir: Option<PathBuf>) -> Result<()> {
+    let dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
+    let path = dir.join("SKILL.md");
+    fs::write(&path, SKILL_MD_CONTENT)?;
+    println!("SKILL.md written to {}", path.display());
+    Ok(())
 }
 
 #[cfg(test)]
@@ -119,7 +134,64 @@ mod tests {
     #[test]
     fn parse_skill_install_subcommand() {
         let cli = Cli::parse_from(["localflow", "skill-install"]);
-        assert!(matches!(cli.command, Command::SkillInstall));
+        assert!(matches!(cli.command, Command::SkillInstall { .. }));
+    }
+
+    #[test]
+    fn parse_skill_install_with_output_dir() {
+        let cli = Cli::parse_from(["localflow", "skill-install", "--output-dir", "/tmp/out"]);
+        match cli.command {
+            Command::SkillInstall { output_dir } => {
+                assert_eq!(output_dir, Some(PathBuf::from("/tmp/out")));
+            }
+            _ => panic!("expected SkillInstall"),
+        }
+    }
+
+    #[test]
+    fn parse_skill_install_without_output_dir() {
+        let cli = Cli::parse_from(["localflow", "skill-install"]);
+        match cli.command {
+            Command::SkillInstall { output_dir } => {
+                assert!(output_dir.is_none());
+            }
+            _ => panic!("expected SkillInstall"),
+        }
+    }
+
+    #[test]
+    fn skill_install_creates_file() {
+        let dir = std::env::temp_dir().join("localflow_test_skill_install");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        skill_install(Some(dir.clone())).unwrap();
+
+        let content = std::fs::read_to_string(dir.join("SKILL.md")).unwrap();
+        assert_eq!(content, SKILL_MD_CONTENT);
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn skill_md_covers_all_commands() {
+        let commands = [
+            "localflow add",
+            "localflow list",
+            "localflow get",
+            "localflow next",
+            "localflow edit",
+            "localflow complete",
+            "localflow cancel",
+            "localflow deps",
+            "localflow skill-install",
+        ];
+        for cmd in commands {
+            assert!(
+                SKILL_MD_CONTENT.contains(cmd),
+                "SKILL.md does not mention: {cmd}"
+            );
+        }
     }
 
     #[test]
