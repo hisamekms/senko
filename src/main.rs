@@ -1,11 +1,15 @@
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use localflow::db;
-use localflow::models::{ListTasksFilter, Priority, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams};
+use localflow::models::{
+    CreateTaskParams, ListTasksFilter, Priority, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
+};
 use localflow::project::resolve_project_root;
 
 #[derive(Debug, Clone, ValueEnum)]
@@ -32,7 +36,33 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Command {
     /// Add a new task
-    Add,
+    Add {
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        background: Option<String>,
+        #[arg(long)]
+        details: Option<String>,
+        /// Priority (p0-p3)
+        #[arg(long)]
+        priority: Option<String>,
+        #[arg(long)]
+        definition_of_done: Vec<String>,
+        #[arg(long)]
+        in_scope: Vec<String>,
+        #[arg(long)]
+        out_of_scope: Vec<String>,
+        #[arg(long)]
+        tag: Vec<String>,
+        #[arg(long)]
+        depends_on: Vec<i64>,
+        /// Read JSON from stdin
+        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on"])]
+        from_json: bool,
+        /// Read JSON from file
+        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "from_json"])]
+        from_json_file: Option<PathBuf>,
+    },
     /// List tasks
     List {
         /// Filter by status (draft, todo, in_progress, completed, canceled)
@@ -131,13 +161,45 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Add => todo!("add"),
+        Command::Add {
+            ref title,
+            ref background,
+            ref details,
+            ref priority,
+            ref definition_of_done,
+            ref in_scope,
+            ref out_of_scope,
+            ref tag,
+            ref depends_on,
+            from_json,
+            ref from_json_file,
+        } => cmd_add(
+            &cli,
+            title.clone(),
+            background.clone(),
+            details.clone(),
+            priority.clone(),
+            definition_of_done.clone(),
+            in_scope.clone(),
+            out_of_scope.clone(),
+            tag.clone(),
+            depends_on.clone(),
+            from_json,
+            from_json_file.clone(),
+        ),
         Command::List {
             status,
             tag,
             depends_on,
             ready,
-        } => cmd_list(&cli.output, cli.project_root.as_deref(), status, tag, depends_on, ready),
+        } => cmd_list(
+            &cli.output,
+            cli.project_root.as_deref(),
+            status,
+            tag,
+            depends_on,
+            ready,
+        ),
         Command::Get { task_id } => cmd_get(&cli.output, cli.project_root.as_deref(), task_id),
         Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()),
         Command::Edit {
@@ -234,6 +296,69 @@ fn main() -> Result<()> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn cmd_add(
+    cli: &Cli,
+    title: Option<String>,
+    background: Option<String>,
+    details: Option<String>,
+    priority: Option<String>,
+    definition_of_done: Vec<String>,
+    in_scope: Vec<String>,
+    out_of_scope: Vec<String>,
+    tag: Vec<String>,
+    depends_on: Vec<i64>,
+    from_json: bool,
+    from_json_file: Option<PathBuf>,
+) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let conn = db::open_db(&root)?;
+
+    let params = if from_json {
+        let mut buf = String::new();
+        std::io::stdin()
+            .read_to_string(&mut buf)
+            .context("failed to read from stdin")?;
+        serde_json::from_str::<CreateTaskParams>(&buf).context("invalid JSON from stdin")?
+    } else if let Some(path) = from_json_file {
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read file: {}", path.display()))?;
+        serde_json::from_str::<CreateTaskParams>(&content).context("invalid JSON in file")?
+    } else {
+        let Some(title) = title else {
+            bail!("--title is required when not using --from-json or --from-json-file");
+        };
+        let priority = match priority {
+            Some(s) => Some(s.parse::<Priority>()?),
+            None => None,
+        };
+        CreateTaskParams {
+            title,
+            background,
+            details,
+            priority,
+            definition_of_done,
+            in_scope,
+            out_of_scope,
+            tags: tag,
+            dependencies: depends_on,
+        }
+    };
+
+    let task = db::create_task(&conn, &params)?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&task)?);
+        }
+        OutputFormat::Text => {
+            println!("Created task #{}: \"{}\"", task.id, task.title);
+        }
+    }
+
+    Ok(())
+}
+
 fn cmd_list(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
@@ -265,14 +390,21 @@ fn cmd_list(
         }
         OutputFormat::Text => {
             for task in &tasks {
-                println!("[{}] #{} {} ({})", task.status, task.id, task.title, task.priority);
+                println!(
+                    "[{}] #{} {} ({})",
+                    task.status, task.id, task.title, task.priority
+                );
             }
         }
     }
     Ok(())
 }
 
-fn cmd_get(output: &OutputFormat, project_root: Option<&std::path::Path>, task_id: i64) -> Result<()> {
+fn cmd_get(
+    output: &OutputFormat,
+    project_root: Option<&std::path::Path>,
+    task_id: i64,
+) -> Result<()> {
     let root = resolve_project_root(project_root)?;
     let conn = db::open_db(&root)?;
     let task = db::get_task(&conn, task_id)?;
@@ -471,7 +603,319 @@ mod tests {
     #[test]
     fn parse_add_subcommand() {
         let cli = Cli::parse_from(["localflow", "add"]);
-        assert!(matches!(cli.command, Command::Add));
+        assert!(matches!(cli.command, Command::Add { .. }));
+    }
+
+    #[test]
+    fn parse_add_with_title() {
+        let cli = Cli::parse_from(["localflow", "add", "--title", "my task"]);
+        match cli.command {
+            Command::Add { title, .. } => assert_eq!(title, Some("my task".to_string())),
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn parse_add_with_all_flags() {
+        let cli = Cli::parse_from([
+            "localflow",
+            "add",
+            "--title",
+            "task",
+            "--background",
+            "bg",
+            "--details",
+            "det",
+            "--priority",
+            "p1",
+            "--definition-of-done",
+            "done1",
+            "--definition-of-done",
+            "done2",
+            "--in-scope",
+            "s1",
+            "--out-of-scope",
+            "o1",
+            "--tag",
+            "rust",
+            "--tag",
+            "cli",
+            "--depends-on",
+            "1",
+            "--depends-on",
+            "2",
+        ]);
+        match cli.command {
+            Command::Add {
+                title,
+                background,
+                details,
+                priority,
+                definition_of_done,
+                in_scope,
+                out_of_scope,
+                tag,
+                depends_on,
+                from_json,
+                from_json_file,
+            } => {
+                assert_eq!(title, Some("task".to_string()));
+                assert_eq!(background, Some("bg".to_string()));
+                assert_eq!(details, Some("det".to_string()));
+                assert_eq!(priority, Some("p1".to_string()));
+                assert_eq!(definition_of_done, vec!["done1", "done2"]);
+                assert_eq!(in_scope, vec!["s1"]);
+                assert_eq!(out_of_scope, vec!["o1"]);
+                assert_eq!(tag, vec!["rust", "cli"]);
+                assert_eq!(depends_on, vec![1, 2]);
+                assert!(!from_json);
+                assert!(from_json_file.is_none());
+            }
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn parse_add_with_from_json() {
+        let cli = Cli::parse_from(["localflow", "add", "--from-json"]);
+        match cli.command {
+            Command::Add {
+                from_json, title, ..
+            } => {
+                assert!(from_json);
+                assert!(title.is_none());
+            }
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn parse_add_with_from_json_file() {
+        let cli = Cli::parse_from(["localflow", "add", "--from-json-file", "/tmp/task.json"]);
+        match cli.command {
+            Command::Add {
+                from_json_file,
+                from_json,
+                title,
+                ..
+            } => {
+                assert_eq!(from_json_file, Some(PathBuf::from("/tmp/task.json")));
+                assert!(!from_json);
+                assert!(title.is_none());
+            }
+            _ => panic!("expected Add"),
+        }
+    }
+
+    #[test]
+    fn cmd_add_with_flags() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::Add {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                tag: vec![],
+                depends_on: vec![],
+                from_json: false,
+                from_json_file: None,
+            },
+        };
+        cmd_add(
+            &cli,
+            Some("test task".to_string()),
+            Some("bg".to_string()),
+            None,
+            Some("p1".to_string()),
+            vec!["done".to_string()],
+            vec![],
+            vec![],
+            vec!["rust".to_string()],
+            vec![],
+            false,
+            None,
+        )
+        .unwrap();
+
+        let conn = db::open_db(tmp.path()).unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        assert_eq!(task.title, "test task");
+        assert_eq!(task.background.as_deref(), Some("bg"));
+        assert_eq!(task.priority, localflow::models::Priority::P1);
+        assert_eq!(task.definition_of_done, vec!["done"]);
+        assert_eq!(task.tags, vec!["rust"]);
+    }
+
+    #[test]
+    fn cmd_add_with_from_json_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let json_path = tmp.path().join("task.json");
+        std::fs::write(&json_path, r#"{"title":"file task","priority":"P0"}"#).unwrap();
+
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::Add {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                tag: vec![],
+                depends_on: vec![],
+                from_json: false,
+                from_json_file: None,
+            },
+        };
+        cmd_add(
+            &cli,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+            Some(json_path),
+        )
+        .unwrap();
+
+        let conn = db::open_db(tmp.path()).unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        assert_eq!(task.title, "file task");
+        assert_eq!(task.priority, localflow::models::Priority::P0);
+    }
+
+    #[test]
+    fn cmd_add_missing_title_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::Add {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                tag: vec![],
+                depends_on: vec![],
+                from_json: false,
+                from_json_file: None,
+            },
+        };
+        let result = cmd_add(
+            &cli,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+            None,
+        );
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("--title is required"));
+    }
+
+    #[test]
+    fn cmd_add_text_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::Add {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                tag: vec![],
+                depends_on: vec![],
+                from_json: false,
+                from_json_file: None,
+            },
+        };
+        cmd_add(
+            &cli,
+            Some("my task".to_string()),
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+            None,
+        )
+        .unwrap();
+        let conn = db::open_db(tmp.path()).unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        assert_eq!(task.title, "my task");
+    }
+
+    #[test]
+    fn cmd_add_json_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Json,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::Add {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                tag: vec![],
+                depends_on: vec![],
+                from_json: false,
+                from_json_file: None,
+            },
+        };
+        cmd_add(
+            &cli,
+            Some("json out".to_string()),
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            false,
+            None,
+        )
+        .unwrap();
+        let conn = db::open_db(tmp.path()).unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        assert_eq!(task.title, "json out");
     }
 
     #[test]
@@ -483,10 +927,16 @@ mod tests {
     #[test]
     fn parse_list_with_filters() {
         let cli = Cli::parse_from([
-            "localflow", "list", "--status", "todo", "--tag", "rust", "--depends-on", "3", "--ready",
+            "localflow", "list", "--status", "todo", "--tag", "rust", "--depends-on", "3",
+            "--ready",
         ]);
         match cli.command {
-            Command::List { status, tag, depends_on, ready } => {
+            Command::List {
+                status,
+                tag,
+                depends_on,
+                ready,
+            } => {
                 assert_eq!(status.as_deref(), Some("todo"));
                 assert_eq!(tag.as_deref(), Some("rust"));
                 assert_eq!(depends_on, Some(3));
@@ -531,13 +981,17 @@ mod tests {
     #[test]
     fn parse_edit_with_scalar_args() {
         let cli = Cli::parse_from([
-            "localflow", "edit", "5",
-            "--title", "new title",
-            "--priority", "p0",
-            "--status", "todo",
+            "localflow", "edit", "5", "--title", "new title", "--priority", "p0", "--status",
+            "todo",
         ]);
         match cli.command {
-            Command::Edit { id, title, priority, status, .. } => {
+            Command::Edit {
+                id,
+                title,
+                priority,
+                status,
+                ..
+            } => {
                 assert_eq!(id, 5);
                 assert_eq!(title.as_deref(), Some("new title"));
                 assert_eq!(priority, Some(Priority::P0));
@@ -550,14 +1004,27 @@ mod tests {
     #[test]
     fn parse_edit_with_array_args() {
         let cli = Cli::parse_from([
-            "localflow", "edit", "3",
-            "--add-tag", "rust",
-            "--add-tag", "cli",
-            "--remove-tag", "old",
-            "--set-in-scope", "a", "b",
+            "localflow",
+            "edit",
+            "3",
+            "--add-tag",
+            "rust",
+            "--add-tag",
+            "cli",
+            "--remove-tag",
+            "old",
+            "--set-in-scope",
+            "a",
+            "b",
         ]);
         match cli.command {
-            Command::Edit { id, add_tag, remove_tag, set_in_scope, .. } => {
+            Command::Edit {
+                id,
+                add_tag,
+                remove_tag,
+                set_in_scope,
+                ..
+            } => {
                 assert_eq!(id, 3);
                 assert_eq!(add_tag, vec!["rust", "cli"]);
                 assert_eq!(remove_tag, vec!["old"]);
@@ -571,7 +1038,9 @@ mod tests {
     fn parse_edit_clear_background() {
         let cli = Cli::parse_from(["localflow", "edit", "1", "--clear-background"]);
         match cli.command {
-            Command::Edit { clear_background, .. } => {
+            Command::Edit {
+                clear_background, ..
+            } => {
                 assert!(clear_background);
             }
             _ => panic!("expected Edit"),

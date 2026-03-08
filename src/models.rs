@@ -109,6 +109,20 @@ impl fmt::Display for Priority {
     }
 }
 
+impl FromStr for Priority {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "p0" => Ok(Priority::P0),
+            "p1" => Ok(Priority::P1),
+            "p2" => Ok(Priority::P2),
+            "p3" => Ok(Priority::P3),
+            _ => Err(anyhow::anyhow!("invalid priority: {s} (expected p0-p3)")),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: i64,
@@ -131,15 +145,21 @@ pub struct Task {
     pub dependencies: Vec<i64>,
 }
 
+#[derive(Debug, Deserialize)]
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,
     pub details: Option<String>,
     pub priority: Option<Priority>,
+    #[serde(default)]
     pub definition_of_done: Vec<String>,
+    #[serde(default)]
     pub in_scope: Vec<String>,
+    #[serde(default)]
     pub out_of_scope: Vec<String>,
+    #[serde(default)]
     pub tags: Vec<String>,
+    #[serde(default)]
     pub dependencies: Vec<i64>,
 }
 
@@ -236,6 +256,20 @@ mod tests {
     fn priority_invalid() {
         assert!(Priority::try_from(4).is_err());
         assert!(Priority::try_from(-1).is_err());
+    }
+
+    #[test]
+    fn priority_from_str() {
+        assert_eq!("p0".parse::<Priority>().unwrap(), Priority::P0);
+        assert_eq!("P1".parse::<Priority>().unwrap(), Priority::P1);
+        assert_eq!("p2".parse::<Priority>().unwrap(), Priority::P2);
+        assert_eq!("P3".parse::<Priority>().unwrap(), Priority::P3);
+    }
+
+    #[test]
+    fn priority_from_str_invalid() {
+        assert!("p4".parse::<Priority>().is_err());
+        assert!("high".parse::<Priority>().is_err());
     }
 
     #[test]
