@@ -13,6 +13,33 @@ pub enum TaskStatus {
     Canceled,
 }
 
+impl TaskStatus {
+    pub fn can_transition_to(&self, to: TaskStatus) -> bool {
+        use TaskStatus::*;
+        matches!(
+            (self, to),
+            (Draft, Todo)
+                | (Todo, InProgress)
+                | (InProgress, Completed)
+                | (Draft, Canceled)
+                | (Todo, Canceled)
+                | (InProgress, Canceled)
+        )
+    }
+
+    pub fn transition_to(&self, to: TaskStatus) -> anyhow::Result<TaskStatus> {
+        if self.can_transition_to(to) {
+            Ok(to)
+        } else {
+            Err(anyhow::anyhow!(
+                "invalid status transition: {} -> {}",
+                self,
+                to
+            ))
+        }
+    }
+}
+
 impl fmt::Display for TaskStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
@@ -85,17 +112,63 @@ impl fmt::Display for Priority {
 pub struct Task {
     pub id: i64,
     pub title: String,
-    pub description: Option<String>,
-    pub status: TaskStatus,
+    pub background: Option<String>,
+    pub details: Option<String>,
     pub priority: Priority,
+    pub status: TaskStatus,
+    pub assignee_session_id: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    pub canceled_at: Option<String>,
+    pub cancel_reason: Option<String>,
     pub definition_of_done: Vec<String>,
     pub in_scope: Vec<String>,
     pub out_of_scope: Vec<String>,
     pub tags: Vec<String>,
     pub dependencies: Vec<i64>,
+}
+
+pub struct CreateTaskParams {
+    pub title: String,
+    pub background: Option<String>,
+    pub details: Option<String>,
+    pub priority: Option<Priority>,
+    pub definition_of_done: Vec<String>,
+    pub in_scope: Vec<String>,
+    pub out_of_scope: Vec<String>,
+    pub tags: Vec<String>,
+    pub dependencies: Vec<i64>,
+}
+
+pub struct UpdateTaskParams {
+    pub title: Option<String>,
+    pub background: Option<Option<String>>,
+    pub details: Option<Option<String>>,
+    pub priority: Option<Priority>,
+    pub status: Option<TaskStatus>,
+    pub assignee_session_id: Option<Option<String>>,
+    pub started_at: Option<Option<String>>,
+    pub completed_at: Option<Option<String>>,
+    pub canceled_at: Option<Option<String>>,
+    pub cancel_reason: Option<Option<String>>,
+}
+
+pub struct ListTasksFilter {
+    pub status: Option<TaskStatus>,
+    pub tag: Option<String>,
+    pub ready: bool,
+}
+
+impl Default for ListTasksFilter {
+    fn default() -> Self {
+        Self {
+            status: None,
+            tag: None,
+            ready: false,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -153,5 +226,67 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         let parsed: Priority = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, p);
+    }
+
+    #[test]
+    fn allowed_transitions() {
+        use TaskStatus::*;
+        let allowed = [
+            (Draft, Todo),
+            (Todo, InProgress),
+            (InProgress, Completed),
+            (Draft, Canceled),
+            (Todo, Canceled),
+            (InProgress, Canceled),
+        ];
+        for (from, to) in allowed {
+            assert!(
+                from.can_transition_to(to),
+                "{from} -> {to} should be allowed"
+            );
+            assert!(from.transition_to(to).is_ok(), "{from} -> {to} should be ok");
+        }
+    }
+
+    #[test]
+    fn forbidden_transitions() {
+        use TaskStatus::*;
+        let forbidden = [
+            (Completed, Draft),
+            (Completed, Todo),
+            (Completed, InProgress),
+            (Completed, Canceled),
+            (Canceled, Draft),
+            (Canceled, Todo),
+            (Canceled, InProgress),
+            (Canceled, Completed),
+            (Draft, InProgress),
+            (Draft, Completed),
+            (Todo, Completed),
+            (Todo, Draft),
+            (InProgress, Todo),
+            (InProgress, Draft),
+        ];
+        for (from, to) in forbidden {
+            assert!(
+                !from.can_transition_to(to),
+                "{from} -> {to} should be forbidden"
+            );
+            assert!(
+                from.transition_to(to).is_err(),
+                "{from} -> {to} should be err"
+            );
+        }
+    }
+
+    #[test]
+    fn self_transitions_forbidden() {
+        use TaskStatus::*;
+        for status in [Draft, Todo, InProgress, Completed, Canceled] {
+            assert!(
+                !status.can_transition_to(status),
+                "{status} -> {status} should be forbidden"
+            );
+        }
     }
 }
