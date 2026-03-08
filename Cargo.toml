@@ -1,0 +1,16 @@
+[package]
+name = "localflow"
+version = "0.1.0"
+edition = "2024"
+
+[[bin]]
+name = "localflow"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5.60", features = ["derive"] }
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+anyhow = "1.0.102"
+chrono = "0.4.44"
