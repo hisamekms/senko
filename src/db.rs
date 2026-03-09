@@ -20,6 +20,7 @@ pub fn open_db(project_root: &Path) -> Result<Connection> {
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
 
     create_schema(&conn)?;
+    migrate(&conn)?;
 
     warn_if_not_gitignored(project_root);
 
@@ -61,7 +62,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             started_at TEXT,
             completed_at TEXT,
             canceled_at TEXT,
-            cancel_reason TEXT
+            cancel_reason TEXT,
+            branch TEXT
         );
 
         CREATE TABLE IF NOT EXISTS task_definition_of_done (
@@ -106,11 +108,22 @@ fn create_schema(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate(conn: &Connection) -> Result<()> {
+    // Add branch column if it doesn't exist (for databases created before this field)
+    let has_branch: bool = conn
+        .prepare("SELECT branch FROM tasks LIMIT 0")
+        .is_ok();
+    if !has_branch {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN branch TEXT")?;
+    }
+    Ok(())
+}
+
 pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
     conn.execute(
-        "INSERT INTO tasks (title, background, details, priority) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![params.title, params.background, params.details, priority],
+        "INSERT INTO tasks (title, background, details, priority, branch) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![params.title, params.background, params.details, priority, params.branch],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -149,17 +162,18 @@ pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task>
 }
 
 pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (title, background, details, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason): (
-        String, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>,
+    let (title, background, details, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch): (
+        String, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
     ) = conn
         .query_row(
-            "SELECT title, background, details, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason FROM tasks WHERE id = ?1",
+            "SELECT title, background, details, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
                     row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
+                    row.get(12)?,
                 ))
             },
         )
@@ -204,6 +218,7 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         completed_at,
         canceled_at,
         cancel_reason,
+        branch,
         definition_of_done,
         in_scope,
         out_of_scope,
@@ -266,6 +281,10 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     if let Some(ref cancel_reason) = params.cancel_reason {
         sets.push("cancel_reason = ?");
         values.push(Box::new(cancel_reason.clone()));
+    }
+    if let Some(ref branch) = params.branch {
+        sets.push("branch = ?");
+        values.push(Box::new(branch.clone()));
     }
 
     if !sets.is_empty() {
@@ -607,6 +626,7 @@ mod tests {
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
+            branch: None,
             tags: vec![],
             dependencies: vec![],
         }
@@ -679,6 +699,7 @@ mod tests {
                 definition_of_done: vec!["done1".to_string(), "done2".to_string()],
                 in_scope: vec!["scope1".to_string()],
                 out_of_scope: vec!["out1".to_string()],
+                branch: None,
                 tags: vec!["rust".to_string(), "cli".to_string()],
                 dependencies: vec![],
             },
@@ -733,6 +754,7 @@ mod tests {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: None,
             },
         )
         .unwrap();
@@ -767,6 +789,7 @@ mod tests {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: None,
             },
         );
         assert!(result.is_err());
@@ -786,6 +809,7 @@ mod tests {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: None,
             },
         )
         .unwrap();
@@ -805,6 +829,7 @@ mod tests {
                 definition_of_done: vec!["d".to_string()],
                 in_scope: vec!["s".to_string()],
                 out_of_scope: vec!["o".to_string()],
+                branch: None,
                 tags: vec!["tag".to_string()],
                 dependencies: vec![],
             },
@@ -871,6 +896,7 @@ mod tests {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: None,
             },
         )
         .unwrap();
@@ -909,6 +935,7 @@ mod tests {
             &conn,
             &CreateTaskParams {
                 title: "tagged".to_string(),
+                branch: None,
                 tags: vec!["rust".to_string()],
                 ..default_create_params("tagged")
             },
@@ -944,6 +971,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
         update_task(
@@ -954,6 +982,7 @@ mod tests {
                 status: Some(TaskStatus::InProgress),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
         update_task(
@@ -964,6 +993,7 @@ mod tests {
                 status: Some(TaskStatus::Completed),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
 
@@ -984,6 +1014,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
 
@@ -1005,6 +1036,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
 
@@ -1029,6 +1061,7 @@ mod tests {
             &conn,
             &CreateTaskParams {
                 title: "t1".to_string(),
+                branch: None,
                 tags: vec!["rust".to_string()],
                 ..default_create_params("t1")
             },
@@ -1087,6 +1120,7 @@ mod tests {
         let task = create_task(
             &conn,
             &CreateTaskParams {
+                branch: None,
                 tags: vec!["old".to_string()],
                 ..default_create_params("t")
             },
@@ -1116,6 +1150,7 @@ mod tests {
         let task = create_task(
             &conn,
             &CreateTaskParams {
+                branch: None,
                 tags: vec!["existing".to_string()],
                 ..default_create_params("t")
             },
@@ -1144,6 +1179,7 @@ mod tests {
         let task = create_task(
             &conn,
             &CreateTaskParams {
+                branch: None,
                 tags: vec!["keep".to_string(), "remove".to_string()],
                 ..default_create_params("t")
             },
@@ -1234,6 +1270,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         )
         .unwrap()
@@ -1249,6 +1286,7 @@ mod tests {
                 status: Some(TaskStatus::InProgress),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
         update_task(
@@ -1259,6 +1297,7 @@ mod tests {
                 status: Some(TaskStatus::Completed),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap()
     }
@@ -1293,6 +1332,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
 
@@ -1361,6 +1401,7 @@ mod tests {
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
+                branch: None,
             },
         ).unwrap();
 
@@ -1566,6 +1607,7 @@ mod tests {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: None,
             },
         )
         .unwrap();
