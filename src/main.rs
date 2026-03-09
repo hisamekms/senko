@@ -157,6 +157,9 @@ enum Command {
         /// Output directory for SKILL.md
         #[arg(long)]
         output_dir: Option<PathBuf>,
+        /// Skip confirmation prompts
+        #[arg(long)]
+        yes: bool,
     },
 }
 
@@ -328,7 +331,9 @@ fn main() -> Result<()> {
         Command::Complete { id } => cmd_complete(&cli, id),
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Deps { ref command } => cmd_deps(&cli, command),
-        Command::SkillInstall { output_dir } => skill_install(output_dir),
+        Command::SkillInstall { ref output_dir, yes } => {
+            skill_install(&cli, output_dir.clone(), yes)
+        }
     }
 }
 
@@ -673,11 +678,44 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 
 const SKILL_MD_CONTENT: &str = include_str!("skill_md.txt");
 
-fn skill_install(output_dir: Option<PathBuf>) -> Result<()> {
-    let dir = output_dir.unwrap_or_else(|| PathBuf::from("."));
-    let path = dir.join("SKILL.md");
+fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()> {
+    if let Some(dir) = output_dir {
+        let path = dir.join("SKILL.md");
+        fs::write(&path, SKILL_MD_CONTENT)?;
+        println!("SKILL.md written to {}", path.display());
+        return Ok(());
+    }
+
+    let project_root = resolve_project_root(cli.project_root.as_deref())?;
+    let claude_dir = project_root.join(".claude");
+    let target_dir = claude_dir.join("skills").join("localflow");
+    let created_claude_dir = !claude_dir.exists();
+
+    if created_claude_dir && !yes {
+        eprint!(
+            ".claude/ directory does not exist. Create it at {}? [y/N] ",
+            claude_dir.display()
+        );
+        let mut input = String::new();
+        std::io::stdin()
+            .read_line(&mut input)
+            .context("failed to read from stdin")?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            bail!("aborted");
+        }
+    }
+
+    fs::create_dir_all(&target_dir)
+        .with_context(|| format!("failed to create directory: {}", target_dir.display()))?;
+
+    let path = target_dir.join("SKILL.md");
     fs::write(&path, SKILL_MD_CONTENT)?;
     println!("SKILL.md written to {}", path.display());
+
+    if created_claude_dir {
+        println!("Created .claude/ directory at {}", claude_dir.display());
+    }
+
     Ok(())
 }
 
@@ -1227,8 +1265,9 @@ mod tests {
     fn parse_skill_install_with_output_dir() {
         let cli = Cli::parse_from(["localflow", "skill-install", "--output-dir", "/tmp/out"]);
         match cli.command {
-            Command::SkillInstall { output_dir } => {
+            Command::SkillInstall { output_dir, yes } => {
                 assert_eq!(output_dir, Some(PathBuf::from("/tmp/out")));
+                assert!(!yes);
             }
             _ => panic!("expected SkillInstall"),
         }
@@ -1238,25 +1277,113 @@ mod tests {
     fn parse_skill_install_without_output_dir() {
         let cli = Cli::parse_from(["localflow", "skill-install"]);
         match cli.command {
-            Command::SkillInstall { output_dir } => {
+            Command::SkillInstall { output_dir, yes } => {
                 assert!(output_dir.is_none());
+                assert!(!yes);
             }
             _ => panic!("expected SkillInstall"),
         }
     }
 
     #[test]
-    fn skill_install_creates_file() {
-        let dir = std::env::temp_dir().join("localflow_test_skill_install");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
+    fn parse_skill_install_with_yes() {
+        let cli = Cli::parse_from(["localflow", "skill-install", "--yes"]);
+        match cli.command {
+            Command::SkillInstall { output_dir, yes } => {
+                assert!(output_dir.is_none());
+                assert!(yes);
+            }
+            _ => panic!("expected SkillInstall"),
+        }
+    }
 
-        skill_install(Some(dir.clone())).unwrap();
+    #[test]
+    fn skill_install_with_output_dir_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: None,
+            command: Command::SkillInstall {
+                output_dir: Some(dir.path().to_path_buf()),
+                yes: false,
+            },
+        };
+        skill_install(&cli, Some(dir.path().to_path_buf()), false).unwrap();
 
-        let content = std::fs::read_to_string(dir.join("SKILL.md")).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("SKILL.md")).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
+    }
 
-        std::fs::remove_dir_all(&dir).unwrap();
+    #[test]
+    fn skill_install_default_places_in_claude_skills() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::SkillInstall {
+                output_dir: None,
+                yes: true,
+            },
+        };
+        skill_install(&cli, None, true).unwrap();
+
+        let expected = tmp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("localflow")
+            .join("SKILL.md");
+        assert!(expected.exists());
+        let content = std::fs::read_to_string(&expected).unwrap();
+        assert_eq!(content, SKILL_MD_CONTENT);
+    }
+
+    #[test]
+    fn skill_install_existing_claude_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        // Pre-create .claude/
+        std::fs::create_dir_all(tmp.path().join(".claude")).unwrap();
+
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::SkillInstall {
+                output_dir: None,
+                yes: false,
+            },
+        };
+        // Should not prompt since .claude/ already exists
+        skill_install(&cli, None, false).unwrap();
+
+        let expected = tmp
+            .path()
+            .join(".claude")
+            .join("skills")
+            .join("localflow")
+            .join("SKILL.md");
+        assert!(expected.exists());
+    }
+
+    #[test]
+    fn skill_install_no_claude_dir_with_yes() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!tmp.path().join(".claude").exists());
+
+        let cli = Cli {
+            output: OutputFormat::Text,
+            project_root: Some(tmp.path().to_path_buf()),
+            command: Command::SkillInstall {
+                output_dir: None,
+                yes: true,
+            },
+        };
+        skill_install(&cli, None, true).unwrap();
+
+        assert!(tmp.path().join(".claude").exists());
+        assert!(tmp
+            .path()
+            .join(".claude/skills/localflow/SKILL.md")
+            .exists());
     }
 
     #[test]
