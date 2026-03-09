@@ -256,57 +256,57 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
         current_status.transition_to(new_status)?;
     }
 
-    let mut sets = Vec::new();
+    let mut columns = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     if let Some(ref title) = params.title {
-        sets.push("title = ?");
+        columns.push(TaskColumn::Title);
         values.push(Box::new(title.clone()));
     }
     if let Some(ref background) = params.background {
-        sets.push("background = ?");
+        columns.push(TaskColumn::Background);
         values.push(Box::new(background.clone()));
     }
     if let Some(ref details) = params.details {
-        sets.push("details = ?");
+        columns.push(TaskColumn::Details);
         values.push(Box::new(details.clone()));
     }
     if let Some(priority) = params.priority {
-        sets.push("priority = ?");
+        columns.push(TaskColumn::Priority);
         values.push(Box::new(i32::from(priority)));
     }
     if let Some(status) = params.status {
-        sets.push("status = ?");
+        columns.push(TaskColumn::Status);
         values.push(Box::new(status.to_string()));
     }
     if let Some(ref assignee) = params.assignee_session_id {
-        sets.push("assignee_session_id = ?");
+        columns.push(TaskColumn::AssigneeSessionId);
         values.push(Box::new(assignee.clone()));
     }
     if let Some(ref started_at) = params.started_at {
-        sets.push("started_at = ?");
+        columns.push(TaskColumn::StartedAt);
         values.push(Box::new(started_at.clone()));
     }
     if let Some(ref completed_at) = params.completed_at {
-        sets.push("completed_at = ?");
+        columns.push(TaskColumn::CompletedAt);
         values.push(Box::new(completed_at.clone()));
     }
     if let Some(ref canceled_at) = params.canceled_at {
-        sets.push("canceled_at = ?");
+        columns.push(TaskColumn::CanceledAt);
         values.push(Box::new(canceled_at.clone()));
     }
     if let Some(ref cancel_reason) = params.cancel_reason {
-        sets.push("cancel_reason = ?");
+        columns.push(TaskColumn::CancelReason);
         values.push(Box::new(cancel_reason.clone()));
     }
     if let Some(ref branch) = params.branch {
-        sets.push("branch = ?");
+        columns.push(TaskColumn::Branch);
         values.push(Box::new(branch.clone()));
     }
 
-    if !sets.is_empty() {
-        sets.push("updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')");
-        let sql = format!("UPDATE tasks SET {} WHERE id = ?", sets.join(", "));
+    if !columns.is_empty() {
+        let set_clause: Vec<String> = columns.iter().map(|c| format!("{} = ?", c.as_str())).collect();
+        let sql = format!("UPDATE tasks SET {}, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?", set_clause.join(", "));
         values.push(Box::new(id));
         let param_refs: Vec<&dyn rusqlite::types::ToSql> = values.iter().map(|v| v.as_ref()).collect();
         conn.execute(&sql, param_refs.as_slice())?;
@@ -368,6 +368,38 @@ pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayPa
     }
 
     Ok(())
+}
+
+enum TaskColumn {
+    Title,
+    Background,
+    Details,
+    Priority,
+    Status,
+    AssigneeSessionId,
+    StartedAt,
+    CompletedAt,
+    CanceledAt,
+    CancelReason,
+    Branch,
+}
+
+impl TaskColumn {
+    fn as_str(&self) -> &'static str {
+        match self {
+            TaskColumn::Title => "title",
+            TaskColumn::Background => "background",
+            TaskColumn::Details => "details",
+            TaskColumn::Priority => "priority",
+            TaskColumn::Status => "status",
+            TaskColumn::AssigneeSessionId => "assignee_session_id",
+            TaskColumn::StartedAt => "started_at",
+            TaskColumn::CompletedAt => "completed_at",
+            TaskColumn::CanceledAt => "canceled_at",
+            TaskColumn::CancelReason => "cancel_reason",
+            TaskColumn::Branch => "branch",
+        }
+    }
 }
 
 enum ContentTable {
