@@ -22,6 +22,20 @@ Works as a Claude Code skill to let AI agents manage and execute project tasks.
 ## Install
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/hisamekms/localflow/main/install.sh | sh
+```
+
+Or specify a version:
+
+```bash
+VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hisamekms/localflow/main/install.sh | sh
+```
+
+By default, the binary is installed to `~/.local/bin`. Set `LOCALFLOW_INSTALL_DIR` to change the location.
+
+### Build from source
+
+```bash
 cargo build --release
 ```
 
