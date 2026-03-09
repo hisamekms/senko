@@ -218,8 +218,25 @@ fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {
     Ok(())
 }
 
-fn main() -> Result<()> {
+fn main() {
     let cli = Cli::parse();
+    let output_format = cli.output.clone();
+
+    if let Err(e) = run(cli) {
+        match output_format {
+            OutputFormat::Json => {
+                println!("{}", serde_json::json!({"error": format!("{:#}", e)}));
+                std::process::exit(1);
+            }
+            OutputFormat::Text => {
+                eprintln!("Error: {:#}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+}
+
+fn run(cli: Cli) -> Result<()> {
     let dry_run = cli.dry_run;
     let output_format = cli.output.clone();
 
