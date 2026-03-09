@@ -13,6 +13,12 @@ pub fn open_db(project_root: &Path) -> Result<Connection> {
     let localflow_dir = project_root.join(".localflow");
     std::fs::create_dir_all(&localflow_dir)?;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&localflow_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+
     let db_path = localflow_dir.join("data.db");
     let conn = Connection::open(&db_path)?;
 
