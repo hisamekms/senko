@@ -14,7 +14,7 @@ echo "--- Test: Skill Install ---"
 # 1. Default path with --yes
 echo "[1] Default path with --yes"
 OUTPUT="$(run_lf skill-install --yes)"
-SKILL_PATH="$TEST_PROJECT_ROOT/.claude/skills/localflow/SKILL.md"
+SKILL_PATH="$TEST_PROJECT_ROOT/.claude/skills/localflow-task/SKILL.md"
 
 if [[ -f "$SKILL_PATH" ]]; then
   echo "  PASS: SKILL.md created at default path"
@@ -55,10 +55,10 @@ assert_contains "$OUTPUT" "Created .claude/ directory" "reports .claude/ directo
 # 4. .claude/ already exists → no prompt needed even without --yes
 echo "[4] Existing .claude/ directory (no --yes needed)"
 # .claude/ was created by test 3, remove SKILL.md but keep .claude/
-rm -f "$TEST_PROJECT_ROOT/.claude/skills/localflow/SKILL.md"
+rm -f "$TEST_PROJECT_ROOT/.claude/skills/localflow-task/SKILL.md"
 OUTPUT="$(run_lf skill-install)"
 
-if [[ -f "$TEST_PROJECT_ROOT/.claude/skills/localflow/SKILL.md" ]]; then
+if [[ -f "$TEST_PROJECT_ROOT/.claude/skills/localflow-task/SKILL.md" ]]; then
   echo "  PASS: SKILL.md created without --yes when .claude/ exists"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
@@ -68,7 +68,7 @@ fi
 
 # 5. Generated file content contains command names
 echo "[5] SKILL.md content verification"
-CONTENT="$(cat "$TEST_PROJECT_ROOT/.claude/skills/localflow/SKILL.md")"
+CONTENT="$(cat "$TEST_PROJECT_ROOT/.claude/skills/localflow-task/SKILL.md")"
 assert_contains "$CONTENT" "localflow add" "content contains 'localflow add'"
 assert_contains "$CONTENT" "localflow list" "content contains 'localflow list'"
 assert_contains "$CONTENT" "localflow next" "content contains 'localflow next'"
