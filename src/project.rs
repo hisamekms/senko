@@ -30,8 +30,19 @@ fn resolve_from(explicit: Option<&Path>, start_dir: &Path) -> Result<PathBuf> {
 fn search_upward(start: &Path, marker: &str) -> Option<PathBuf> {
     let mut dir = start.to_path_buf();
     loop {
-        if dir.join(marker).exists() {
-            return Some(dir);
+        let candidate = dir.join(marker);
+        if candidate.exists() {
+            // Reject symlinks to prevent symlink attacks
+            if let Ok(meta) = std::fs::symlink_metadata(&candidate) {
+                if meta.file_type().is_symlink() {
+                    if !dir.pop() {
+                        return None;
+                    }
+                    continue;
+                }
+            }
+            // Canonicalize to resolve any path traversal
+            return dir.canonicalize().ok();
         }
         if !dir.pop() {
             return None;
@@ -58,7 +69,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("a/.localflow")).unwrap();
 
         let result = resolve_from(None, &sub).unwrap();
-        assert_eq!(result, tmp.path().join("a"));
+        assert_eq!(result, tmp.path().join("a").canonicalize().unwrap());
     }
 
     #[test]
@@ -69,7 +80,7 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
 
         let result = resolve_from(None, &sub).unwrap();
-        assert_eq!(result, tmp.path().to_path_buf());
+        assert_eq!(result, tmp.path().canonicalize().unwrap());
     }
 
     #[test]
@@ -81,7 +92,37 @@ mod tests {
         std::fs::create_dir_all(tmp.path().join("proj/.localflow")).unwrap();
 
         let result = resolve_from(None, &sub).unwrap();
-        assert_eq!(result, tmp.path().join("proj"));
+        assert_eq!(result, tmp.path().join("proj").canonicalize().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_marker_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target_dir = tmp.path().join("evil");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        // Create a symlink .localflow -> evil (symlink attack)
+        std::os::unix::fs::symlink(&target_dir, tmp.path().join(".localflow")).unwrap();
+
+        let result = search_upward(tmp.path(), ".localflow");
+        assert!(result.is_none(), "symlink marker should be skipped");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_marker_skipped_finds_real_parent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let child = tmp.path().join("child");
+        std::fs::create_dir_all(&child).unwrap();
+        // Symlink .localflow in child dir
+        let target_dir = tmp.path().join("evil");
+        std::fs::create_dir_all(&target_dir).unwrap();
+        std::os::unix::fs::symlink(&target_dir, child.join(".localflow")).unwrap();
+        // Real .localflow in parent
+        std::fs::create_dir_all(tmp.path().join(".localflow")).unwrap();
+
+        let result = search_upward(&child, ".localflow");
+        assert_eq!(result, Some(tmp.path().canonicalize().unwrap()));
     }
 
     #[test]
