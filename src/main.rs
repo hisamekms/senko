@@ -66,11 +66,14 @@ enum Command {
         tag: Vec<String>,
         #[arg(long)]
         depends_on: Vec<i64>,
+        /// Git branch name (supports ${task_id} template)
+        #[arg(long)]
+        branch: Option<String>,
         /// Read JSON from stdin
-        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch"])]
         from_json: bool,
         /// Read JSON from file
-        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "from_json"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "from_json"])]
         from_json_file: Option<PathBuf>,
     },
     /// List tasks
@@ -116,6 +119,11 @@ enum Command {
         priority: Option<Priority>,
         #[arg(long, value_enum)]
         status: Option<TaskStatus>,
+        /// Git branch name (supports ${task_id} template)
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        clear_branch: bool,
         // Array set
         #[arg(long, num_args = 0..)]
         set_tags: Option<Vec<String>>,
@@ -274,6 +282,7 @@ fn run(cli: Cli) -> Result<()> {
             ref out_of_scope,
             ref tag,
             ref depends_on,
+            ref branch,
             from_json,
             ref from_json_file,
         } => cmd_add(
@@ -287,6 +296,7 @@ fn run(cli: Cli) -> Result<()> {
             out_of_scope.clone(),
             tag.clone(),
             depends_on.clone(),
+            branch.clone(),
             from_json,
             from_json_file.clone(),
         ),
@@ -314,6 +324,8 @@ fn run(cli: Cli) -> Result<()> {
             clear_details,
             priority,
             status,
+            branch,
+            clear_branch,
             set_tags,
             set_definition_of_done,
             set_in_scope,
@@ -354,6 +366,11 @@ fn run(cli: Cli) -> Result<()> {
                 if let Some(ref s) = status {
                     operations.push(format!("Update task #{}: set status to {}", id, s));
                 }
+                if clear_branch {
+                    operations.push(format!("Update task #{}: clear branch", id));
+                } else if let Some(ref b) = branch {
+                    operations.push(format!("Update task #{}: set branch to \"{}\"", id, b));
+                }
                 if let Some(ref tags) = set_tags {
                     operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
                 }
@@ -368,6 +385,12 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 return print_dry_run(&output_format, &DryRunOperation { command: "edit".into(), operations });
             }
+
+            let branch_value = if clear_branch {
+                Some(None)
+            } else {
+                branch.map(|b| Some(expand_branch_template(&b, id)))
+            };
 
             let scalar_params = UpdateTaskParams {
                 title,
@@ -388,6 +411,7 @@ fn run(cli: Cli) -> Result<()> {
                 completed_at: None,
                 canceled_at: None,
                 cancel_reason: None,
+                branch: branch_value,
             };
 
             let array_params = UpdateTaskArrayParams {
@@ -424,6 +448,9 @@ fn run(cli: Cli) -> Result<()> {
                     if let Some(ref det) = task.details {
                         println!("  details: {det}");
                     }
+                    if let Some(ref branch) = task.branch {
+                        println!("  branch: {branch}");
+                    }
                     if !task.tags.is_empty() {
                         println!("  tags: {}", task.tags.join(", "));
                     }
@@ -453,6 +480,7 @@ fn cmd_add(
     out_of_scope: Vec<String>,
     tag: Vec<String>,
     depends_on: Vec<i64>,
+    branch: Option<String>,
     from_json: bool,
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
@@ -485,6 +513,7 @@ fn cmd_add(
             definition_of_done,
             in_scope,
             out_of_scope,
+            branch,
             tags: tag,
             dependencies: depends_on,
         }
@@ -517,10 +546,44 @@ fn cmd_add(
         if !params.out_of_scope.is_empty() {
             operations.push(format!("Set out of scope: {}", params.out_of_scope.join(", ")));
         }
+        if let Some(ref b) = params.branch {
+            operations.push(format!("Set branch to \"{}\"", b));
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task = db::create_task(&conn, &params)?;
+    // If branch contains ${task_id}, create without branch first, then update
+    let needs_template = params
+        .branch
+        .as_ref()
+        .is_some_and(|b| b.contains("${task_id}"));
+
+    let task = if needs_template {
+        let branch_template = params.branch.clone();
+        let mut params_without_branch = params;
+        params_without_branch.branch = None;
+        let created = db::create_task(&conn, &params_without_branch)?;
+        let expanded = expand_branch_template(branch_template.as_deref().unwrap(), created.id);
+        db::update_task(
+            &conn,
+            created.id,
+            &UpdateTaskParams {
+                title: None,
+                background: None,
+                details: None,
+                priority: None,
+                status: None,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+                branch: Some(Some(expanded)),
+            },
+        )?
+    } else {
+        db::create_task(&conn, &params)?
+    };
 
     match cli.output {
         OutputFormat::Json => {
@@ -532,6 +595,10 @@ fn cmd_add(
     }
 
     Ok(())
+}
+
+fn expand_branch_template(branch: &str, task_id: i64) -> String {
+    branch.replace("${task_id}", &task_id.to_string())
 }
 
 fn cmd_list(
@@ -598,6 +665,9 @@ fn cmd_get(
             }
             if let Some(ref det) = task.details {
                 println!("Details:  {det}");
+            }
+            if let Some(ref branch) = task.branch {
+                println!("Branch:   {branch}");
             }
             if let Some(ref assignee) = task.assignee_session_id {
                 println!("Assignee: {assignee}");
@@ -679,6 +749,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
             completed_at: None,
             canceled_at: None,
             cancel_reason: None,
+            branch: None,
         },
     )?;
 
@@ -736,6 +807,7 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
             completed_at: Some(Some(now)),
             canceled_at: None,
             cancel_reason: None,
+            branch: None,
         },
     )?;
 
@@ -783,6 +855,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
             completed_at: None,
             canceled_at: Some(Some(now)),
             cancel_reason: reason.map(Some),
+            branch: None,
         },
     )?;
 
@@ -1042,6 +1115,7 @@ mod tests {
                 out_of_scope,
                 tag,
                 depends_on,
+                branch,
                 from_json,
                 from_json_file,
             } => {
@@ -1054,6 +1128,7 @@ mod tests {
                 assert_eq!(out_of_scope, vec!["o1"]);
                 assert_eq!(tag, vec!["rust", "cli"]);
                 assert_eq!(depends_on, vec![1, 2]);
+                assert!(branch.is_none());
                 assert!(!from_json);
                 assert!(from_json_file.is_none());
             }
@@ -1111,6 +1186,7 @@ mod tests {
                 tag: vec![],
                 depends_on: vec![],
                 from_json: false,
+                branch: None,
                 from_json_file: None,
             },
         };
@@ -1125,6 +1201,7 @@ mod tests {
             vec![],
             vec!["rust".to_string()],
             vec![],
+            None,
             false,
             None,
         )
@@ -1163,6 +1240,7 @@ mod tests {
                 tag: vec![],
                 depends_on: vec![],
                 from_json: false,
+                branch: None,
                 from_json_file: None,
             },
         };
@@ -1177,6 +1255,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             false,
             Some(json_path),
         )
@@ -1206,6 +1285,7 @@ mod tests {
                 tag: vec![],
                 depends_on: vec![],
                 from_json: false,
+                branch: None,
                 from_json_file: None,
             },
         };
@@ -1220,6 +1300,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             false,
             None,
         );
@@ -1248,6 +1329,7 @@ mod tests {
                 tag: vec![],
                 depends_on: vec![],
                 from_json: false,
+                branch: None,
                 from_json_file: None,
             },
         };
@@ -1262,6 +1344,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             false,
             None,
         )
@@ -1289,6 +1372,7 @@ mod tests {
                 tag: vec![],
                 depends_on: vec![],
                 from_json: false,
+                branch: None,
                 from_json_file: None,
             },
         };
@@ -1303,6 +1387,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             false,
             None,
         )

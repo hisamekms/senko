@@ -144,6 +144,7 @@ pub struct Task {
     pub completed_at: Option<String>,
     pub canceled_at: Option<String>,
     pub cancel_reason: Option<String>,
+    pub branch: Option<String>,
     pub definition_of_done: Vec<DodItem>,
     pub in_scope: Vec<String>,
     pub out_of_scope: Vec<String>,
@@ -163,6 +164,7 @@ pub struct CreateTaskParams {
     pub in_scope: Vec<String>,
     #[serde(default)]
     pub out_of_scope: Vec<String>,
+    pub branch: Option<String>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -180,6 +182,7 @@ pub struct UpdateTaskParams {
     pub completed_at: Option<Option<String>>,
     pub canceled_at: Option<Option<String>>,
     pub cancel_reason: Option<Option<String>>,
+    pub branch: Option<Option<String>>,
 }
 
 pub struct ListTasksFilter {
