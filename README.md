@@ -1,5 +1,7 @@
 # localflow
 
+> **Alpha**: This project is in early development. APIs, CLI interfaces, and data formats may change without notice.
+
 A local-only task management CLI for single-developer and single-agent workflows.
 SQLite-backed, dependency-aware, priority-driven.
 
