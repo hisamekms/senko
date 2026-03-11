@@ -21,7 +21,8 @@ assert_json_field "$ADD_MIN" '.priority' "P2" "default priority is P2"
 assert_json_field "$ADD_MIN" '.tags' "[]" "default tags is empty array"
 assert_json_field "$ADD_MIN" '.dependencies' "[]" "default dependencies is empty array"
 assert_json_field "$ADD_MIN" '.background' "null" "default background is null"
-assert_json_field "$ADD_MIN" '.details' "null" "default details is null"
+assert_json_field "$ADD_MIN" '.description' "null" "default description is null"
+assert_json_field "$ADD_MIN" '.plan' "null" "default plan is null"
 assert_json_field "$ADD_MIN" '.definition_of_done' "[]" "default definition_of_done is empty array"
 assert_json_field "$ADD_MIN" '.in_scope' "[]" "default in_scope is empty array"
 assert_json_field "$ADD_MIN" '.out_of_scope' "[]" "default out_of_scope is empty array"
@@ -35,7 +36,7 @@ DEP_ID="$(echo "$DEP_OUTPUT" | jq -r '.id')"
 ADD_FULL="$(run_lf --output json add \
   --title "Full Task" \
   --background "bg" \
-  --details "det" \
+  --description "det" \
   --priority p1 \
   --tag t1 --tag t2 \
   --definition-of-done "dod1" --definition-of-done "dod2" \
@@ -46,7 +47,7 @@ ADD_FULL="$(run_lf --output json add \
 assert_json_field "$ADD_FULL" '.title' "Full Task" "full: title"
 assert_json_field "$ADD_FULL" '.priority' "P1" "full: priority P1"
 assert_json_field "$ADD_FULL" '.background' "bg" "full: background"
-assert_json_field "$ADD_FULL" '.details' "det" "full: details"
+assert_json_field "$ADD_FULL" '.description' "det" "full: description"
 
 TAGS="$(echo "$ADD_FULL" | jq -c '.tags')"
 assert_eq '["t1","t2"]' "$TAGS" "full: tags"
@@ -80,7 +81,7 @@ JSON_FILE="$TEST_DIR/task_input.json"
 cat > "$JSON_FILE" <<'JSONEOF'
 {
   "title": "From JSON File",
-  "details": "file-details",
+  "description": "file-description",
   "priority": "P3",
   "definition_of_done": ["done1"]
 }
@@ -89,7 +90,7 @@ JSONEOF
 ADD_FILE="$(run_lf --output json add --from-json-file "$JSON_FILE")"
 
 assert_json_field "$ADD_FILE" '.title' "From JSON File" "from-json-file: title"
-assert_json_field "$ADD_FILE" '.details' "file-details" "from-json-file: details"
+assert_json_field "$ADD_FILE" '.description' "file-description" "from-json-file: description"
 assert_json_field "$ADD_FILE" '.priority' "P3" "from-json-file: priority"
 
 FILE_DOD="$(echo "$ADD_FILE" | jq -c '[.definition_of_done[].content]')"
@@ -105,7 +106,7 @@ ADD_JSON_FULL="$(cat <<JSONEOF | run_lf --output json add --from-json
 {
   "title": "JSON Full Fields",
   "background": "json-bg-full",
-  "details": "json-details-full",
+  "description": "json-description-full",
   "priority": "P1",
   "tags": ["x", "y"],
   "definition_of_done": ["check1", "check2"],
@@ -119,7 +120,7 @@ JSONEOF
 
 assert_json_field "$ADD_JSON_FULL" '.title' "JSON Full Fields" "from-json-full: title"
 assert_json_field "$ADD_JSON_FULL" '.background' "json-bg-full" "from-json-full: background"
-assert_json_field "$ADD_JSON_FULL" '.details' "json-details-full" "from-json-full: details"
+assert_json_field "$ADD_JSON_FULL" '.description' "json-description-full" "from-json-full: description"
 assert_json_field "$ADD_JSON_FULL" '.priority' "P1" "from-json-full: priority"
 assert_json_field "$ADD_JSON_FULL" '.branch' "feature/json-test" "from-json-full: branch"
 

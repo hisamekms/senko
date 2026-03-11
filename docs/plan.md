@@ -70,7 +70,8 @@ id INTEGER PRIMARY KEY AUTOINCREMENT
 title TEXT NOT NULL
 
 background TEXT
-details TEXT
+description TEXT
+plan TEXT
 
 priority INTEGER DEFAULT 2
 
@@ -187,7 +188,8 @@ id
 title
 definition_of_done[]
 background
-details
+description
+plan
 in_scope[]
 out_of_scope[]
 dependencies[]
@@ -456,7 +458,8 @@ Scalar fields:
 
 --title
 --background
---details
+--description
+--plan
 --priority
 --status
 

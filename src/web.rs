@@ -348,12 +348,21 @@ fn render_task_detail(task: &Task) -> String {
         ));
     }
 
-    // Details
-    if let Some(ref details) = task.details {
-        html.push_str("<h2>Details</h2>");
+    // Description
+    if let Some(ref description) = task.description {
+        html.push_str("<h2>Description</h2>");
         html.push_str(&format!(
             "<div class=\"section markdown\">{}</div>",
-            render_markdown(details)
+            render_markdown(description)
+        ));
+    }
+
+    // Plan
+    if let Some(ref plan) = task.plan {
+        html.push_str("<h2>Plan</h2>");
+        html.push_str(&format!(
+            "<div class=\"section markdown\">{}</div>",
+            render_markdown(plan)
         ));
     }
 

@@ -37,7 +37,8 @@ assert_eq "true" "$(echo "$ADD_OUT" | jq '.updated_at | type == "string"')" "add
 
 # Optional fields should be null
 assert_json_field "$ADD_OUT" '.background' "null" "add: background is null"
-assert_json_field "$ADD_OUT" '.details' "null" "add: details is null"
+assert_json_field "$ADD_OUT" '.description' "null" "add: description is null"
+assert_json_field "$ADD_OUT" '.plan' "null" "add: plan is null"
 
 # [2] get — JSON output
 echo "[2] get — JSON output"

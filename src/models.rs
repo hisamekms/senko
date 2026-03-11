@@ -134,7 +134,8 @@ pub struct Task {
     pub id: i64,
     pub title: String,
     pub background: Option<String>,
-    pub details: Option<String>,
+    pub description: Option<String>,
+    pub plan: Option<String>,
     pub priority: Priority,
     pub status: TaskStatus,
     pub assignee_session_id: Option<String>,
@@ -156,7 +157,7 @@ pub struct Task {
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,
-    pub details: Option<String>,
+    pub description: Option<String>,
     pub priority: Option<Priority>,
     #[serde(default)]
     pub definition_of_done: Vec<String>,
@@ -174,7 +175,8 @@ pub struct CreateTaskParams {
 pub struct UpdateTaskParams {
     pub title: Option<String>,
     pub background: Option<Option<String>>,
-    pub details: Option<Option<String>>,
+    pub description: Option<Option<String>>,
+    pub plan: Option<Option<String>>,
     pub priority: Option<Priority>,
     pub status: Option<TaskStatus>,
     pub assignee_session_id: Option<Option<String>>,

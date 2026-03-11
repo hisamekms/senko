@@ -24,8 +24,11 @@ assert_json_field "$OUT" '.title' "New Title" "edit title"
 OUT="$(run_lf --output json edit "$TASK_ID" --background "bg text")"
 assert_json_field "$OUT" '.background' "bg text" "edit background"
 
-OUT="$(run_lf --output json edit "$TASK_ID" --details "detail text")"
-assert_json_field "$OUT" '.details' "detail text" "edit details"
+OUT="$(run_lf --output json edit "$TASK_ID" --description "description text")"
+assert_json_field "$OUT" '.description' "description text" "edit description"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --plan "plan text")"
+assert_json_field "$OUT" '.plan' "plan text" "edit plan"
 
 OUT="$(run_lf --output json edit "$TASK_ID" --priority p1)"
 assert_json_field "$OUT" '.priority' "P1" "edit priority"
@@ -39,8 +42,11 @@ echo "[2] Field clear"
 OUT="$(run_lf --output json edit "$TASK_ID" --clear-background)"
 assert_json_field "$OUT" '.background' "null" "clear background"
 
-OUT="$(run_lf --output json edit "$TASK_ID" --clear-details)"
-assert_json_field "$OUT" '.details' "null" "clear details"
+OUT="$(run_lf --output json edit "$TASK_ID" --clear-description)"
+assert_json_field "$OUT" '.description' "null" "clear description"
+
+OUT="$(run_lf --output json edit "$TASK_ID" --clear-plan)"
+assert_json_field "$OUT" '.plan' "null" "clear plan"
 
 # 3. Array field operations (tags)
 echo "[3] Array field operations (tags)"
