@@ -8,6 +8,8 @@ use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
 
+use pulldown_cmark::{Options, Parser};
+
 use crate::db;
 use crate::models::{DodItem, Priority, Task, TaskStatus};
 
@@ -152,6 +154,21 @@ select {{ padding: 0.35rem 0.5rem; border-radius: 4px; border: 1px solid #ccc; }
 .filter-form {{ margin-bottom: 1rem; display: flex; align-items: center; gap: 0.5rem; }}
 .empty {{ text-align: center; padding: 2rem; color: #888; }}
 pre {{ white-space: pre-wrap; word-break: break-word; }}
+.markdown h1, .markdown h2, .markdown h3, .markdown h4 {{ margin: 0.75rem 0 0.5rem; }}
+.markdown h1 {{ font-size: 1.3rem; }}
+.markdown h2 {{ font-size: 1.15rem; }}
+.markdown h3 {{ font-size: 1.05rem; }}
+.markdown ul, .markdown ol {{ padding-left: 1.5rem; margin: 0.5rem 0; }}
+.markdown li {{ margin: 0.25rem 0; }}
+.markdown code {{ background: #f0f0f0; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.9em; }}
+.markdown pre code {{ display: block; padding: 0.75rem; overflow-x: auto; background: #f5f5f5; border-radius: 4px; }}
+.markdown table {{ width: 100%; border-collapse: collapse; margin: 0.5rem 0; }}
+.markdown th, .markdown td {{ padding: 0.4rem 0.6rem; border: 1px solid #ddd; }}
+.markdown th {{ background: #f5f5f5; font-weight: 600; }}
+.markdown blockquote {{ margin: 0.5rem 0; padding: 0.25rem 0.75rem; border-left: 3px solid #ddd; color: #666; }}
+.markdown p {{ margin: 0.5rem 0; }}
+.markdown p:first-child {{ margin-top: 0; }}
+.markdown p:last-child {{ margin-bottom: 0; }}
 </style>
 </head>
 <body>
@@ -271,8 +288,8 @@ fn render_task_detail(task: &Task) -> String {
     if let Some(ref details) = task.details {
         html.push_str("<h2>Details</h2>");
         html.push_str(&format!(
-            "<div class=\"section\"><pre>{}</pre></div>",
-            escape_html(details)
+            "<div class=\"section markdown\">{}</div>",
+            render_markdown(details)
         ));
     }
 
@@ -377,6 +394,16 @@ fn priority_badge(priority: Priority) -> String {
         Priority::P3 => "priority-p3",
     };
     format!(r#"<span class="badge {class}">{priority}</span>"#)
+}
+
+fn render_markdown(input: &str) -> String {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS;
+    let parser = Parser::new_ext(input, options);
+    let mut raw_html = String::new();
+    pulldown_cmark::html::push_html(&mut raw_html, parser);
+    ammonia::clean(&raw_html)
 }
 
 fn escape_html(s: &str) -> String {
