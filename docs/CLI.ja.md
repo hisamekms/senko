@@ -109,7 +109,7 @@ localflow deps list 5              # タスク5の依存一覧
 localflow skill-install
 ```
 
-Claude Code連携用のスキル定義を `.claude/skills/localflow-task/` に生成します。
+Claude Code連携用のスキル定義を `.claude/skills/localflow/` に生成します。
 
 ## ステータス遷移
 

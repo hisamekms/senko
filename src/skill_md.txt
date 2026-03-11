@@ -1,28 +1,28 @@
 ---
-name: localflow-task
-description: "Task management using localflow CLI. Provides workflows for adding, auto-selecting, executing, completing, canceling tasks and managing dependencies. Triggers on \"/localflow-task\", \"タスク追加\", \"次のタスク\", \"タスク実行\", \"タスクを作って\", \"タスク一覧\", \"タスク完了\", \"タスクキャンセル\", \"依存関係\", \"依存グラフ\", \"タスクグラフ\", \"DoDチェック\", \"add task\", \"next task\", \"complete task\", \"cancel task\", \"task list\", \"task dependencies\", \"dependency graph\", \"dod check\" or similar task management requests."
+name: localflow
+description: "Task management using localflow CLI. Provides workflows for adding, auto-selecting, executing, completing, canceling tasks and managing dependencies. Triggers on \"/localflow\", \"タスク追加\", \"次のタスク\", \"タスク実行\", \"タスクを作って\", \"タスク一覧\", \"タスク完了\", \"タスクキャンセル\", \"依存関係\", \"依存グラフ\", \"タスクグラフ\", \"DoDチェック\", \"add task\", \"next task\", \"complete task\", \"cancel task\", \"task list\", \"task dependencies\", \"dependency graph\", \"dod check\" or similar task management requests."
 argument-hint: "[<id> | add <description> | list | graph | complete <id> | cancel <id> | deps ...]"
 ---
 
-# localflow-task — Task Management Skill
+# localflow — Task Management Skill
 
 Manage and execute project tasks using the `localflow` CLI. localflow is a SQLite-backed task management tool with priority-driven selection and dependency tracking.
 
 ## Commands
 
-- `/localflow-task` — Auto-select and execute the next eligible task
-- `/localflow-task <id>` — Execute a specific task by ID
-- `/localflow-task add <description>` — Add a new task (interactive planning)
-- `/localflow-task add --simple <description>` — Add a task without planning phase
-- `/localflow-task list` — Show task list
-- `/localflow-task graph` — Show dependency graph (Mermaid diagram)
-- `/localflow-task complete <id>` — Mark a task as completed
-- `/localflow-task cancel <id>` — Cancel a task
-- `/localflow-task dod check <task_id> <index>` — Mark a DoD item as checked
-- `/localflow-task dod uncheck <task_id> <index>` — Unmark a DoD item
-- `/localflow-task deps add <task_id> --on <dep_id>` — Add a dependency
-- `/localflow-task deps remove <task_id> --on <dep_id>` — Remove a dependency
-- `/localflow-task deps list <task_id>` — List dependencies of a task
+- `/localflow` — Auto-select and execute the next eligible task
+- `/localflow <id>` — Execute a specific task by ID
+- `/localflow add <description>` — Add a new task (interactive planning)
+- `/localflow add --simple <description>` — Add a task without planning phase
+- `/localflow list` — Show task list
+- `/localflow graph` — Show dependency graph (Mermaid diagram)
+- `/localflow complete <id>` — Mark a task as completed
+- `/localflow cancel <id>` — Cancel a task
+- `/localflow dod check <task_id> <index>` — Mark a DoD item as checked
+- `/localflow dod uncheck <task_id> <index>` — Unmark a DoD item
+- `/localflow deps add <task_id> --on <dep_id>` — Add a dependency
+- `/localflow deps remove <task_id> --on <dep_id>` — Remove a dependency
+- `/localflow deps list <task_id>` — List dependencies of a task
 
 ## Argument Parsing
 

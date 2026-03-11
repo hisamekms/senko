@@ -109,7 +109,7 @@ localflow deps list 5              # List dependencies of task 5
 localflow skill-install
 ```
 
-Generates a skill definition under `.claude/skills/localflow-task/` for Claude Code integration.
+Generates a skill definition under `.claude/skills/localflow/` for Claude Code integration.
 
 ## Status Transitions
 

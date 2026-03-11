@@ -1007,7 +1007,7 @@ fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()
             dir.join("SKILL.md")
         } else {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            project_root.join(".claude").join("skills").join("localflow-task").join("SKILL.md")
+            project_root.join(".claude").join("skills").join("localflow").join("SKILL.md")
         };
         let operations = vec![format!("Write SKILL.md to {}", path.display())];
         return print_dry_run(&cli.output, &DryRunOperation { command: "skill-install".into(), operations });
@@ -1022,7 +1022,7 @@ fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()
 
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
     let claude_dir = project_root.join(".claude");
-    let target_dir = claude_dir.join("skills").join("localflow-task");
+    let target_dir = claude_dir.join("skills").join("localflow");
     let created_claude_dir = !claude_dir.exists();
 
     if created_claude_dir && !yes {
@@ -1687,7 +1687,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow-task")
+            .join("localflow")
             .join("SKILL.md");
         assert!(expected.exists());
         let content = std::fs::read_to_string(&expected).unwrap();
@@ -1716,7 +1716,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow-task")
+            .join("localflow")
             .join("SKILL.md");
         assert!(expected.exists());
     }
@@ -1740,7 +1740,7 @@ mod tests {
         assert!(tmp.path().join(".claude").exists());
         assert!(tmp
             .path()
-            .join(".claude/skills/localflow-task/SKILL.md")
+            .join(".claude/skills/localflow/SKILL.md")
             .exists());
     }
 
