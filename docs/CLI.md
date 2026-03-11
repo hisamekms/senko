@@ -61,6 +61,10 @@ Selection order: priority (P0 first) → created_at → id.
 ```bash
 # Scalar fields
 localflow edit 1 --title "New title"
+localflow edit 1 --description "What to do"
+localflow edit 1 --plan "How to do it"
+localflow edit 1 --clear-description
+localflow edit 1 --clear-plan
 localflow edit 1 --status todo
 localflow edit 1 --priority p0
 

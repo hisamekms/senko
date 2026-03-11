@@ -52,7 +52,7 @@ enum Command {
         #[arg(long)]
         background: Option<String>,
         #[arg(long)]
-        details: Option<String>,
+        description: Option<String>,
         /// Priority (p0-p3)
         #[arg(long)]
         priority: Option<String>,
@@ -70,10 +70,10 @@ enum Command {
         #[arg(long)]
         branch: Option<String>,
         /// Read JSON from stdin
-        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch"])]
         from_json: bool,
         /// Read JSON from file
-        #[arg(long, conflicts_with_all = ["title", "background", "details", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "from_json"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "from_json"])]
         from_json_file: Option<PathBuf>,
     },
     /// List tasks
@@ -112,9 +112,13 @@ enum Command {
         #[arg(long)]
         clear_background: bool,
         #[arg(long)]
-        details: Option<String>,
+        description: Option<String>,
         #[arg(long)]
-        clear_details: bool,
+        clear_description: bool,
+        #[arg(long)]
+        plan: Option<String>,
+        #[arg(long)]
+        clear_plan: bool,
         #[arg(long, value_enum)]
         priority: Option<Priority>,
         #[arg(long, value_enum)]
@@ -284,7 +288,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Add {
             ref title,
             ref background,
-            ref details,
+            ref description,
             ref priority,
             ref definition_of_done,
             ref in_scope,
@@ -298,7 +302,7 @@ fn run(cli: Cli) -> Result<()> {
             &cli,
             title.clone(),
             background.clone(),
-            details.clone(),
+            description.clone(),
             priority.clone(),
             definition_of_done.clone(),
             in_scope.clone(),
@@ -329,8 +333,10 @@ fn run(cli: Cli) -> Result<()> {
             title,
             background,
             clear_background,
-            details,
-            clear_details,
+            description,
+            clear_description,
+            plan,
+            clear_plan,
             priority,
             status,
             branch,
@@ -364,10 +370,15 @@ fn run(cli: Cli) -> Result<()> {
                 } else if let Some(ref bg) = background {
                     operations.push(format!("Update task #{}: set background to \"{}\"", id, bg));
                 }
-                if clear_details {
-                    operations.push(format!("Update task #{}: clear details", id));
-                } else if let Some(ref det) = details {
-                    operations.push(format!("Update task #{}: set details to \"{}\"", id, det));
+                if clear_description {
+                    operations.push(format!("Update task #{}: clear description", id));
+                } else if let Some(ref desc) = description {
+                    operations.push(format!("Update task #{}: set description to \"{}\"", id, desc));
+                }
+                if clear_plan {
+                    operations.push(format!("Update task #{}: clear plan", id));
+                } else if let Some(ref p) = plan {
+                    operations.push(format!("Update task #{}: set plan to \"{}\"", id, p));
                 }
                 if let Some(ref p) = priority {
                     operations.push(format!("Update task #{}: set priority to {}", id, p));
@@ -408,10 +419,15 @@ fn run(cli: Cli) -> Result<()> {
                 } else {
                     background.map(Some)
                 },
-                details: if clear_details {
+                description: if clear_description {
                     Some(None)
                 } else {
-                    details.map(Some)
+                    description.map(Some)
+                },
+                plan: if clear_plan {
+                    Some(None)
+                } else {
+                    plan.map(Some)
                 },
                 priority,
                 status,
@@ -454,8 +470,11 @@ fn run(cli: Cli) -> Result<()> {
                     if let Some(ref bg) = task.background {
                         println!("  background: {bg}");
                     }
-                    if let Some(ref det) = task.details {
-                        println!("  details: {det}");
+                    if let Some(ref desc) = task.description {
+                        println!("  description: {desc}");
+                    }
+                    if let Some(ref p) = task.plan {
+                        println!("  plan: {p}");
                     }
                     if let Some(ref branch) = task.branch {
                         println!("  branch: {branch}");
@@ -489,7 +508,7 @@ fn cmd_add(
     cli: &Cli,
     title: Option<String>,
     background: Option<String>,
-    details: Option<String>,
+    description: Option<String>,
     priority: Option<String>,
     definition_of_done: Vec<String>,
     in_scope: Vec<String>,
@@ -524,7 +543,7 @@ fn cmd_add(
         CreateTaskParams {
             title,
             background,
-            details,
+            description,
             priority,
             definition_of_done,
             in_scope,
@@ -543,8 +562,8 @@ fn cmd_add(
         if let Some(ref bg) = params.background {
             operations.push(format!("Set background to \"{}\"", bg));
         }
-        if let Some(ref det) = params.details {
-            operations.push(format!("Set details to \"{}\"", det));
+        if let Some(ref desc) = params.description {
+            operations.push(format!("Set description to \"{}\"", desc));
         }
         if !params.tags.is_empty() {
             operations.push(format!("Set tags: {}", params.tags.join(", ")));
@@ -586,7 +605,8 @@ fn cmd_add(
             &UpdateTaskParams {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
+                plan: None,
                 priority: None,
                 status: None,
                 assignee_session_id: None,
@@ -679,8 +699,11 @@ fn cmd_get(
             if let Some(ref bg) = task.background {
                 println!("Background: {bg}");
             }
-            if let Some(ref det) = task.details {
-                println!("Details:  {det}");
+            if let Some(ref desc) = task.description {
+                println!("Description: {desc}");
+            }
+            if let Some(ref p) = task.plan {
+                println!("Plan:     {p}");
             }
             if let Some(ref branch) = task.branch {
                 println!("Branch:   {branch}");
@@ -757,7 +780,8 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         &UpdateTaskParams {
             title: None,
             background: None,
-            details: None,
+            description: None,
+            plan: None,
             priority: None,
             status: Some(TaskStatus::InProgress),
             assignee_session_id: Some(session_id),
@@ -815,7 +839,8 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
         &UpdateTaskParams {
             title: None,
             background: None,
-            details: None,
+            description: None,
+            plan: None,
             priority: None,
             status: Some(TaskStatus::Completed),
             assignee_session_id: None,
@@ -863,7 +888,8 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         &UpdateTaskParams {
             title: None,
             background: None,
-            details: None,
+            description: None,
+            plan: None,
             priority: None,
             status: Some(TaskStatus::Canceled),
             assignee_session_id: None,
@@ -1099,7 +1125,7 @@ mod tests {
             "task",
             "--background",
             "bg",
-            "--details",
+            "--description",
             "det",
             "--priority",
             "p1",
@@ -1124,7 +1150,7 @@ mod tests {
             Command::Add {
                 title,
                 background,
-                details,
+                description,
                 priority,
                 definition_of_done,
                 in_scope,
@@ -1137,7 +1163,7 @@ mod tests {
             } => {
                 assert_eq!(title, Some("task".to_string()));
                 assert_eq!(background, Some("bg".to_string()));
-                assert_eq!(details, Some("det".to_string()));
+                assert_eq!(description, Some("det".to_string()));
                 assert_eq!(priority, Some("p1".to_string()));
                 assert_eq!(definition_of_done, vec!["done1", "done2"]);
                 assert_eq!(in_scope, vec!["s1"]);
@@ -1194,7 +1220,7 @@ mod tests {
             command: Command::Add {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec![],
                 in_scope: vec![],
@@ -1248,7 +1274,7 @@ mod tests {
             command: Command::Add {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec![],
                 in_scope: vec![],
@@ -1293,7 +1319,7 @@ mod tests {
             command: Command::Add {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec![],
                 in_scope: vec![],
@@ -1337,7 +1363,7 @@ mod tests {
             command: Command::Add {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec![],
                 in_scope: vec![],
@@ -1380,7 +1406,7 @@ mod tests {
             command: Command::Add {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec![],
                 in_scope: vec![],

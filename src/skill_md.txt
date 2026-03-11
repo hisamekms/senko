@@ -45,7 +45,7 @@ All commands use `localflow`. Default output is JSON. The `--output` flag is **g
 
 ```bash
 # Add a task (created in draft status)
-localflow add --title "Title" --priority p1 --details "Details"
+localflow add --title "Title" --priority p1 --description "Description"
 
 # List tasks (with filters)
 localflow --output text list
@@ -220,7 +220,7 @@ Review the list to identify tasks the new task should depend on.
 ```bash
 localflow edit <id> \
   --title "Final title" \
-  --details "Planning details" \
+  --description "Planning description" \
   --priority p1 \
   --status todo \
   --add-tag backend \
@@ -233,11 +233,11 @@ localflow deps add <id> --on <dep_id>
 
 **Simple mode:**
 
-1. Set the user's description as details
+1. Set the user's description as the description
 2. Transition to todo:
 
 ```bash
-localflow edit <id> --details "<description>" --status todo
+localflow edit <id> --description "<description>" --status todo
 ```
 
 Display the finalized task details to the user.
@@ -280,7 +280,7 @@ localflow edit <id> --status in-progress
 
 #### Step 1: Review Task
 
-Read full task info from `localflow get <id>` output: `details`, `definition_of_done`, `in_scope`, `out_of_scope`.
+Read full task info from `localflow get <id>` output: `description`, `plan`, `definition_of_done`, `in_scope`, `out_of_scope`.
 
 #### Step 2: Create Worktree
 
@@ -288,9 +288,13 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 #### Step 3: Plan Mode
 
-Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's details.
+Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Wait for the user to approve the plan.
+Wait for the user to approve the plan. After approval, save the plan to the task:
+
+```bash
+localflow edit <id> --plan "The approved implementation plan text"
+```
 
 Include this in the plan:
 

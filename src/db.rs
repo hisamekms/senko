@@ -73,7 +73,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             background TEXT,
-            details TEXT,
+            description TEXT,
+            plan TEXT,
             status TEXT NOT NULL DEFAULT 'draft',
             priority INTEGER NOT NULL DEFAULT 2,
             assignee_session_id TEXT,
@@ -137,14 +138,24 @@ fn migrate(conn: &Connection) -> Result<()> {
     if !has_branch {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN branch TEXT")?;
     }
+
+    // Rename details → description and add plan column
+    let has_description: bool = conn
+        .prepare("SELECT description FROM tasks LIMIT 0")
+        .is_ok();
+    if !has_description {
+        conn.execute_batch("ALTER TABLE tasks RENAME COLUMN details TO description")?;
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT")?;
+    }
+
     Ok(())
 }
 
 pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
     conn.execute(
-        "INSERT INTO tasks (title, background, details, priority, branch) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![params.title, params.background, params.details, priority, params.branch],
+        "INSERT INTO tasks (title, background, description, priority, branch) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -183,18 +194,18 @@ pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task>
 }
 
 pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (title, background, details, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch): (
-        String, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    let (title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch): (
+        String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
     ) = conn
         .query_row(
-            "SELECT title, background, details, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch FROM tasks WHERE id = ?1",
+            "SELECT title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
                     row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
-                    row.get(12)?,
+                    row.get(12)?, row.get(13)?,
                 ))
             },
         )
@@ -225,7 +236,8 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         id,
         title,
         background,
-        details,
+        description,
+        plan,
         priority,
         status,
         assignee_session_id,
@@ -267,9 +279,13 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
         columns.push(TaskColumn::Background);
         values.push(Box::new(background.clone()));
     }
-    if let Some(ref details) = params.details {
-        columns.push(TaskColumn::Details);
-        values.push(Box::new(details.clone()));
+    if let Some(ref description) = params.description {
+        columns.push(TaskColumn::Description);
+        values.push(Box::new(description.clone()));
+    }
+    if let Some(ref plan) = params.plan {
+        columns.push(TaskColumn::Plan);
+        values.push(Box::new(plan.clone()));
     }
     if let Some(priority) = params.priority {
         columns.push(TaskColumn::Priority);
@@ -373,7 +389,8 @@ pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayPa
 enum TaskColumn {
     Title,
     Background,
-    Details,
+    Description,
+    Plan,
     Priority,
     Status,
     AssigneeSessionId,
@@ -389,7 +406,8 @@ impl TaskColumn {
         match self {
             TaskColumn::Title => "title",
             TaskColumn::Background => "background",
-            TaskColumn::Details => "details",
+            TaskColumn::Description => "description",
+            TaskColumn::Plan => "plan",
             TaskColumn::Priority => "priority",
             TaskColumn::Status => "status",
             TaskColumn::AssigneeSessionId => "assignee_session_id",
@@ -744,7 +762,7 @@ mod tests {
         CreateTaskParams {
             title: title.to_string(),
             background: None,
-            details: None,
+            description: None,
             priority: None,
             definition_of_done: vec![],
             in_scope: vec![],
@@ -817,7 +835,7 @@ mod tests {
             &CreateTaskParams {
                 title: "Test task".to_string(),
                 background: Some("bg".to_string()),
-                details: Some("det".to_string()),
+                description: Some("det".to_string()),
                 priority: Some(Priority::P1),
                 definition_of_done: vec!["done1".to_string(), "done2".to_string()],
                 in_scope: vec!["scope1".to_string()],
@@ -831,7 +849,7 @@ mod tests {
 
         assert_eq!(task.title, "Test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
-        assert_eq!(task.details.as_deref(), Some("det"));
+        assert_eq!(task.description.as_deref(), Some("det"));
         assert_eq!(task.priority, Priority::P1);
         assert_eq!(task.status, TaskStatus::Draft);
         assert_eq!(
@@ -875,7 +893,8 @@ mod tests {
             &UpdateTaskParams {
                 title: Some("updated".to_string()),
                 background: Some(Some("new bg".to_string())),
-                details: Some(Some("new details".to_string())),
+                description: Some(Some("new description".to_string())),
+                plan: None,
                 priority: Some(Priority::P0),
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: Some(Some("session-1".to_string())),
@@ -890,7 +909,7 @@ mod tests {
 
         assert_eq!(updated.title, "updated");
         assert_eq!(updated.background.as_deref(), Some("new bg"));
-        assert_eq!(updated.details.as_deref(), Some("new details"));
+        assert_eq!(updated.description.as_deref(), Some("new description"));
         assert_eq!(updated.priority, Priority::P0);
         assert_eq!(updated.status, TaskStatus::Todo);
         assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
@@ -910,7 +929,8 @@ mod tests {
             &UpdateTaskParams {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
+                plan: None,
                 priority: None,
                 status: Some(TaskStatus::InProgress),
                 assignee_session_id: None,
@@ -930,7 +950,8 @@ mod tests {
             &UpdateTaskParams {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
+                plan: None,
                 priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None,
@@ -953,7 +974,7 @@ mod tests {
             &CreateTaskParams {
                 title: "to delete".to_string(),
                 background: None,
-                details: None,
+                description: None,
                 priority: None,
                 definition_of_done: vec!["d".to_string()],
                 in_scope: vec!["s".to_string()],
@@ -1017,7 +1038,8 @@ mod tests {
             &UpdateTaskParams {
                 title: None,
                 background: None,
-                details: None,
+                description: None,
+                plan: None,
                 priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None,
@@ -1096,7 +1118,7 @@ mod tests {
             &conn,
             dep.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1107,7 +1129,7 @@ mod tests {
             &conn,
             dep.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::InProgress),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1118,7 +1140,7 @@ mod tests {
             &conn,
             dep.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Completed),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1139,7 +1161,7 @@ mod tests {
             &conn,
             ready_task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1161,7 +1183,7 @@ mod tests {
             &conn,
             blocked_task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1401,7 +1423,7 @@ mod tests {
             conn,
             task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1417,7 +1439,7 @@ mod tests {
             conn,
             task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::InProgress),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1428,7 +1450,7 @@ mod tests {
             conn,
             task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Completed),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1463,7 +1485,7 @@ mod tests {
             &conn,
             task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1532,7 +1554,7 @@ mod tests {
             &conn,
             task.id,
             &UpdateTaskParams {
-                title: None, background: None, details: None, priority: None,
+                title: None, background: None, description: None, plan: None, priority: None,
                 status: Some(TaskStatus::Todo),
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
@@ -1734,7 +1756,8 @@ mod tests {
             &UpdateTaskParams {
                 title: None,
                 background: Some(None), // clear it
-                details: None,
+                description: None,
+                plan: None,
                 priority: None,
                 status: None,
                 assignee_session_id: None,
