@@ -34,6 +34,7 @@ pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/tasks/{id}", get(task_handler))
+        .route("/graph", get(graph_handler))
         .with_state(state);
 
     let expose = host
@@ -135,6 +136,127 @@ async fn task_handler(
     Ok(Html(layout(&title, &body)))
 }
 
+async fn graph_handler(
+    State(state): State<AppState>,
+) -> Result<Html<String>, StatusCode> {
+    let root = state.project_root.clone();
+
+    let tasks = tokio::task::spawn_blocking(move || {
+        let conn = db::open_db(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        db::list_tasks(&conn, &crate::models::ListTasksFilter::default())
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+
+    let body = render_graph_page(&tasks);
+    Ok(Html(layout("Dependency Graph", &body)))
+}
+
+fn render_graph_page(tasks: &[Task]) -> String {
+    let mut mermaid = String::from("graph TD\n");
+
+    for task in tasks {
+        let title = escape_mermaid(&task.title);
+        let priority = task.priority;
+        mermaid.push_str(&format!(
+            "    node_{}[\"#{} {} ({})\"]\n",
+            task.id, task.id, title, priority
+        ));
+    }
+
+    // Dependency edges: dep_id --> task_id
+    for task in tasks {
+        for dep in &task.dependencies {
+            mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id));
+        }
+    }
+
+    // Click handlers
+    for task in tasks {
+        mermaid.push_str(&format!(
+            "    click node_{} \"/tasks/{}\"\n",
+            task.id, task.id
+        ));
+    }
+
+    // Status-based styles
+    let mut completed = Vec::new();
+    let mut in_progress = Vec::new();
+    let mut todo = Vec::new();
+    let mut draft = Vec::new();
+    let mut canceled = Vec::new();
+
+    for task in tasks {
+        let node = format!("node_{}", task.id);
+        match task.status {
+            TaskStatus::Completed => completed.push(node),
+            TaskStatus::InProgress => in_progress.push(node),
+            TaskStatus::Todo => todo.push(node),
+            TaskStatus::Draft => draft.push(node),
+            TaskStatus::Canceled => canceled.push(node),
+        }
+    }
+
+    if !completed.is_empty() {
+        mermaid.push_str(&format!(
+            "    classDef completed fill:#d1fae5,stroke:#065f46,color:#065f46\n"
+        ));
+        mermaid.push_str(&format!(
+            "    class {} completed\n",
+            completed.join(",")
+        ));
+    }
+    if !in_progress.is_empty() {
+        mermaid.push_str(&format!(
+            "    classDef in_progress fill:#fef3c7,stroke:#92400e,color:#92400e\n"
+        ));
+        mermaid.push_str(&format!(
+            "    class {} in_progress\n",
+            in_progress.join(",")
+        ));
+    }
+    if !todo.is_empty() {
+        mermaid.push_str(&format!(
+            "    classDef todo fill:#dbeafe,stroke:#1e40af,color:#1e40af\n"
+        ));
+        mermaid.push_str(&format!("    class {} todo\n", todo.join(",")));
+    }
+    if !draft.is_empty() {
+        mermaid.push_str(&format!(
+            "    classDef draft fill:#e0e0e0,stroke:#555,color:#555\n"
+        ));
+        mermaid.push_str(&format!("    class {} draft\n", draft.join(",")));
+    }
+    if !canceled.is_empty() {
+        mermaid.push_str(&format!(
+            "    classDef canceled fill:#fee2e2,stroke:#991b1b,color:#991b1b\n"
+        ));
+        mermaid.push_str(&format!(
+            "    class {} canceled\n",
+            canceled.join(",")
+        ));
+    }
+
+    format!(
+        r#"<h1>Dependency Graph</h1>
+<div class="graph-container">
+<pre class="mermaid">
+{mermaid}
+</pre>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+<script>mermaid.initialize({{ startOnLoad: true, securityLevel: 'loose' }});</script>"#
+    )
+}
+
+fn escape_mermaid(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 fn layout(title: &str, body: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
@@ -213,10 +335,12 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
 .markdown p {{ margin: 0.5rem 0; }}
 .markdown p:first-child {{ margin-top: 0; }}
 .markdown p:last-child {{ margin-bottom: 0; }}
+.mermaid {{ background: #fff; padding: 1rem; border-radius: 6px; border: 1px solid #e0e0e0; overflow-x: auto; }}
+.graph-container {{ max-width: 100%; }}
 </style>
 </head>
 <body>
-<nav><a href="/">localflow</a></nav>
+<nav><a href="/">localflow</a> | <a href="/graph">graph</a></nav>
 {body}
 </body>
 </html>"#
