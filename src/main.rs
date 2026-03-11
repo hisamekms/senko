@@ -175,6 +175,12 @@ enum Command {
         #[command(subcommand)]
         command: DepsCommand,
     },
+    /// Start a read-only web viewer
+    Web {
+        /// Port to listen on
+        #[arg(long, default_value_t = 3141)]
+        port: u16,
+    },
     /// Install a skill
     SkillInstall {
         /// Output directory for SKILL.md
@@ -462,6 +468,13 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
+        Command::Web { port } => {
+            let root = resolve_project_root(cli.project_root.as_deref())?;
+            let _ = db::open_db(&root)?; // validate DB exists
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(localflow::web::serve(root, port))?;
+            Ok(())
+        }
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
         }
