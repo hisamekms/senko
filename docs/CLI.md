@@ -111,6 +111,21 @@ localflow skill-install
 
 Generates a skill definition under `.claude/skills/localflow/` for Claude Code integration.
 
+## `web` – Start a read-only web viewer
+
+```bash
+localflow web                # Listen on 127.0.0.1:3141
+localflow web --port 8080    # Listen on 127.0.0.1:8080
+localflow web --host         # Listen on 0.0.0.0:3141 (all interfaces)
+```
+
+| Option | Description |
+|--------|-------------|
+| `--port <PORT>` | Port to listen on (default: `3141`) |
+| `--host` | Expose to all network interfaces (bind `0.0.0.0` instead of `127.0.0.1`) |
+
+The `--host` flag can also be set via the `LOCALFLOW_WEB_HOST` environment variable (any non-empty value other than `0` or `false` enables it).
+
 ## Status Transitions
 
 ```

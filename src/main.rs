@@ -180,6 +180,9 @@ enum Command {
         /// Port to listen on
         #[arg(long, default_value_t = 3141)]
         port: u16,
+        /// Expose to all network interfaces (bind 0.0.0.0 instead of 127.0.0.1)
+        #[arg(long)]
+        host: bool,
     },
     /// Install a skill
     SkillInstall {
@@ -468,11 +471,11 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
-        Command::Web { port } => {
+        Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::open_db(&root)?; // validate DB exists
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::web::serve(root, port))?;
+            rt.block_on(localflow::web::serve(root, port, host))?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {

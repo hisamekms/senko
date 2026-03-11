@@ -21,7 +21,7 @@ struct ListQuery {
     status: Option<String>,
 }
 
-pub async fn serve(project_root: PathBuf, port: u16) -> Result<()> {
+pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
     let state = AppState {
         project_root: Arc::new(project_root),
     };
@@ -31,7 +31,16 @@ pub async fn serve(project_root: PathBuf, port: u16) -> Result<()> {
         .route("/tasks/{id}", get(task_handler))
         .with_state(state);
 
-    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let expose = host
+        || std::env::var("LOCALFLOW_WEB_HOST")
+            .map(|v| !v.is_empty() && v != "0" && v != "false")
+            .unwrap_or(false);
+    let ip = if expose {
+        [0, 0, 0, 0]
+    } else {
+        [127, 0, 0, 1]
+    };
+    let addr = std::net::SocketAddr::from((ip, port));
     eprintln!("Listening on http://{addr}");
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
