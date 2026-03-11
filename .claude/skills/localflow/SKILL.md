@@ -58,7 +58,7 @@ localflow list --tag backend
 localflow get <id>
 
 # Auto-select next task (highest-priority ready task → in_progress)
-localflow next
+localflow next --session-id $CLAUDE_CODE_SESSION_ID
 
 # Edit task fields
 localflow edit <id> --title "New Title" --status todo --add-tag backend
@@ -246,10 +246,10 @@ Display the finalized task details to the user.
 
 ## Auto-Select
 
-Use `localflow next` to auto-select the highest-priority eligible task.
+Use `localflow next --session-id $CLAUDE_CODE_SESSION_ID` to auto-select the highest-priority eligible task.
 
 ```bash
-localflow next
+localflow next --session-id $CLAUDE_CODE_SESSION_ID
 ```
 
 - **Success**: The selected task moves to `in_progress`. Read task info from JSON output and proceed to "Execute Task" Step 2.
