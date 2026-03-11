@@ -43,12 +43,26 @@ pub async fn serve(project_root: PathBuf, port: u16, host: bool) -> Result<()> {
         [127, 0, 0, 1]
     };
     let addr = std::net::SocketAddr::from((ip, port));
-    eprintln!("Listening on http://{addr}");
+    if expose {
+        let device_ip = get_local_ip()
+            .map(|ip| ip.to_string())
+            .unwrap_or_else(|| "0.0.0.0".to_string());
+        eprintln!("Listening on http://localhost:{port}");
+        eprintln!("             http://{device_ip}:{port}");
+    } else {
+        eprintln!("Listening on http://localhost:{port}");
+    }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+fn get_local_ip() -> Option<std::net::IpAddr> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    socket.local_addr().ok().map(|a| a.ip())
 }
 
 async fn index_handler(
