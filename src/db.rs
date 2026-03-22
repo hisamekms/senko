@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -556,6 +556,43 @@ pub fn next_task(conn: &Connection) -> Result<Option<Task>> {
         Some(id) => Ok(Some(get_task(conn, id)?)),
         None => Ok(None),
     }
+}
+
+pub fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
+    let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")?;
+    let rows = stmt.query_map([], |row| {
+        let status: String = row.get(0)?;
+        let count: i64 = row.get(1)?;
+        Ok((status, count))
+    })?;
+    let mut stats = HashMap::new();
+    for row in rows {
+        let (status, count) = row?;
+        stats.insert(status, count);
+    }
+    Ok(stats)
+}
+
+pub fn ready_count(conn: &Connection) -> Result<i64> {
+    let sql = "
+        SELECT COUNT(*) FROM tasks t
+        WHERE t.status = 'todo'
+          AND NOT EXISTS (
+            SELECT 1 FROM task_dependencies td
+            JOIN tasks dep ON dep.id = td.depends_on_task_id
+            WHERE td.task_id = t.id AND dep.status != 'completed'
+          )
+    ";
+    let count: i64 = conn.query_row(sql, [], |row| row.get(0))?;
+    Ok(count)
+}
+
+pub fn list_ready_tasks(conn: &Connection) -> Result<Vec<Task>> {
+    let filter = ListTasksFilter {
+        ready: true,
+        ..Default::default()
+    };
+    list_tasks(conn, &filter)
 }
 
 /// Check if adding dep_id as a dependency of task_id would create a cycle.
