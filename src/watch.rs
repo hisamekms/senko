@@ -6,8 +6,12 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+use chrono::Utc;
+use rusqlite::Connection;
+use uuid::Uuid;
+
 use crate::db;
-use crate::models::{ListTasksFilter, Task, TaskStatus};
+use crate::models::{ListTasksFilter, Priority, Task, TaskStatus};
 
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
@@ -21,10 +25,23 @@ pub struct HooksConfig {
     pub on_task_completed: Option<String>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+pub struct UnblockedTask {
+    pub id: i64,
+    pub title: String,
+    pub priority: Priority,
+}
+
 #[derive(Debug, Serialize)]
 pub struct WatchEvent {
+    pub event_id: String,
     pub event: String,
+    pub timestamp: String,
     pub task: Task,
+    pub stats: HashMap<String, i64>,
+    pub ready_count: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unblocked_tasks: Option<Vec<UnblockedTask>>,
 }
 
 pub fn load_config(project_root: &Path) -> Result<Config> {
@@ -69,35 +86,80 @@ fn is_process_alive(pid: u32) -> bool {
         .is_ok_and(|s| s.success())
 }
 
+fn build_event(
+    event_name: &str,
+    task: &Task,
+    conn: &Connection,
+    unblocked: Option<Vec<UnblockedTask>>,
+) -> WatchEvent {
+    let stats = db::task_stats(conn).unwrap_or_default();
+    let ready_count = db::ready_count(conn).unwrap_or(0);
+    WatchEvent {
+        event_id: Uuid::new_v4().to_string(),
+        event: event_name.into(),
+        timestamp: Utc::now().to_rfc3339(),
+        task: task.clone(),
+        stats,
+        ready_count,
+        unblocked_tasks: unblocked,
+    }
+}
+
 /// Detect events by comparing previous state with current tasks.
 fn detect_events(
     known_ids: &HashSet<i64>,
     statuses: &HashMap<i64, TaskStatus>,
     tasks: &[Task],
     config: &Config,
+    conn: &Connection,
+    prev_ready_ids: &HashSet<i64>,
 ) -> Vec<WatchEvent> {
-    let mut events = Vec::new();
+    let mut has_completed = false;
+    let mut raw_events: Vec<(&str, &Task, bool)> = Vec::new();
+
     for task in tasks {
         if !known_ids.contains(&task.id) {
             if config.hooks.on_task_added.is_some() {
-                events.push(WatchEvent {
-                    event: "task_added".into(),
-                    task: task.clone(),
-                });
+                raw_events.push(("task_added", task, false));
             }
         }
         if task.status == TaskStatus::Completed {
             if let Some(prev) = statuses.get(&task.id) {
                 if *prev != TaskStatus::Completed && config.hooks.on_task_completed.is_some() {
-                    events.push(WatchEvent {
-                        event: "task_completed".into(),
-                        task: task.clone(),
-                    });
+                    raw_events.push(("task_completed", task, true));
+                    has_completed = true;
                 }
             }
         }
     }
-    events
+
+    let unblocked = if has_completed {
+        let curr_ready = db::list_ready_tasks(conn).unwrap_or_default();
+        let unblocked_list: Vec<UnblockedTask> = curr_ready
+            .iter()
+            .filter(|t| !prev_ready_ids.contains(&t.id))
+            .map(|t| UnblockedTask {
+                id: t.id,
+                title: t.title.clone(),
+                priority: t.priority,
+            })
+            .collect();
+        Some(unblocked_list)
+    } else {
+        None
+    };
+
+    raw_events
+        .into_iter()
+        .map(|(name, task, is_completed)| {
+            let ub = if is_completed {
+                unblocked.clone()
+            } else {
+                None
+            };
+            build_event(name, task, conn, ub)
+        })
+        .collect()
 }
 
 fn fire_event(config: &Config, event: &WatchEvent) {
@@ -145,7 +207,9 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
             tokio::select! {
                 _ = interval.tick() => {
                     let tasks = db::list_tasks(&conn, &filter)?;
-                    let events = detect_events(&known_ids, &statuses, &tasks, &config);
+                    let prev_ready = db::list_ready_tasks(&conn)?;
+                    let prev_ready_ids: HashSet<i64> = prev_ready.iter().map(|t| t.id).collect();
+                    let events = detect_events(&known_ids, &statuses, &tasks, &config, &conn, &prev_ready_ids);
 
                     for event in &events {
                         fire_event(&config, event);
@@ -243,6 +307,12 @@ pub fn stop_daemon(project_root: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn setup_db() -> (tempfile::TempDir, Connection) {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = db::open_db(dir.path()).unwrap();
+        (dir, conn)
+    }
+
     #[test]
     fn load_config_missing_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -288,6 +358,7 @@ on_task_completed = "echo completed"
 
     #[test]
     fn watch_event_serialization() {
+        let (_dir, conn) = setup_db();
         let task = Task {
             id: 1,
             title: "Test".into(),
@@ -310,19 +381,126 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = WatchEvent {
-            event: "task_added".into(),
-            task,
-        };
+        let event = build_event("task_added", &task, &conn, None);
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"task_added\""));
         assert!(json.contains("\"id\":1"));
+        assert!(json.contains("\"event_id\""));
+        assert!(json.contains("\"timestamp\""));
+        assert!(json.contains("\"stats\""));
+        assert!(json.contains("\"ready_count\""));
+        // unblocked_tasks should be absent when None
+        assert!(!json.contains("\"unblocked_tasks\""));
+    }
+
+    #[test]
+    fn event_has_valid_uuid_and_timestamp() {
+        let (_dir, conn) = setup_db();
+        let task = Task {
+            id: 1,
+            title: "Test".into(),
+            background: None,
+            description: None,
+            plan: None,
+            priority: crate::models::Priority::P2,
+            status: TaskStatus::Draft,
+            assignee_session_id: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            definition_of_done: vec![],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            tags: vec![],
+            dependencies: vec![],
+        };
+        let event = build_event("task_added", &task, &conn, None);
+        // Validate UUID v4 format
+        assert!(Uuid::parse_str(&event.event_id).is_ok());
+        // Validate ISO 8601 timestamp
+        assert!(chrono::DateTime::parse_from_rfc3339(&event.timestamp).is_ok());
+    }
+
+    #[test]
+    fn event_has_stats() {
+        let (_dir, conn) = setup_db();
+        // Add a task to have something in stats
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Task1".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        let event = build_event("task_added", &task, &conn, None);
+        assert!(event.stats.contains_key("draft"));
+        assert_eq!(*event.stats.get("draft").unwrap(), 1);
+    }
+
+    #[test]
+    fn event_has_ready_count() {
+        let (_dir, conn) = setup_db();
+        // Create a todo task with no dependencies → should be ready
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Ready".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        db::update_task(
+            &conn,
+            1,
+            &crate::models::UpdateTaskParams {
+                status: Some(TaskStatus::Todo),
+                title: None,
+                background: None,
+                description: None,
+                plan: None,
+                priority: None,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+                branch: None,
+            },
+        )
+        .unwrap();
+        let task = db::get_task(&conn, 1).unwrap();
+        let event = build_event("task_added", &task, &conn, None);
+        assert_eq!(event.ready_count, 1);
     }
 
     #[test]
     fn detect_events_new_task() {
+        let (_dir, conn) = setup_db();
         let known_ids = HashSet::new();
         let statuses = HashMap::new();
+        let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
                 on_task_added: Some("echo".into()),
@@ -351,17 +529,20 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let events = detect_events(&known_ids, &statuses, &[task], &config);
+        let events = detect_events(&known_ids, &statuses, &[task], &config, &conn, &prev_ready_ids);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event, "task_added");
+        assert!(events[0].unblocked_tasks.is_none());
     }
 
     #[test]
     fn detect_events_completed() {
+        let (_dir, conn) = setup_db();
         let mut known_ids = HashSet::new();
         known_ids.insert(1);
         let mut statuses = HashMap::new();
         statuses.insert(1, TaskStatus::InProgress);
+        let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
                 on_task_added: None,
@@ -390,17 +571,20 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let events = detect_events(&known_ids, &statuses, &[task], &config);
+        let events = detect_events(&known_ids, &statuses, &[task], &config, &conn, &prev_ready_ids);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].event, "task_completed");
+        assert!(events[0].unblocked_tasks.is_some());
     }
 
     #[test]
     fn detect_events_no_change() {
+        let (_dir, conn) = setup_db();
         let mut known_ids = HashSet::new();
         known_ids.insert(1);
         let mut statuses = HashMap::new();
         statuses.insert(1, TaskStatus::Todo);
+        let prev_ready_ids = HashSet::new();
         let config = Config {
             hooks: HooksConfig {
                 on_task_added: Some("echo".into()),
@@ -429,7 +613,152 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let events = detect_events(&known_ids, &statuses, &[task], &config);
+        let events = detect_events(&known_ids, &statuses, &[task], &config, &conn, &prev_ready_ids);
         assert_eq!(events.len(), 0);
+    }
+
+    #[test]
+    fn completed_event_has_unblocked_tasks() {
+        let (_dir, conn) = setup_db();
+
+        // Create task 1 (will be completed) and task 2 (depends on task 1)
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Dependency".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        let update_none = |status| crate::models::UpdateTaskParams {
+            status: Some(status),
+            title: None,
+            background: None,
+            description: None,
+            plan: None,
+            priority: None,
+            assignee_session_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+        };
+        db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
+        db::update_task(&conn, 1, &update_none(TaskStatus::InProgress)).unwrap();
+        db::update_task(&conn, 1, &update_none(TaskStatus::Completed)).unwrap();
+
+        db::create_task(
+            &conn,
+            &crate::models::CreateTaskParams {
+                title: "Blocked".into(),
+                background: None,
+                description: None,
+                priority: None,
+                definition_of_done: vec![],
+                in_scope: vec![],
+                out_of_scope: vec![],
+                branch: None,
+                tags: vec![],
+                dependencies: vec![],
+            },
+        )
+        .unwrap();
+        db::update_task(
+            &conn,
+            2,
+            &crate::models::UpdateTaskParams {
+                status: Some(TaskStatus::Todo),
+                title: None,
+                background: None,
+                description: None,
+                plan: None,
+                priority: None,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+                branch: None,
+            },
+        )
+        .unwrap();
+        db::add_dependency(&conn, 2, 1).unwrap();
+
+        // Before completion, task 2 was not ready (prev_ready_ids is empty)
+        let prev_ready_ids = HashSet::new();
+        let mut known_ids = HashSet::new();
+        known_ids.insert(1);
+        let mut statuses = HashMap::new();
+        statuses.insert(1, TaskStatus::InProgress);
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added: None,
+                on_task_completed: Some("echo".into()),
+            },
+        };
+
+        let task1 = db::get_task(&conn, 1).unwrap();
+        let events = detect_events(
+            &known_ids,
+            &statuses,
+            &[task1],
+            &config,
+            &conn,
+            &prev_ready_ids,
+        );
+
+        assert_eq!(events.len(), 1);
+        let unblocked = events[0].unblocked_tasks.as_ref().unwrap();
+        assert_eq!(unblocked.len(), 1);
+        assert_eq!(unblocked[0].id, 2);
+        assert_eq!(unblocked[0].title, "Blocked");
+    }
+
+    #[test]
+    fn added_event_no_unblocked_tasks() {
+        let (_dir, conn) = setup_db();
+        let known_ids = HashSet::new();
+        let statuses = HashMap::new();
+        let prev_ready_ids = HashSet::new();
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added: Some("echo".into()),
+                on_task_completed: None,
+            },
+        };
+        let task = Task {
+            id: 1,
+            title: "New".into(),
+            background: None,
+            description: None,
+            plan: None,
+            priority: crate::models::Priority::P2,
+            status: TaskStatus::Draft,
+            assignee_session_id: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            definition_of_done: vec![],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            tags: vec![],
+            dependencies: vec![],
+        };
+        let events = detect_events(&known_ids, &statuses, &[task], &config, &conn, &prev_ready_ids);
+        assert_eq!(events.len(), 1);
+        assert!(events[0].unblocked_tasks.is_none());
     }
 }
