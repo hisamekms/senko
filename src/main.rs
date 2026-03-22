@@ -188,6 +188,19 @@ enum Command {
         #[arg(long)]
         host: bool,
     },
+    /// Watch for task events and run hooks
+    Watch {
+        #[command(subcommand)]
+        action: Option<WatchAction>,
+
+        /// Polling interval in seconds
+        #[arg(long, default_value_t = 5)]
+        interval: u64,
+
+        /// Run as background daemon
+        #[arg(short = 'd', long)]
+        daemon: bool,
+    },
     /// Install a skill
     SkillInstall {
         /// Output directory for SKILL.md
@@ -197,6 +210,12 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum WatchAction {
+    /// Stop the watch daemon
+    Stop,
 }
 
 #[derive(Debug, Subcommand)]
@@ -490,6 +509,18 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
+        Command::Watch {
+            action,
+            interval,
+            daemon,
+        } => {
+            let root = resolve_project_root(cli.project_root.as_deref())?;
+            match action {
+                Some(WatchAction::Stop) => localflow::watch::stop_daemon(&root),
+                None if daemon => localflow::watch::start_daemon(&root, interval),
+                None => localflow::watch::run_watch_loop(&root, interval),
+            }
+        }
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::open_db(&root)?; // validate DB exists
