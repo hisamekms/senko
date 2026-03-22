@@ -84,7 +84,8 @@ fn create_schema(conn: &Connection) -> Result<()> {
             completed_at TEXT,
             canceled_at TEXT,
             cancel_reason TEXT,
-            branch TEXT
+            branch TEXT,
+            metadata TEXT
         );
 
         CREATE TABLE IF NOT EXISTS task_definition_of_done (
@@ -148,14 +149,27 @@ fn migrate(conn: &Connection) -> Result<()> {
         conn.execute_batch("ALTER TABLE tasks ADD COLUMN plan TEXT")?;
     }
 
+    // Add metadata column if it doesn't exist
+    let has_metadata: bool = conn
+        .prepare("SELECT metadata FROM tasks LIMIT 0")
+        .is_ok();
+    if !has_metadata {
+        conn.execute_batch("ALTER TABLE tasks ADD COLUMN metadata TEXT")?;
+    }
+
     Ok(())
 }
 
 pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
+    let metadata_str = params
+        .metadata
+        .as_ref()
+        .map(|v| serde_json::to_string(v))
+        .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch],
+        "INSERT INTO tasks (title, background, description, priority, branch, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, metadata_str],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -194,18 +208,18 @@ pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task>
 }
 
 pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch): (
-        String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    let (title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, metadata_str): (
+        String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
     ) = conn
         .query_row(
-            "SELECT title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch FROM tasks WHERE id = ?1",
+            "SELECT title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, metadata FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
                     row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?,
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
-                    row.get(12)?, row.get(13)?,
+                    row.get(12)?, row.get(13)?, row.get(14)?,
                 ))
             },
         )
@@ -213,6 +227,10 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
 
     let status: TaskStatus = status_str.parse()?;
     let priority = Priority::try_from(priority_val)?;
+    let metadata: Option<serde_json::Value> = metadata_str
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .context("invalid metadata JSON in database")?;
 
     let definition_of_done = query_dod_list(conn, id)?;
     let in_scope = query_string_list(
@@ -248,6 +266,7 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         canceled_at,
         cancel_reason,
         branch,
+        metadata,
         definition_of_done,
         in_scope,
         out_of_scope,
@@ -318,6 +337,15 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     if let Some(ref branch) = params.branch {
         columns.push(TaskColumn::Branch);
         values.push(Box::new(branch.clone()));
+    }
+    if let Some(ref metadata) = params.metadata {
+        columns.push(TaskColumn::Metadata);
+        let metadata_str: Option<String> = metadata
+            .as_ref()
+            .map(|v| serde_json::to_string(v))
+            .transpose()
+            .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
+        values.push(Box::new(metadata_str));
     }
 
     if !columns.is_empty() {
@@ -399,6 +427,7 @@ enum TaskColumn {
     CanceledAt,
     CancelReason,
     Branch,
+    Metadata,
 }
 
 impl TaskColumn {
@@ -416,6 +445,7 @@ impl TaskColumn {
             TaskColumn::CanceledAt => "canceled_at",
             TaskColumn::CancelReason => "cancel_reason",
             TaskColumn::Branch => "branch",
+            TaskColumn::Metadata => "metadata",
         }
     }
 }
@@ -812,6 +842,7 @@ mod tests {
             in_scope: vec![],
             out_of_scope: vec![],
             branch: None,
+            metadata: None,
             tags: vec![],
             dependencies: vec![],
         }
@@ -885,6 +916,7 @@ mod tests {
                 in_scope: vec!["scope1".to_string()],
                 out_of_scope: vec!["out1".to_string()],
                 branch: None,
+                metadata: None,
                 tags: vec!["rust".to_string(), "cli".to_string()],
                 dependencies: vec![],
             },
@@ -947,6 +979,7 @@ mod tests {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -983,6 +1016,7 @@ mod tests {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         );
         assert!(result.is_err());
@@ -1004,6 +1038,7 @@ mod tests {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -1024,6 +1059,7 @@ mod tests {
                 in_scope: vec!["s".to_string()],
                 out_of_scope: vec!["o".to_string()],
                 branch: None,
+                metadata: None,
                 tags: vec!["tag".to_string()],
                 dependencies: vec![],
             },
@@ -1092,6 +1128,7 @@ mod tests {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -1131,6 +1168,7 @@ mod tests {
             &CreateTaskParams {
                 title: "tagged".to_string(),
                 branch: None,
+                metadata: None,
                 tags: vec!["rust".to_string()],
                 ..default_create_params("tagged")
             },
@@ -1167,6 +1205,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
         update_task(
@@ -1178,6 +1217,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
         update_task(
@@ -1189,6 +1229,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
 
@@ -1210,6 +1251,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
 
@@ -1232,6 +1274,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
 
@@ -1257,6 +1300,7 @@ mod tests {
             &CreateTaskParams {
                 title: "t1".to_string(),
                 branch: None,
+                metadata: None,
                 tags: vec!["rust".to_string()],
                 ..default_create_params("t1")
             },
@@ -1316,6 +1360,7 @@ mod tests {
             &conn,
             &CreateTaskParams {
                 branch: None,
+                metadata: None,
                 tags: vec!["old".to_string()],
                 ..default_create_params("t")
             },
@@ -1346,6 +1391,7 @@ mod tests {
             &conn,
             &CreateTaskParams {
                 branch: None,
+                metadata: None,
                 tags: vec!["existing".to_string()],
                 ..default_create_params("t")
             },
@@ -1375,6 +1421,7 @@ mod tests {
             &conn,
             &CreateTaskParams {
                 branch: None,
+                metadata: None,
                 tags: vec!["keep".to_string(), "remove".to_string()],
                 ..default_create_params("t")
             },
@@ -1472,6 +1519,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap()
@@ -1488,6 +1536,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
         update_task(
@@ -1499,6 +1548,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap()
     }
@@ -1534,6 +1584,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
 
@@ -1603,6 +1654,7 @@ mod tests {
                 assignee_session_id: None, started_at: None, completed_at: None,
                 canceled_at: None, cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         ).unwrap();
 
@@ -1810,6 +1862,7 @@ mod tests {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();

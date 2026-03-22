@@ -69,11 +69,14 @@ enum Command {
         /// Git branch name (supports ${task_id} template)
         #[arg(long)]
         branch: Option<String>,
+        /// Arbitrary JSON metadata
+        #[arg(long)]
+        metadata: Option<String>,
         /// Read JSON from stdin
-        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "metadata"])]
         from_json: bool,
         /// Read JSON from file
-        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "from_json"])]
+        #[arg(long, conflicts_with_all = ["title", "background", "description", "priority", "definition_of_done", "in_scope", "out_of_scope", "tag", "depends_on", "branch", "metadata", "from_json"])]
         from_json_file: Option<PathBuf>,
     },
     /// List tasks
@@ -128,6 +131,11 @@ enum Command {
         branch: Option<String>,
         #[arg(long)]
         clear_branch: bool,
+        /// Arbitrary JSON metadata
+        #[arg(long)]
+        metadata: Option<String>,
+        #[arg(long)]
+        clear_metadata: bool,
         // Array set
         #[arg(long, num_args = 0..)]
         set_tags: Option<Vec<String>>,
@@ -315,6 +323,7 @@ fn run(cli: Cli) -> Result<()> {
             ref tag,
             ref depends_on,
             ref branch,
+            ref metadata,
             from_json,
             ref from_json_file,
         } => cmd_add(
@@ -329,6 +338,7 @@ fn run(cli: Cli) -> Result<()> {
             tag.clone(),
             depends_on.clone(),
             branch.clone(),
+            metadata.clone(),
             from_json,
             from_json_file.clone(),
         ),
@@ -360,6 +370,8 @@ fn run(cli: Cli) -> Result<()> {
             status,
             branch,
             clear_branch,
+            metadata,
+            clear_metadata,
             set_tags,
             set_definition_of_done,
             set_in_scope,
@@ -410,6 +422,11 @@ fn run(cli: Cli) -> Result<()> {
                 } else if let Some(ref b) = branch {
                     operations.push(format!("Update task #{}: set branch to \"{}\"", id, b));
                 }
+                if clear_metadata {
+                    operations.push(format!("Update task #{}: clear metadata", id));
+                } else if let Some(ref m) = metadata {
+                    operations.push(format!("Update task #{}: set metadata to {}", id, m));
+                }
                 if let Some(ref tags) = set_tags {
                     operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
                 }
@@ -456,6 +473,18 @@ fn run(cli: Cli) -> Result<()> {
                 canceled_at: None,
                 cancel_reason: None,
                 branch: branch_value,
+                metadata: if clear_metadata {
+                    Some(None)
+                } else {
+                    match metadata {
+                        Some(m) => {
+                            let val: serde_json::Value = serde_json::from_str(&m)
+                                .context("invalid JSON for --metadata")?;
+                            Some(Some(val))
+                        }
+                        None => None,
+                    }
+                },
             };
 
             let array_params = UpdateTaskArrayParams {
@@ -497,6 +526,9 @@ fn run(cli: Cli) -> Result<()> {
                     }
                     if let Some(ref branch) = task.branch {
                         println!("  branch: {branch}");
+                    }
+                    if let Some(ref meta) = task.metadata {
+                        println!("  metadata: {}", serde_json::to_string(meta)?);
                     }
                     if !task.tags.is_empty() {
                         println!("  tags: {}", task.tags.join(", "));
@@ -547,6 +579,7 @@ fn cmd_add(
     tag: Vec<String>,
     depends_on: Vec<i64>,
     branch: Option<String>,
+    metadata: Option<String>,
     from_json: bool,
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
@@ -571,6 +604,14 @@ fn cmd_add(
             Some(s) => Some(s.parse::<Priority>()?),
             None => None,
         };
+        let metadata_val = match metadata {
+            Some(m) => {
+                let val: serde_json::Value = serde_json::from_str(&m)
+                    .context("invalid JSON for --metadata")?;
+                Some(val)
+            }
+            None => None,
+        };
         CreateTaskParams {
             title,
             background,
@@ -580,6 +621,7 @@ fn cmd_add(
             in_scope,
             out_of_scope,
             branch,
+            metadata: metadata_val,
             tags: tag,
             dependencies: depends_on,
         }
@@ -615,6 +657,9 @@ fn cmd_add(
         if let Some(ref b) = params.branch {
             operations.push(format!("Set branch to \"{}\"", b));
         }
+        if let Some(ref m) = params.metadata {
+            operations.push(format!("Set metadata to {}", m));
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
@@ -646,6 +691,7 @@ fn cmd_add(
                 canceled_at: None,
                 cancel_reason: None,
                 branch: Some(Some(expanded)),
+                metadata: None,
             },
         )?
     } else {
@@ -750,6 +796,9 @@ fn cmd_get(
                 let deps: Vec<String> = task.dependencies.iter().map(|d| d.to_string()).collect();
                 println!("Deps:     {}", deps.join(", "));
             }
+            if let Some(ref meta) = task.metadata {
+                println!("Metadata: {}", serde_json::to_string_pretty(meta)?);
+            }
             if !task.definition_of_done.is_empty() {
                 println!("DoD:");
                 for item in &task.definition_of_done {
@@ -822,6 +871,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
         },
     )?;
 
@@ -881,6 +931,7 @@ fn cmd_complete(cli: &Cli, id: i64) -> Result<()> {
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
         },
     )?;
 
@@ -930,6 +981,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
             canceled_at: Some(Some(now)),
             cancel_reason: reason.map(Some),
             branch: None,
+            metadata: None,
         },
     )?;
 
@@ -1190,6 +1242,7 @@ mod tests {
                 tag,
                 depends_on,
                 branch,
+                metadata: _,
                 from_json,
                 from_json_file,
             } => {
@@ -1261,6 +1314,7 @@ mod tests {
                 depends_on: vec![],
                 from_json: false,
                 branch: None,
+                metadata: None,
                 from_json_file: None,
             },
         };
@@ -1275,6 +1329,7 @@ mod tests {
             vec![],
             vec!["rust".to_string()],
             vec![],
+            None,
             None,
             false,
             None,
@@ -1315,6 +1370,7 @@ mod tests {
                 depends_on: vec![],
                 from_json: false,
                 branch: None,
+                metadata: None,
                 from_json_file: None,
             },
         };
@@ -1329,6 +1385,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             false,
             Some(json_path),
@@ -1360,6 +1417,7 @@ mod tests {
                 depends_on: vec![],
                 from_json: false,
                 branch: None,
+                metadata: None,
                 from_json_file: None,
             },
         };
@@ -1374,6 +1432,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             false,
             None,
@@ -1404,6 +1463,7 @@ mod tests {
                 depends_on: vec![],
                 from_json: false,
                 branch: None,
+                metadata: None,
                 from_json_file: None,
             },
         };
@@ -1418,6 +1478,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             false,
             None,
@@ -1447,6 +1508,7 @@ mod tests {
                 depends_on: vec![],
                 from_json: false,
                 branch: None,
+                metadata: None,
                 from_json_file: None,
             },
         };
@@ -1461,6 +1523,7 @@ mod tests {
             vec![],
             vec![],
             vec![],
+            None,
             None,
             false,
             None,

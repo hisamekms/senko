@@ -375,6 +375,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
@@ -412,6 +413,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
@@ -440,6 +442,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                metadata: None,
                 tags: vec![],
                 dependencies: vec![],
             },
@@ -466,6 +469,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                metadata: None,
                 tags: vec![],
                 dependencies: vec![],
             },
@@ -487,6 +491,7 @@ on_task_completed = "echo completed"
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -523,6 +528,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
@@ -565,6 +571,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
@@ -607,6 +614,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
@@ -633,6 +641,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                metadata: None,
                 tags: vec![],
                 dependencies: vec![],
             },
@@ -651,6 +660,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
         };
         db::update_task(&conn, 1, &update_none(TaskStatus::Todo)).unwrap();
         db::update_task(&conn, 1, &update_none(TaskStatus::InProgress)).unwrap();
@@ -667,6 +677,7 @@ on_task_completed = "echo completed"
                 in_scope: vec![],
                 out_of_scope: vec![],
                 branch: None,
+                metadata: None,
                 tags: vec![],
                 dependencies: vec![],
             },
@@ -688,6 +699,7 @@ on_task_completed = "echo completed"
                 canceled_at: None,
                 cancel_reason: None,
                 branch: None,
+                metadata: None,
             },
         )
         .unwrap();
@@ -751,6 +763,7 @@ on_task_completed = "echo completed"
             canceled_at: None,
             cancel_reason: None,
             branch: None,
+            metadata: None,
             definition_of_done: vec![],
             in_scope: vec![],
             out_of_scope: vec![],
