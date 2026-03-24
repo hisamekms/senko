@@ -117,7 +117,7 @@ if [[ -f "$PID_FILE" ]]; then
   echo "  PASS: PID file created"
   PASS_COUNT=$((PASS_COUNT + 1))
 
-  DAEMON_PID="$(cat "$PID_FILE")"
+  DAEMON_PID="$(jq -r '.pid' "$PID_FILE")"
 
   # Process should be running
   if kill -0 "$DAEMON_PID" 2>/dev/null; then
