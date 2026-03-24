@@ -126,6 +126,107 @@ localflow web --host         # 0.0.0.0:3141 でリッスン（全インターフ
 
 `--host` フラグは環境変数 `LOCALFLOW_WEB_HOST` でも設定可能です（`0` と `false` 以外の非空値で有効になります）。
 
+## `watch` – タスクイベントの監視とフック実行
+
+タスクデータベースの変更をポーリングし、イベント検出時に設定されたフックを実行します。
+
+```bash
+localflow watch                           # フォアグラウンド（5秒間隔）
+localflow watch --interval 10             # ポーリング間隔を変更
+localflow watch -d                        # バックグラウンドデーモンとして起動
+localflow watch -d --interval 10          # デーモン＋カスタム間隔
+localflow watch --log-file /tmp/watch.log # ログファイルパスを指定
+localflow watch stop                      # デーモンを停止
+localflow watch status                    # デーモンの状態を表示
+```
+
+| オプション | 説明 |
+|--------|-------------|
+| `--interval <SECONDS>` | ポーリング間隔（秒）（デフォルト: `5`） |
+| `-d, --daemon` | バックグラウンドデーモンとして実行 |
+| `--log-file <PATH>` | ログファイルパス（デーモン時デフォルト: `.localflow/watch.log`） |
+
+| サブコマンド | 説明 |
+|------------|-------------|
+| `stop` | 実行中のデーモンを停止 |
+| `status` | デーモンの状態を表示（実行中/停止、PID、稼働時間） |
+
+### 設定
+
+`.localflow/config.toml` にフックを定義します:
+
+```toml
+[hooks]
+on_task_added = "echo '新しいタスク' | notify-send -"
+on_task_completed = "curl -X POST https://example.com/webhook"
+```
+
+| フック | トリガー |
+|------|---------|
+| `on_task_added` | 新しいタスクがデータベースに追加された |
+| `on_task_completed` | タスクが `completed` ステータスに遷移した |
+
+フックは **stdin** でイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。
+
+> イベントは対応するフックが設定されている場合のみ検出されます。
+
+### イベントペイロード
+
+フックのstdinに渡されるJSONオブジェクト:
+
+```json
+{
+  "event_id": "550e8400-e29b-41d4-a716-446655440000",
+  "event": "task_added",
+  "timestamp": "2026-03-24T12:00:00Z",
+  "task": { },
+  "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
+  "ready_count": 2,
+  "unblocked_tasks": null
+}
+```
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `event_id` | string | UUID v4 一意識別子 |
+| `event` | string | `"task_added"` または `"task_completed"` |
+| `timestamp` | string | ISO 8601（RFC 3339）タイムスタンプ |
+| `task` | object | タスクオブジェクト全体（`localflow get` と同じスキーマ） |
+| `stats` | object | ステータス別タスク数（`{"todo": 3, "completed": 5, ...}`） |
+| `ready_count` | integer | 依存解決済みの `todo` タスク数 |
+| `unblocked_tasks` | array \| null | このイベントで新たにブロック解除されたタスク（`task_completed` のみ） |
+
+#### `unblocked_tasks` の要素
+
+`task_completed` イベントで、タスク完了により他のタスクのブロックが解除された場合に含まれます。
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `id` | integer | タスクID |
+| `title` | string | タスクタイトル |
+| `priority` | string | `"P0"` – `"P3"` |
+| `metadata` | object \| null | タスクメタデータ（任意のJSON） |
+
+### ログ出力
+
+デーモン実行時（`-d`）はデフォルトで `.localflow/watch.log` にログを出力します。`--log-file` でパスを変更できます。フォアグラウンドモードでは `--log-file` を指定するとファイルログが有効になります。
+
+ログフォーマット:
+
+```
+[2026-03-24T12:00:00Z] [INFO] watch started (interval: 5s)
+[2026-03-24T12:00:05Z] [INFO] event detected: task_added task #1 "Write docs"
+[2026-03-24T12:00:05Z] [INFO] hook executed: task_added (exit: 0)
+[2026-03-24T12:00:10Z] [WARN] hook executed: task_completed (exit: 1)
+[2026-03-24T12:00:15Z] [ERROR] hook failed: task_added: No such file or directory
+```
+
+| レベル | 説明 |
+|-------|-------------|
+| `INFO` | 通常の操作（起動、イベント検出、フック実行成功） |
+| `WARN` | フックが非ゼロ終了コードを返した |
+| `ERROR` | フックの実行に失敗した |
+
 ## ステータス遷移
 
 ```
