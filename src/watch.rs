@@ -137,6 +137,38 @@ pub fn daemon_status(project_root: &Path, output_json: bool) -> Result<()> {
     Ok(())
 }
 
+struct WatchLogger {
+    file: Option<std::fs::File>,
+}
+
+impl WatchLogger {
+    fn new(path: Option<&Path>) -> Result<Self> {
+        let file = match path {
+            Some(p) => {
+                if let Some(parent) = p.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("failed to create log directory: {}", parent.display()))?;
+                }
+                let f = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(p)
+                    .with_context(|| format!("failed to open log file: {}", p.display()))?;
+                Some(f)
+            }
+            None => None,
+        };
+        Ok(Self { file })
+    }
+
+    fn log(&mut self, level: &str, message: &str) {
+        if let Some(ref mut f) = self.file {
+            let ts = Utc::now().to_rfc3339();
+            let _ = writeln!(f, "[{}] [{}] {}", ts, level, message);
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -184,7 +216,7 @@ fn pid_file_path(project_root: &Path) -> PathBuf {
     project_root.join(".localflow").join("watch.pid")
 }
 
-fn execute_hook(command: &str, event: &WatchEvent) -> Result<()> {
+fn execute_hook(command: &str, event: &WatchEvent, logger: &mut WatchLogger) -> Result<()> {
     let json = serde_json::to_string(event)?;
     let mut child = std::process::Command::new("sh")
         .arg("-c")
@@ -198,6 +230,9 @@ fn execute_hook(command: &str, event: &WatchEvent) -> Result<()> {
     let status = child.wait()?;
     if !status.success() {
         eprintln!("hook command exited with status: {}", status);
+        logger.log("WARN", &format!("hook command exited with status: {}", status));
+    } else {
+        logger.log("INFO", &format!("hook executed: {} (exit: {})", event.event, status));
     }
     Ok(())
 }
@@ -288,22 +323,25 @@ fn detect_events(
         .collect()
 }
 
-fn fire_event(config: &Config, event: &WatchEvent) {
+fn fire_event(config: &Config, event: &WatchEvent, logger: &mut WatchLogger) {
     let command = match event.event.as_str() {
         "task_added" => config.hooks.on_task_added.as_deref(),
         "task_completed" => config.hooks.on_task_completed.as_deref(),
         _ => None,
     };
     if let Some(cmd) = command {
-        if let Err(e) = execute_hook(cmd, event) {
+        if let Err(e) = execute_hook(cmd, event, logger) {
             eprintln!("hook error ({}): {:#}", event.event, e);
+            logger.log("ERROR", &format!("hook error ({}): {:#}", event.event, e));
         }
     }
 }
 
-pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
+pub fn run_watch_loop(project_root: &Path, interval_secs: u64, log_file: Option<&Path>) -> Result<()> {
     let rt = tokio::runtime::Runtime::new()?;
     rt.block_on(async {
+        let mut logger = WatchLogger::new(log_file)?;
+
         let config = load_config(project_root)?;
         if config.hooks.on_task_added.is_none() && config.hooks.on_task_completed.is_none() {
             eprintln!("warning: no hooks configured in .localflow/config.toml");
@@ -325,6 +363,7 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
             "Watching for task events (interval: {}s, Ctrl+C to stop)...",
             interval_secs
         );
+        logger.log("INFO", &format!("watch started (interval: {}s)", interval_secs));
 
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
         interval.tick().await; // consume first immediate tick
@@ -338,7 +377,8 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
                     let events = detect_events(&known_ids, &statuses, &tasks, &config, &conn, &prev_ready_ids);
 
                     for event in &events {
-                        fire_event(&config, event);
+                        logger.log("INFO", &format!("event detected: {} task #{} \"{}\"", event.event, event.task.id, event.task.title));
+                        fire_event(&config, event, &mut logger);
                     }
 
                     // Update state
@@ -349,6 +389,7 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
                 }
                 _ = tokio::signal::ctrl_c() => {
                     eprintln!("\nStopping watch...");
+                    logger.log("INFO", "watch stopped");
                     // Clean up PID file if running as daemon
                     let pid_path = pid_file_path(project_root);
                     if pid_path.exists() {
@@ -362,7 +403,7 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
     })
 }
 
-pub fn start_daemon(project_root: &Path, interval_secs: u64) -> Result<()> {
+pub fn start_daemon(project_root: &Path, interval_secs: u64, log_file: Option<&Path>) -> Result<()> {
     let pid_path = pid_file_path(project_root);
     if let Some(info) = read_daemon_info(project_root)? {
         if is_process_alive(info.pid) {
@@ -377,14 +418,21 @@ pub fn start_daemon(project_root: &Path, interval_secs: u64) -> Result<()> {
         .canonicalize()
         .context("failed to canonicalize project root")?;
 
+    // Default log path for daemon mode: .localflow/watch.log
+    let default_log_path = root.join(".localflow").join("watch.log");
+    let effective_log_path = log_file.unwrap_or(&default_log_path);
+
+    let args = vec![
+        "--project-root".to_string(),
+        root.to_string_lossy().into_owned(),
+        "watch".to_string(),
+        "--interval".to_string(),
+        interval_secs.to_string(),
+        "--log-file".to_string(),
+        effective_log_path.to_string_lossy().into_owned(),
+    ];
     let child = std::process::Command::new(&exe)
-        .args([
-            "--project-root",
-            &root.to_string_lossy(),
-            "watch",
-            "--interval",
-            &interval_secs.to_string(),
-        ])
+        .args(&args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -1083,5 +1131,52 @@ on_task_completed = "echo completed"
         let events = detect_events(&known_ids, &statuses, &[task], &config, &conn, &prev_ready_ids);
         assert_eq!(events.len(), 1);
         assert!(events[0].unblocked_tasks.is_none());
+    }
+
+    #[test]
+    fn watch_logger_none_path() {
+        let mut logger = WatchLogger::new(None).unwrap();
+        // Should not panic when logging with no file
+        logger.log("INFO", "test message");
+        assert!(logger.file.is_none());
+    }
+
+    #[test]
+    fn watch_logger_writes_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("test.log");
+        {
+            let mut logger = WatchLogger::new(Some(&log_path)).unwrap();
+            logger.log("INFO", "hello world");
+            logger.log("ERROR", "something failed");
+        }
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("[INFO] hello world"));
+        assert!(content.contains("[ERROR] something failed"));
+        // Verify timestamp format
+        assert!(content.contains("[20")); // year prefix
+    }
+
+    #[test]
+    fn watch_logger_creates_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("nested").join("dir").join("test.log");
+        let mut logger = WatchLogger::new(Some(&log_path)).unwrap();
+        logger.log("INFO", "nested test");
+        assert!(log_path.exists());
+    }
+
+    #[test]
+    fn watch_logger_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("append.log");
+        std::fs::write(&log_path, "existing content\n").unwrap();
+        {
+            let mut logger = WatchLogger::new(Some(&log_path)).unwrap();
+            logger.log("INFO", "new line");
+        }
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.starts_with("existing content\n"));
+        assert!(content.contains("[INFO] new line"));
     }
 }

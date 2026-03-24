@@ -264,4 +264,105 @@ setup_test_env
 STATUS_TEXT="$(run_lf --output text watch status 2>&1)"
 assert_contains "$STATUS_TEXT" "Status: stopped" "text output shows stopped"
 
+# 10. Daemon mode creates default log file
+echo "[10] Daemon creates default log file"
+
+setup_test_env
+create_config "echo added" ""
+
+LOG_FILE="$TEST_PROJECT_ROOT/.localflow/watch.log"
+
+# Start daemon
+run_lf watch -d --interval 1 >/dev/null 2>&1
+
+sleep 1
+
+# Add a task to trigger an event
+run_lf add --title "Log Test Task" >/dev/null 2>&1
+
+# Wait for poll cycle
+sleep 3
+
+# Stop daemon
+run_lf watch stop >/dev/null 2>&1
+
+sleep 1
+
+if [[ -f "$LOG_FILE" ]]; then
+  echo "  PASS: default log file created"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "  FAIL: default log file not created"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+# 11. Log file contains event entries
+echo "[11] Log file contains event entries"
+
+if [[ -f "$LOG_FILE" ]]; then
+  LOG_CONTENT="$(cat "$LOG_FILE")"
+  assert_contains "$LOG_CONTENT" "watch started" "log has watch started entry"
+  assert_contains "$LOG_CONTENT" "event detected" "log has event detected entry"
+  assert_contains "$LOG_CONTENT" "task_added" "log has task_added event"
+else
+  echo "  FAIL: log file missing, cannot check content"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+# 12. Custom --log-file path
+echo "[12] Custom --log-file path"
+
+setup_test_env
+create_config "echo added" ""
+
+CUSTOM_LOG="$TEST_DIR/custom_watch.log"
+
+run_lf watch --interval 1 --log-file "$CUSTOM_LOG" >/dev/null 2>&1 &
+WATCH_PID=$!
+sleep 2
+
+run_lf add --title "Custom Log Task" >/dev/null 2>&1
+
+sleep 2
+kill "$WATCH_PID" 2>/dev/null || true
+wait "$WATCH_PID" 2>/dev/null || true
+
+if [[ -f "$CUSTOM_LOG" ]]; then
+  echo "  PASS: custom log file created"
+  PASS_COUNT=$((PASS_COUNT + 1))
+  CUSTOM_CONTENT="$(cat "$CUSTOM_LOG")"
+  assert_contains "$CUSTOM_CONTENT" "watch started" "custom log has watch started"
+else
+  echo "  FAIL: custom log file not created"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+# 13. Hook execution logged
+echo "[13] Hook execution logged"
+
+setup_test_env
+
+HOOK_OUTPUT="$TEST_DIR/hook_log_output.json"
+create_config "cat > $HOOK_OUTPUT" ""
+
+CUSTOM_LOG="$TEST_DIR/hook_exec.log"
+
+run_lf watch --interval 1 --log-file "$CUSTOM_LOG" >/dev/null 2>&1 &
+WATCH_PID=$!
+sleep 2
+
+run_lf add --title "Hook Log Task" >/dev/null 2>&1
+
+sleep 2
+kill "$WATCH_PID" 2>/dev/null || true
+wait "$WATCH_PID" 2>/dev/null || true
+
+if [[ -f "$CUSTOM_LOG" ]]; then
+  HOOK_LOG="$(cat "$CUSTOM_LOG")"
+  assert_contains "$HOOK_LOG" "hook executed" "log has hook executed entry"
+else
+  echo "  FAIL: log file missing for hook check"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
 test_summary
