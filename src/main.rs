@@ -224,6 +224,8 @@ enum Command {
 enum WatchAction {
     /// Stop the watch daemon
     Stop,
+    /// Show daemon status
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -549,6 +551,10 @@ fn run(cli: Cli) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             match action {
                 Some(WatchAction::Stop) => localflow::watch::stop_daemon(&root),
+                Some(WatchAction::Status) => localflow::watch::daemon_status(
+                    &root,
+                    matches!(cli.output, OutputFormat::Json),
+                ),
                 None if daemon => localflow::watch::start_daemon(&root, interval),
                 None => localflow::watch::run_watch_loop(&root, interval),
             }

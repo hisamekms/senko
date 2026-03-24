@@ -209,4 +209,59 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+# 7. watch status with no daemon — shows stopped
+echo "[7] watch status with no daemon — stopped"
+
+setup_test_env
+
+STATUS_JSON="$(run_lf --output json watch status 2>&1)"
+STATUS_VAL="$(echo "$STATUS_JSON" | jq -r '.status')"
+assert_eq "stopped" "$STATUS_VAL" "status is stopped when no daemon"
+
+# Verify no pid/interval/started_at fields in stopped state
+HAS_PID="$(echo "$STATUS_JSON" | jq 'has("pid")')"
+assert_eq "false" "$HAS_PID" "stopped status has no pid field"
+
+# 8. watch status with daemon running — shows running
+echo "[8] watch status with daemon running"
+
+setup_test_env
+create_config "echo added" ""
+
+run_lf watch -d --interval 2 >/dev/null 2>&1
+sleep 1
+
+STATUS_JSON="$(run_lf --output json watch status 2>&1)"
+STATUS_VAL="$(echo "$STATUS_JSON" | jq -r '.status')"
+assert_eq "running" "$STATUS_VAL" "status is running when daemon active"
+
+STATUS_PID="$(echo "$STATUS_JSON" | jq -r '.pid')"
+if [[ "$STATUS_PID" =~ ^[0-9]+$ ]]; then
+  echo "  PASS: pid is a number ($STATUS_PID)"
+  PASS_COUNT=$((PASS_COUNT + 1))
+else
+  echo "  FAIL: pid is not a number: $STATUS_PID"
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+
+STATUS_INTERVAL="$(echo "$STATUS_JSON" | jq -r '.interval')"
+assert_eq "2" "$STATUS_INTERVAL" "interval matches configured value"
+
+HAS_STARTED="$(echo "$STATUS_JSON" | jq 'has("started_at")')"
+assert_eq "true" "$HAS_STARTED" "running status has started_at field"
+
+HAS_UPTIME="$(echo "$STATUS_JSON" | jq 'has("uptime_seconds")')"
+assert_eq "true" "$HAS_UPTIME" "running status has uptime_seconds field"
+
+# Clean up daemon
+run_lf watch stop >/dev/null 2>&1
+
+# 9. watch status text output
+echo "[9] watch status text output"
+
+setup_test_env
+
+STATUS_TEXT="$(run_lf --output text watch status 2>&1)"
+assert_contains "$STATUS_TEXT" "Status: stopped" "text output shows stopped"
+
 test_summary

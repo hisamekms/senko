@@ -13,6 +13,130 @@ use uuid::Uuid;
 use crate::db;
 use crate::models::{ListTasksFilter, Priority, Task, TaskStatus};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DaemonInfo {
+    pub pid: u32,
+    pub interval: u64,
+    pub started_at: String,
+}
+
+fn write_daemon_info(project_root: &Path, info: &DaemonInfo) -> Result<()> {
+    let pid_path = pid_file_path(project_root);
+    let json = serde_json::to_string(info)?;
+    std::fs::write(&pid_path, json)?;
+    Ok(())
+}
+
+fn read_daemon_info(project_root: &Path) -> Result<Option<DaemonInfo>> {
+    let pid_path = pid_file_path(project_root);
+    if !pid_path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&pid_path)?;
+    let trimmed = content.trim();
+    // Try JSON format first, fall back to plain PID (legacy)
+    if let Ok(info) = serde_json::from_str::<DaemonInfo>(trimmed) {
+        return Ok(Some(info));
+    }
+    // Legacy: plain PID number
+    if let Ok(pid) = trimmed.parse::<u32>() {
+        return Ok(Some(DaemonInfo {
+            pid,
+            interval: 0,
+            started_at: String::new(),
+        }));
+    }
+    bail!("invalid content in watch.pid");
+}
+
+#[derive(Debug, Serialize)]
+pub struct DaemonStatus {
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uptime_seconds: Option<i64>,
+}
+
+pub fn daemon_status(project_root: &Path, output_json: bool) -> Result<()> {
+    let info = read_daemon_info(project_root)?;
+    let status = match info {
+        None => DaemonStatus {
+            status: "stopped".into(),
+            pid: None,
+            interval: None,
+            started_at: None,
+            uptime_seconds: None,
+        },
+        Some(info) => {
+            if is_process_alive(info.pid) {
+                let uptime = if !info.started_at.is_empty() {
+                    chrono::DateTime::parse_from_rfc3339(&info.started_at)
+                        .map(|started| {
+                            let now = Utc::now();
+                            (now - started.with_timezone(&chrono::Utc)).num_seconds()
+                        })
+                        .ok()
+                } else {
+                    None
+                };
+                DaemonStatus {
+                    status: "running".into(),
+                    pid: Some(info.pid),
+                    interval: if info.interval > 0 {
+                        Some(info.interval)
+                    } else {
+                        None
+                    },
+                    started_at: if info.started_at.is_empty() {
+                        None
+                    } else {
+                        Some(info.started_at)
+                    },
+                    uptime_seconds: uptime,
+                }
+            } else {
+                // Stale PID file — clean up
+                let pid_path = pid_file_path(project_root);
+                let _ = std::fs::remove_file(&pid_path);
+                DaemonStatus {
+                    status: "stopped".into(),
+                    pid: None,
+                    interval: None,
+                    started_at: None,
+                    uptime_seconds: None,
+                }
+            }
+        }
+    };
+
+    if output_json {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        println!("Status: {}", status.status);
+        if let Some(pid) = status.pid {
+            println!("PID: {}", pid);
+        }
+        if let Some(interval) = status.interval {
+            println!("Interval: {}s", interval);
+        }
+        if let Some(ref started) = status.started_at {
+            println!("Started: {}", started);
+        }
+        if let Some(uptime) = status.uptime_seconds {
+            let hours = uptime / 3600;
+            let minutes = (uptime % 3600) / 60;
+            let seconds = uptime % 60;
+            println!("Uptime: {}h {}m {}s", hours, minutes, seconds);
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -240,12 +364,9 @@ pub fn run_watch_loop(project_root: &Path, interval_secs: u64) -> Result<()> {
 
 pub fn start_daemon(project_root: &Path, interval_secs: u64) -> Result<()> {
     let pid_path = pid_file_path(project_root);
-    if pid_path.exists() {
-        let pid_str = std::fs::read_to_string(&pid_path)?;
-        if let Ok(pid) = pid_str.trim().parse::<u32>() {
-            if is_process_alive(pid) {
-                bail!("watch daemon already running (PID {})", pid);
-            }
+    if let Some(info) = read_daemon_info(project_root)? {
+        if is_process_alive(info.pid) {
+            bail!("watch daemon already running (PID {})", info.pid);
         }
         // Stale PID file
         std::fs::remove_file(&pid_path)?;
@@ -271,35 +392,37 @@ pub fn start_daemon(project_root: &Path, interval_secs: u64) -> Result<()> {
         .context("failed to spawn daemon process")?;
 
     let pid = child.id();
-    std::fs::write(&pid_path, pid.to_string())?;
+    let info = DaemonInfo {
+        pid,
+        interval: interval_secs,
+        started_at: Utc::now().to_rfc3339(),
+    };
+    write_daemon_info(project_root, &info)?;
     eprintln!("Watch daemon started (PID {})", pid);
     Ok(())
 }
 
 pub fn stop_daemon(project_root: &Path) -> Result<()> {
     let pid_path = pid_file_path(project_root);
-    if !pid_path.exists() {
-        bail!("no watch daemon running (PID file not found)");
-    }
-    let pid_str = std::fs::read_to_string(&pid_path)?;
-    let pid: u32 = pid_str
-        .trim()
-        .parse()
-        .context("invalid PID in watch.pid")?;
+    let info = read_daemon_info(project_root)?;
+    let info = match info {
+        Some(info) => info,
+        None => bail!("no watch daemon running (PID file not found)"),
+    };
 
     let status = std::process::Command::new("kill")
-        .arg(pid.to_string())
+        .arg(info.pid.to_string())
         .status()
         .context("failed to send signal to daemon")?;
 
     std::fs::remove_file(&pid_path)?;
 
     if status.success() {
-        eprintln!("Watch daemon stopped (PID {})", pid);
+        eprintln!("Watch daemon stopped (PID {})", info.pid);
     } else {
         eprintln!(
             "Watch daemon (PID {}) may have already exited, PID file removed",
-            pid
+            info.pid
         );
     }
     Ok(())
@@ -852,6 +975,74 @@ on_task_completed = "echo completed"
         let json = serde_json::to_string(&events[0]).unwrap();
         assert!(json.contains("\"metadata\""));
         assert!(json.contains("staging"));
+    }
+
+    #[test]
+    fn write_and_read_daemon_info() {
+        let dir = tempfile::tempdir().unwrap();
+        let localflow_dir = dir.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+
+        let info = DaemonInfo {
+            pid: 12345,
+            interval: 10,
+            started_at: "2026-03-24T03:30:00+00:00".into(),
+        };
+        write_daemon_info(dir.path(), &info).unwrap();
+
+        let read = read_daemon_info(dir.path()).unwrap().unwrap();
+        assert_eq!(read.pid, 12345);
+        assert_eq!(read.interval, 10);
+        assert_eq!(read.started_at, "2026-03-24T03:30:00+00:00");
+    }
+
+    #[test]
+    fn read_daemon_info_legacy_plain_pid() {
+        let dir = tempfile::tempdir().unwrap();
+        let localflow_dir = dir.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+        std::fs::write(localflow_dir.join("watch.pid"), "99999").unwrap();
+
+        let read = read_daemon_info(dir.path()).unwrap().unwrap();
+        assert_eq!(read.pid, 99999);
+        assert_eq!(read.interval, 0);
+        assert!(read.started_at.is_empty());
+    }
+
+    #[test]
+    fn read_daemon_info_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let read = read_daemon_info(dir.path()).unwrap();
+        assert!(read.is_none());
+    }
+
+    #[test]
+    fn daemon_status_stopped_when_no_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // Just verify it doesn't error and outputs "stopped"
+        let result = daemon_status(dir.path(), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn daemon_status_cleans_stale_pid_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let localflow_dir = dir.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+
+        // Write a PID that doesn't exist (use PID 1999999999 which won't exist)
+        let info = DaemonInfo {
+            pid: 1999999999,
+            interval: 5,
+            started_at: "2026-03-24T03:30:00+00:00".into(),
+        };
+        write_daemon_info(dir.path(), &info).unwrap();
+
+        let result = daemon_status(dir.path(), true);
+        assert!(result.is_ok());
+
+        // PID file should have been cleaned up
+        assert!(!pid_file_path(dir.path()).exists());
     }
 
     #[test]
