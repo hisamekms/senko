@@ -969,7 +969,7 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
             )
         })?;
 
-        verify_pr_status(pr_url, config.workflow.require_review)?;
+        verify_pr_status(pr_url, config.workflow.auto_merge)?;
     }
 
     if cli.dry_run {
@@ -1013,9 +1013,9 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify_pr_status(pr_url: &str, require_review: bool) -> Result<()> {
+fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
     let mut args = vec!["pr", "view", pr_url, "--json", "state"];
-    if require_review {
+    if !auto_merge {
         args[4] = "state,reviewDecision";
     }
 
@@ -1044,7 +1044,7 @@ fn verify_pr_status(pr_url: &str, require_review: bool) -> Result<()> {
         );
     }
 
-    if require_review {
+    if !auto_merge {
         let decision = json["reviewDecision"].as_str().unwrap_or("");
         if decision != "APPROVED" {
             bail!(
@@ -1125,7 +1125,7 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
-# require_review = false
+# auto_merge = true
 "#;
 
 fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
@@ -1165,7 +1165,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 "    completion_mode: {}",
                 config.workflow.completion_mode
             );
-            println!("    require_review: {}", config.workflow.require_review);
+            println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("  [hooks]");
             if config.hooks.on_task_added.is_empty() {
                 println!("    on_task_added: (none)");

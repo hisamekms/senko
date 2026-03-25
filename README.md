@@ -118,13 +118,13 @@ Control task completion behavior via `[workflow]` in `.localflow/config.toml`:
 ```toml
 [workflow]
 completion_mode = "pr_then_complete"  # or "merge_then_complete" (default)
-require_review = true                 # default: false
+auto_merge = false                    # default: true
 ```
 
 | Setting | Values | Description |
 |---------|--------|-------------|
 | `completion_mode` | `merge_then_complete` (default), `pr_then_complete` | When `pr_then_complete`, `complete` verifies the PR is merged via `gh` |
-| `require_review` | `true`, `false` (default) | When `true`, `complete` also verifies PR approval |
+| `auto_merge` | `true` (default), `false` | When `false`, `complete` also verifies PR approval |
 
 Use `localflow config` to view current settings, or `localflow config --init` to generate a template.
 

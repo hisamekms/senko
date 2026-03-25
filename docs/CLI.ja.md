@@ -86,7 +86,7 @@ localflow complete 1 --skip-pr-check    # PR検証をスキップ
 
 未チェックのDoD項目がある場合は失敗します。先に `dod check` でマークしてください。
 
-`completion_mode = "pr_then_complete"` 設定時は、PRがマージ済みであることも検証します（`require_review = true` の場合は承認も確認）。`--skip-pr-check` で検証をスキップできます。
+`completion_mode = "pr_then_complete"` 設定時は、PRがマージ済みであることも検証します（`auto_merge = false` の場合は承認も確認）。`--skip-pr-check` で検証をスキップできます。
 
 ## `cancel <id>` – タスクキャンセル
 

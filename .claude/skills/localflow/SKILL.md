@@ -96,9 +96,9 @@ localflow config --init                    # generate template config.toml
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
 - **Workflow configuration** (`[workflow]` in `.localflow/config.toml`):
   - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
-  - `require_review`: `true`/`false` (default: `false`)
+  - `auto_merge`: `true` (default) / `false`
   - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
-  - When `require_review = true`, the PR must also be approved.
+  - When `auto_merge = false`, the PR must also be approved.
 
 ---
 
@@ -307,7 +307,9 @@ Wait for the user to approve the plan. After approval, save the plan to the task
 localflow edit <id> --plan "The approved implementation plan text"
 ```
 
-Include this in the plan:
+Before creating the plan, run `localflow config` to check the workflow configuration. Based on the `completion_mode` and `auto_merge` settings, include the appropriate post-completion section in the plan:
+
+**When `completion_mode = "merge_then_complete"` (default):**
 
 ```
 # Post-completion
@@ -316,9 +318,43 @@ Include this in the plan:
   2. For each unchecked item:
      - If achieved: `localflow dod check <id> <index>`
      - If not achieved: go back and implement it
-  3. All DoD items must be checked before proceeding to PR/merge
+  3. All DoD items must be checked before proceeding to merge
+- Merge the branch into main (all DoD items must be checked before this step)
+- Use `AskUserQuestion` to ask the user for completion approval
+- Complete the task: `localflow complete <id>`
+- Delete the worktree (using `/wth` skill)
+```
+
+**When `completion_mode = "pr_then_complete"` and `auto_merge = true`:**
+
+```
+# Post-completion
+- When implementation is done, verify DoD items:
+  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  2. For each unchecked item:
+     - If achieved: `localflow dod check <id> <index>`
+     - If not achieved: go back and implement it
+  3. All DoD items must be checked before proceeding to PR
 - Create PR and merge (all DoD items must be checked before this step)
 - After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
+- Use `AskUserQuestion` to ask the user for completion approval
+- Complete the task: `localflow complete <id>`
+- Delete the worktree (using `/wth` skill)
+```
+
+**When `completion_mode = "pr_then_complete"` and `auto_merge = false`:**
+
+```
+# Post-completion
+- When implementation is done, verify DoD items:
+  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  2. For each unchecked item:
+     - If achieved: `localflow dod check <id> <index>`
+     - If not achieved: go back and implement it
+  3. All DoD items must be checked before proceeding to PR
+- Create PR (all DoD items must be checked before this step)
+- After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
+- Request review and wait for approval before merging
 - Use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `localflow complete <id>`
 - Delete the worktree (using `/wth` skill)
@@ -347,7 +383,7 @@ localflow get <id>
    - If `completion_mode = "pr_then_complete"`:
      - Ensure `pr_url` is set on the task (`localflow edit <id> --pr-url <url>`)
      - The PR must be merged before `localflow complete <id>` will succeed
-     - If `require_review = true`, the PR must also have approval
+     - If `auto_merge = false`, the PR must also have approval
      - Use `--skip-pr-check` to bypass these checks if needed
    - If `completion_mode = "merge_then_complete"` (default): no PR checks are performed
 

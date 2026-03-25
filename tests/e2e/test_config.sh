@@ -11,12 +11,12 @@ echo "--- Test: Config ---"
 echo "[1] config shows defaults when no config file exists"
 JSON_OUT="$(run_lf config)"
 assert_json_field "$JSON_OUT" '.workflow.completion_mode' "merge_then_complete" "default completion_mode"
-assert_json_field "$JSON_OUT" '.workflow.require_review' "false" "default require_review"
+assert_json_field "$JSON_OUT" '.workflow.auto_merge' "true" "default auto_merge"
 
 echo "[2] config text output shows defaults"
 TEXT_OUT="$(run_lf --output text config)"
 assert_contains "$TEXT_OUT" "merge_then_complete" "text shows completion_mode"
-assert_contains "$TEXT_OUT" "require_review: false" "text shows require_review"
+assert_contains "$TEXT_OUT" "auto_merge: true" "text shows auto_merge"
 
 echo "[3] config --init creates config file"
 INIT_OUT="$(run_lf config --init)"
@@ -37,19 +37,19 @@ echo "[5] config reads custom values from config.toml"
 cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'EOF'
 [workflow]
 completion_mode = "pr_then_complete"
-require_review = true
+auto_merge = false
 
 [hooks]
 on_task_added = "echo added"
 EOF
 CUSTOM_OUT="$(run_lf config)"
 assert_json_field "$CUSTOM_OUT" '.workflow.completion_mode' "pr_then_complete" "custom completion_mode"
-assert_json_field "$CUSTOM_OUT" '.workflow.require_review' "true" "custom require_review"
+assert_json_field "$CUSTOM_OUT" '.workflow.auto_merge' "false" "custom auto_merge"
 
 echo "[6] config text output shows custom values"
 TEXT_CUSTOM="$(run_lf --output text config)"
 assert_contains "$TEXT_CUSTOM" "pr_then_complete" "text shows custom completion_mode"
-assert_contains "$TEXT_CUSTOM" "require_review: true" "text shows custom require_review"
+assert_contains "$TEXT_CUSTOM" "auto_merge: false" "text shows custom auto_merge"
 
 echo "[7] config --init text output"
 rm "$TEST_PROJECT_ROOT/.localflow/config.toml"

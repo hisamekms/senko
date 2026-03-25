@@ -199,12 +199,25 @@ impl std::fmt::Display for CompletionMode {
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Default)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct WorkflowConfig {
     #[serde(default)]
     pub completion_mode: CompletionMode,
-    #[serde(default)]
-    pub require_review: bool,
+    #[serde(default = "default_true")]
+    pub auto_merge: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for WorkflowConfig {
+    fn default() -> Self {
+        Self {
+            completion_mode: CompletionMode::default(),
+            auto_merge: true,
+        }
+    }
 }
 
 mod string_or_vec {
