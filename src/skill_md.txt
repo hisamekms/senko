@@ -312,12 +312,14 @@ Before creating the plan, run `localflow config` to check the workflow configura
 - This must be done before starting implementation.
 
 # Post-completion
-- When implementation is done, verify DoD items:
+- When implementation is done, verify DoD items using the dod-verifier subagent:
   1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
-  2. For each unchecked item:
-     - If achieved: `localflow dod check <id> <index>`
-     - If not achieved: go back and implement it
-  3. All DoD items must be checked before proceeding to merge
+  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
+  3. Process the subagent's results for each item:
+     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
+     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
+  4. All DoD items must be checked before proceeding to merge
 - Merge the branch into main (all DoD items must be checked before this step)
 - Use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `localflow complete <id>`
@@ -333,12 +335,14 @@ Before creating the plan, run `localflow config` to check the workflow configura
 - This must be done before starting implementation.
 
 # Post-completion
-- When implementation is done, verify DoD items:
+- When implementation is done, verify DoD items using the dod-verifier subagent:
   1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
-  2. For each unchecked item:
-     - If achieved: `localflow dod check <id> <index>`
-     - If not achieved: go back and implement it
-  3. All DoD items must be checked before proceeding to PR
+  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
+  3. Process the subagent's results for each item:
+     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
+     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
+  4. All DoD items must be checked before proceeding to PR
 - Create PR and merge (all DoD items must be checked before this step)
 - After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
 - Use `AskUserQuestion` to ask the user for completion approval
@@ -355,12 +359,14 @@ Before creating the plan, run `localflow config` to check the workflow configura
 - This must be done before starting implementation.
 
 # Post-completion
-- When implementation is done, verify DoD items:
+- When implementation is done, verify DoD items using the dod-verifier subagent:
   1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
-  2. For each unchecked item:
-     - If achieved: `localflow dod check <id> <index>`
-     - If not achieved: go back and implement it
-  3. All DoD items must be checked before proceeding to PR
+  2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
+  3. Process the subagent's results for each item:
+     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
+     - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
+  4. All DoD items must be checked before proceeding to PR
 - Create PR (all DoD items must be checked before this step)
 - After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
 - Request review and wait for approval before merging
@@ -383,9 +389,12 @@ localflow get <id>
 
 1. Verify the task is in `in_progress` status. If not, inform the user and stop.
 2. Check if any DoD items are unchecked (`"checked": false` in JSON, or `[ ]` in text output). If unchecked items exist:
-   - Show the unchecked items to the user
-   - Check them off one by one with `localflow dod check <id> <index>` (1-based index)
-   - Then proceed to complete
+   - Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
+   - Process the subagent's results for each item:
+     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
+     - **NOT_ACHIEVED**: Inform the user that the item is not yet achieved
+   - All DoD items must be checked before proceeding to complete
 3. Check the workflow configuration (`localflow config`):
    - If `completion_mode = "pr_then_complete"`:
      - Ensure `pr_url` is set on the task (`localflow edit <id> --pr-url <url>`)
