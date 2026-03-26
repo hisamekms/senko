@@ -284,6 +284,42 @@ pub fn fire_hooks(
     }
 }
 
+/// Return the hook commands configured for the given event name.
+/// Returns `None` if the event name is not recognized.
+pub fn get_commands_for_event<'a>(config: &'a Config, event_name: &str) -> Option<&'a Vec<String>> {
+    match event_name {
+        "task_added" => Some(&config.hooks.on_task_added),
+        "task_ready" => Some(&config.hooks.on_task_ready),
+        "task_started" => Some(&config.hooks.on_task_started),
+        "task_completed" => Some(&config.hooks.on_task_completed),
+        "task_canceled" => Some(&config.hooks.on_task_canceled),
+        _ => None,
+    }
+}
+
+/// Execute a hook command synchronously, inheriting stdout/stderr.
+/// Returns the exit status of the child process.
+pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::ExitStatus> {
+    let mut child = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("failed to spawn hook: {command}"))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(json.as_bytes())
+            .with_context(|| format!("failed to write to hook stdin: {command}"))?;
+    }
+
+    child
+        .wait()
+        .with_context(|| format!("failed to wait for hook: {command}"))
+}
+
 /// Compute newly unblocked tasks after a task completion.
 /// Call this after `db::complete_task` with the set of ready task IDs
 /// captured before the completion.

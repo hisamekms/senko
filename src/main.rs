@@ -7,7 +7,7 @@ use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use localflow::db;
 use localflow::models::{
-    CreateTaskParams, ListTasksFilter, Priority, TaskStatus, UpdateTaskArrayParams,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
 use localflow::project::resolve_project_root;
@@ -253,6 +253,16 @@ enum HooksCommand {
         /// Print the log file path
         #[arg(long)]
         path: bool,
+    },
+    /// Test hooks by running them synchronously
+    Test {
+        /// Event name (task_added, task_ready, task_started, task_completed, task_canceled)
+        event_name: String,
+        /// Task ID to use for building the event (uses a sample task if omitted)
+        task_id: Option<i64>,
+        /// Show event JSON without executing hooks
+        #[arg(long)]
+        dry_run: bool,
     },
 }
 
@@ -593,7 +603,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
         }
-        Command::Hooks { ref command } => cmd_hooks(command),
+        Command::Hooks { ref command } => cmd_hooks(&cli, command),
         Command::Config { init } => cmd_config(&cli, init),
     }
 }
@@ -1169,7 +1179,7 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # auto_merge = true
 "#;
 
-fn cmd_hooks(command: &HooksCommand) -> Result<()> {
+fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
     match command {
         HooksCommand::Log {
             n,
@@ -1212,6 +1222,94 @@ fn cmd_hooks(command: &HooksCommand) -> Result<()> {
             for line in &lines[start..] {
                 println!("{line}");
             }
+            Ok(())
+        }
+        HooksCommand::Test {
+            event_name,
+            task_id,
+            dry_run,
+        } => {
+            // Validate event name
+            let valid_events = [
+                "task_added",
+                "task_ready",
+                "task_started",
+                "task_completed",
+                "task_canceled",
+            ];
+            if !valid_events.contains(&event_name.as_str()) {
+                bail!(
+                    "unknown event: {event_name}. Valid events: {}",
+                    valid_events.join(", ")
+                );
+            }
+
+            let root = resolve_project_root(cli.project_root.as_deref())?;
+            let config = localflow::hooks::load_config(&root)?;
+            let conn = db::open_db(&root)?;
+
+            // Build the event using a real task or a sample task
+            let task = if let Some(id) = task_id {
+                db::get_task(&conn, *id)?
+            } else {
+                use localflow::models::{Priority, TaskStatus};
+                Task {
+                    id: 0,
+                    title: "Sample task".into(),
+                    background: None,
+                    description: Some("This is a sample task for hook testing".into()),
+                    plan: None,
+                    priority: Priority::P2,
+                    status: TaskStatus::Todo,
+                    assignee_session_id: None,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                    started_at: None,
+                    completed_at: None,
+                    canceled_at: None,
+                    cancel_reason: None,
+                    branch: None,
+                    pr_url: None,
+                    metadata: None,
+                    definition_of_done: vec![],
+                    in_scope: vec![],
+                    out_of_scope: vec![],
+                    tags: vec![],
+                    dependencies: vec![],
+                }
+            };
+
+            let event = localflow::hooks::build_event(event_name, &task, &conn, None, None);
+            let json = serde_json::to_string_pretty(&event)?;
+
+            if *dry_run {
+                println!("{json}");
+                return Ok(());
+            }
+
+            let commands = localflow::hooks::get_commands_for_event(&config, event_name)
+                .expect("already validated event name");
+
+            if commands.is_empty() {
+                eprintln!("No hooks configured for event: {event_name}");
+                return Ok(());
+            }
+
+            let compact_json = serde_json::to_string(&event)?;
+            for (i, cmd) in commands.iter().enumerate() {
+                if commands.len() > 1 {
+                    eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
+                }
+                match localflow::hooks::execute_hook_sync(cmd, &compact_json) {
+                    Ok(status) => {
+                        eprintln!("exit code: {}", status.code().unwrap_or(-1));
+                    }
+                    Err(e) => {
+                        eprintln!("hook error: {e:#}");
+                    }
+                }
+            }
+
             Ok(())
         }
     }
