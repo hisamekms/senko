@@ -9,6 +9,7 @@
 --project-root <PATH>   Project root (auto-detected if omitted)
 --config <PATH>         Path to config file (env: LOCALFLOW_CONFIG, default: .localflow/config.toml)
 --dry-run               Show what would happen without executing (state-changing commands only)
+--log-dir <PATH>        Override log output directory (default: $XDG_STATE_HOME/localflow)
 ```
 
 > **Note**: `--output` and `--dry-run` are global flags — place them **before** the subcommand: `localflow --output text list`
@@ -318,6 +319,12 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 |----------|-------------|---------|
 | `LOCALFLOW_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
 | `LOCALFLOW_HOOK_MODE` | `server`, `client`, or `both` | `server` |
+
+### Log
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `LOCALFLOW_LOG_DIR` | Directory for hook log output | `$XDG_STATE_HOME/localflow` |
 
 ### Hooks
 

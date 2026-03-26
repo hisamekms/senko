@@ -19,6 +19,13 @@ pub struct Config {
     pub workflow: WorkflowConfig,
     #[serde(default)]
     pub backend: BackendConfig,
+    #[serde(default)]
+    pub log: LogConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct LogConfig {
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -238,6 +245,13 @@ fn apply_env_overrides(mut config: Config) -> Config {
         }
     }
 
+    // Log settings
+    if let Ok(val) = std::env::var("LOCALFLOW_LOG_DIR") {
+        if !val.is_empty() {
+            config.log.dir = Some(val);
+        }
+    }
+
     config
 }
 
@@ -262,19 +276,30 @@ pub fn build_event(
     }
 }
 
+/// Return the hook log file path, optionally using a custom log directory.
+/// Priority: `log_dir` override > `$XDG_STATE_HOME/localflow` > `~/.local/state/localflow`
+pub fn log_file_path_with_dir(log_dir: Option<&str>) -> Option<PathBuf> {
+    let dir = if let Some(d) = log_dir {
+        PathBuf::from(d)
+    } else {
+        let state_dir = std::env::var("XDG_STATE_HOME")
+            .map(PathBuf::from)
+            .ok()
+            .filter(|p| p.is_absolute())
+            .or_else(|| {
+                std::env::var("HOME")
+                    .ok()
+                    .map(|h| PathBuf::from(h).join(".local").join("state"))
+            })?;
+        state_dir.join("localflow")
+    };
+    Some(dir.join("hooks.log"))
+}
+
 /// Return the hook log file path following XDG Base Directory specification.
 /// `$XDG_STATE_HOME/localflow/hooks.log` (default: `~/.local/state/localflow/hooks.log`)
 pub fn log_file_path() -> Option<PathBuf> {
-    let state_dir = std::env::var("XDG_STATE_HOME")
-        .map(PathBuf::from)
-        .ok()
-        .filter(|p| p.is_absolute())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| PathBuf::from(h).join(".local").join("state"))
-        })?;
-    Some(state_dir.join("localflow").join("hooks.log"))
+    log_file_path_with_dir(None)
 }
 
 fn log_to_file(path: &Path, level: &str, message: &str) {
@@ -375,7 +400,7 @@ pub fn fire_hooks(
         return;
     }
 
-    let log_path = log_file_path();
+    let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
     let event = build_event(event_name, task, backend, from_status, unblocked);
     let json = match serde_json::to_string(&event) {
@@ -1196,5 +1221,66 @@ auto_merge = false
                 None => std::env::remove_var("LOCALFLOW_CONFIG"),
             }
         }
+    }
+
+    #[test]
+    fn log_file_path_with_custom_dir() {
+        let path = log_file_path_with_dir(Some("/custom/log/dir")).unwrap();
+        assert_eq!(path, PathBuf::from("/custom/log/dir/hooks.log"));
+    }
+
+    #[test]
+    fn log_file_path_with_dir_none_uses_default() {
+        // When None is passed, it should behave like the original log_file_path()
+        let with_dir = log_file_path_with_dir(None);
+        let original = log_file_path();
+        assert_eq!(with_dir, original);
+    }
+
+    #[test]
+    fn env_override_log_dir() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_LOG_DIR").ok();
+            std::env::set_var("LOCALFLOW_LOG_DIR", "/tmp/custom-logs");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.log.dir, Some("/tmp/custom-logs".into()));
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_LOG_DIR", v),
+                None => std::env::remove_var("LOCALFLOW_LOG_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    fn env_override_log_dir_empty_ignored() {
+        unsafe {
+            let orig = std::env::var("LOCALFLOW_LOG_DIR").ok();
+            std::env::set_var("LOCALFLOW_LOG_DIR", "");
+            let config = apply_env_overrides(Config::default());
+            assert_eq!(config.log.dir, None);
+            match orig {
+                Some(v) => std::env::set_var("LOCALFLOW_LOG_DIR", v),
+                None => std::env::remove_var("LOCALFLOW_LOG_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    fn log_config_deserialization() {
+        let toml_str = r#"
+[log]
+dir = "/var/log/localflow"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.log.dir, Some("/var/log/localflow".into()));
+    }
+
+    #[test]
+    fn log_config_deserialization_missing_section() {
+        let toml_str = r#"
+[hooks]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.log.dir, None);
     }
 }
