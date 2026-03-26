@@ -52,7 +52,7 @@ localflow add --title "Title" --priority p1 --description "Description"
 # List tasks (with filters)
 localflow --output text list
 localflow list --status todo
-localflow list --status in-progress    # CLI uses kebab-case for status values
+localflow list --status in_progress
 localflow list --ready                 # todo tasks with all deps completed
 localflow list --tag backend
 
@@ -219,7 +219,7 @@ Check existing active tasks for potential dependencies:
 
 ```bash
 localflow list --status todo
-localflow list --status in-progress
+localflow list --status in_progress
 ```
 
 Review the list to identify tasks the new task should depend on.
