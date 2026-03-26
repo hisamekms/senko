@@ -6,10 +6,9 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use chrono::Utc;
-use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::db;
+use crate::db::TaskBackend;
 use crate::models::{Priority, Task, TaskStatus};
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -133,12 +132,12 @@ pub fn load_config(project_root: &Path) -> Result<Config> {
 pub fn build_event(
     event_name: &str,
     task: &Task,
-    conn: &Connection,
+    backend: &dyn TaskBackend,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
-    let stats = db::task_stats(conn).unwrap_or_default();
-    let ready_count = db::ready_count(conn).unwrap_or(0);
+    let stats = backend.task_stats().unwrap_or_default();
+    let ready_count = backend.ready_count().unwrap_or(0);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
         event: event_name.into(),
@@ -248,7 +247,7 @@ pub fn fire_hooks(
     config: &Config,
     event_name: &str,
     task: &Task,
-    conn: &Connection,
+    backend: &dyn TaskBackend,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) {
@@ -266,7 +265,7 @@ pub fn fire_hooks(
 
     let log_path = log_file_path();
 
-    let event = build_event(event_name, task, conn, from_status, unblocked);
+    let event = build_event(event_name, task, backend, from_status, unblocked);
     let json = match serde_json::to_string(&event) {
         Ok(j) => j,
         Err(e) => {
@@ -324,10 +323,10 @@ pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::Exit
 /// Call this after `db::complete_task` with the set of ready task IDs
 /// captured before the completion.
 pub fn compute_unblocked(
-    conn: &Connection,
+    backend: &dyn TaskBackend,
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
-    let curr_ready = db::list_ready_tasks(conn).unwrap_or_default();
+    let curr_ready = backend.list_ready_tasks().unwrap_or_default();
     curr_ready
         .iter()
         .filter(|t| !prev_ready_ids.contains(&t.id))
@@ -343,11 +342,12 @@ pub fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::db::SqliteBackend;
 
-    fn setup_db() -> (tempfile::TempDir, Connection) {
+    fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
         let dir = tempfile::tempdir().unwrap();
-        let conn = db::open_db(dir.path()).unwrap();
-        (dir, conn)
+        let backend = SqliteBackend::new(dir.path()).unwrap();
+        (dir, backend)
     }
 
     #[test]
@@ -392,7 +392,7 @@ on_task_completed = "echo completed"
 
     #[test]
     fn hook_event_serialization() {
-        let (_dir, conn) = setup_db();
+        let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
             title: "Test".into(),
@@ -417,7 +417,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &conn, None, None);
+        let event = build_event("task_added", &task, &backend, None, None);
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"task_added\""));
         assert!(json.contains("\"id\":1"));
@@ -431,7 +431,7 @@ on_task_completed = "echo completed"
 
     #[test]
     fn event_has_valid_uuid_and_timestamp() {
-        let (_dir, conn) = setup_db();
+        let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
             title: "Test".into(),
@@ -456,16 +456,15 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &conn, None, None);
+        let event = build_event("task_added", &task, &backend, None, None);
         assert!(Uuid::parse_str(&event.event_id).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&event.timestamp).is_ok());
     }
 
     #[test]
     fn event_has_stats() {
-        let (_dir, conn) = setup_db();
-        db::create_task(
-            &conn,
+        let (_dir, backend) = setup_db();
+        backend.create_task(
             &crate::models::CreateTaskParams {
                 title: "Task1".into(),
                 background: None,
@@ -482,17 +481,16 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
-        let event = build_event("task_added", &task, &conn, None, None);
+        let task = backend.get_task(1).unwrap();
+        let event = build_event("task_added", &task, &backend, None, None);
         assert!(event.stats.contains_key("draft"));
         assert_eq!(*event.stats.get("draft").unwrap(), 1);
     }
 
     #[test]
     fn event_has_ready_count() {
-        let (_dir, conn) = setup_db();
-        db::create_task(
-            &conn,
+        let (_dir, backend) = setup_db();
+        backend.create_task(
             &crate::models::CreateTaskParams {
                 title: "Ready".into(),
                 background: None,
@@ -509,19 +507,18 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::ready_task(&conn, 1).unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
-        let event = build_event("task_added", &task, &conn, None, None);
+        backend.ready_task(1).unwrap();
+        let task = backend.get_task(1).unwrap();
+        let event = build_event("task_added", &task, &backend, None, None);
         assert_eq!(event.ready_count, 1);
     }
 
     #[test]
     fn compute_unblocked_finds_newly_ready() {
-        let (_dir, conn) = setup_db();
+        let (_dir, backend) = setup_db();
 
         // Create task 1 (will be completed) and task 2 (depends on task 1)
-        db::create_task(
-            &conn,
+        backend.create_task(
             &crate::models::CreateTaskParams {
                 title: "Dependency".into(),
                 background: None,
@@ -538,11 +535,10 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::ready_task(&conn, 1).unwrap();
-        db::start_task(&conn, 1, None, "2025-01-01T00:00:00Z").unwrap();
+        backend.ready_task(1).unwrap();
+        backend.start_task(1, None, "2025-01-01T00:00:00Z").unwrap();
 
-        db::create_task(
-            &conn,
+        backend.create_task(
             &crate::models::CreateTaskParams {
                 title: "Blocked".into(),
                 background: None,
@@ -559,17 +555,17 @@ on_task_completed = "echo completed"
             },
         )
         .unwrap();
-        db::ready_task(&conn, 2).unwrap();
-        db::add_dependency(&conn, 2, 1).unwrap();
+        backend.ready_task(2).unwrap();
+        backend.add_dependency(2, 1).unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            db::list_ready_tasks(&conn).unwrap().iter().map(|t| t.id).collect();
+            backend.list_ready_tasks().unwrap().iter().map(|t| t.id).collect();
 
         // Complete task 1
-        db::complete_task(&conn, 1, "2025-01-01T00:00:00Z").unwrap();
+        backend.complete_task(1, "2025-01-01T00:00:00Z").unwrap();
 
-        let unblocked = compute_unblocked(&conn, &prev_ready);
+        let unblocked = compute_unblocked(&backend, &prev_ready);
         assert_eq!(unblocked.len(), 1);
         assert_eq!(unblocked[0].id, 2);
         assert_eq!(unblocked[0].title, "Blocked");
@@ -592,7 +588,7 @@ on_task_completed = "echo completed"
             },
         };
 
-        let (_db_dir, conn) = setup_db();
+        let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 1,
             title: "Test".into(),
@@ -617,7 +613,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        fire_hooks(&config, "task_added", &task, &conn, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None);
 
         // Give child processes a moment to complete
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -628,7 +624,7 @@ on_task_completed = "echo completed"
 
     #[test]
     fn fire_hooks_noop_when_no_commands() {
-        let (_db_dir, conn) = setup_db();
+        let (_db_dir, backend) = setup_db();
         let config = Config::default();
         let task = Task {
             id: 1,
@@ -655,7 +651,7 @@ on_task_completed = "echo completed"
             dependencies: vec![],
         };
         // Should not panic
-        fire_hooks(&config, "task_added", &task, &conn, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None);
     }
 
     #[test]
@@ -723,7 +719,7 @@ on_task_completed = "echo completed"
             },
         };
 
-        let (_db_dir, conn) = setup_db();
+        let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 1,
             title: "Test".into(),
@@ -750,7 +746,7 @@ on_task_completed = "echo completed"
         };
 
         // Call execute_hook directly with our log path
-        let json = serde_json::to_string(&build_event("task_added", &task, &conn, None, None)).unwrap();
+        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None)).unwrap();
         execute_hook("exit 1", "task_added", &json, Some(&log_path));
 
         // Wait for the thread to finish logging
@@ -810,7 +806,7 @@ on_task_completed = ["notify", "log"]
             },
         };
 
-        let (_db_dir, conn) = setup_db();
+        let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 42,
             title: "Hook stdin test".into(),
@@ -835,7 +831,7 @@ on_task_completed = ["notify", "log"]
             tags: vec![],
             dependencies: vec![],
         };
-        fire_hooks(&config, "task_added", &task, &conn, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None);
 
         std::thread::sleep(std::time::Duration::from_millis(200));
 

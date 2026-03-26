@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
-use localflow::db;
+use localflow::db::{self, TaskBackend};
 use localflow::models::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
@@ -429,10 +429,10 @@ fn run(cli: Cli) -> Result<()> {
             remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            let conn = db::open_db(&project_root)?;
+            let backend = db::SqliteBackend::new(&project_root)?;
 
             // Verify task exists (even in dry-run)
-            let _task = db::get_task(&conn, id)?;
+            let _task = backend.get_task(id)?;
 
             if dry_run {
                 let mut operations = Vec::new();
@@ -551,9 +551,9 @@ fn run(cli: Cli) -> Result<()> {
                 remove_out_of_scope,
             };
 
-            db::update_task(&conn, id, &scalar_params)?;
-            db::update_task_arrays(&conn, id, &array_params)?;
-            let task = db::get_task(&conn, id)?;
+            backend.update_task(id, &scalar_params)?;
+            backend.update_task_arrays(id, &array_params)?;
+            let task = backend.get_task(id)?;
 
             match cli.output {
                 OutputFormat::Json => {
@@ -595,7 +595,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Deps { ref command } => cmd_deps(&cli, command),
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let _ = db::open_db(&root)?; // validate DB exists
+            let _ = db::SqliteBackend::new(&root)?; // validate DB exists
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(localflow::web::serve(root, port, host))?;
             Ok(())
@@ -626,7 +626,7 @@ fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -716,10 +716,9 @@ fn cmd_add(
         let branch_template = params.branch.clone();
         let mut params_without_branch = params;
         params_without_branch.branch = None;
-        let created = db::create_task(&conn, &params_without_branch)?;
+        let created = backend.create_task(&params_without_branch)?;
         let expanded = expand_branch_template(branch_template.as_deref().unwrap(), created.id);
-        db::update_task(
-            &conn,
+        backend.update_task(
             created.id,
             &UpdateTaskParams {
                 title: None,
@@ -738,12 +737,12 @@ fn cmd_add(
             },
         )?
     } else {
-        db::create_task(&conn, &params)?
+        backend.create_task(&params)?
     };
 
     // Fire hooks
     let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(&config, "task_added", &task, &conn, None, None);
+    localflow::hooks::fire_hooks(&config, "task_added", &task, &backend, None, None);
 
     match cli.output {
         OutputFormat::Json => {
@@ -770,7 +769,7 @@ fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
     let statuses = status
         .into_iter()
@@ -785,7 +784,7 @@ fn cmd_list(
         ready,
     };
 
-    let tasks = db::list_tasks(&conn, &filter)?;
+    let tasks = backend.list_tasks(&filter)?;
 
     match output {
         OutputFormat::Json => {
@@ -809,8 +808,8 @@ fn cmd_get(
     task_id: i64,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let conn = db::open_db(&root)?;
-    let task = db::get_task(&conn, task_id)?;
+    let backend = db::SqliteBackend::new(&root)?;
+    let task = backend.get_task(task_id)?;
 
     match output {
         OutputFormat::Json => {
@@ -889,9 +888,9 @@ fn cmd_get(
 
 fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
-    let task = db::get_task(&conn, id)?;
+    let task = backend.get_task(id)?;
 
     if cli.dry_run {
         let operations = vec![
@@ -900,12 +899,12 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let updated = db::ready_task(&conn, id)?;
+    let updated = backend.ready_task(id)?;
 
     // Fire hooks
     let config = localflow::hooks::load_config(&root)?;
     localflow::hooks::fire_hooks(
-        &config, "task_ready", &updated, &conn,
+        &config, "task_ready", &updated, &backend,
         Some(TaskStatus::Draft), None,
     );
 
@@ -923,9 +922,9 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
-    let task = db::get_task(&conn, id)?;
+    let task = backend.get_task(id)?;
 
     if cli.dry_run {
         let mut operations = vec![
@@ -939,12 +938,12 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::start_task(&conn, id, session_id, &now)?;
+    let updated = backend.start_task(id, session_id, &now)?;
 
     // Fire hooks
     let config = localflow::hooks::load_config(&root)?;
     localflow::hooks::fire_hooks(
-        &config, "task_started", &updated, &conn,
+        &config, "task_started", &updated, &backend,
         Some(prev_status), None,
     );
 
@@ -962,9 +961,9 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
 
 fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
-    let task = db::next_task(&conn)?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
+    let task = backend.next_task()?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
 
     if cli.dry_run {
         let mut operations = vec![
@@ -979,12 +978,12 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::start_task(&conn, task.id, session_id, &now)?;
+    let updated = backend.start_task(task.id, session_id, &now)?;
 
     // Fire hooks
     let config = localflow::hooks::load_config(&root)?;
     localflow::hooks::fire_hooks(
-        &config, "task_started", &updated, &conn,
+        &config, "task_started", &updated, &backend,
         Some(prev_status), None,
     );
 
@@ -1002,10 +1001,10 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 
 fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
     let config = localflow::hooks::load_config(&root)?;
 
-    let task = db::get_task(&conn, id)?;
+    let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Completed)?;
 
     let unchecked: Vec<_> = task
@@ -1046,17 +1045,17 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
     // Capture ready tasks before completion for unblocked detection
     let prev_ready_ids: std::collections::HashSet<i64> =
-        db::list_ready_tasks(&conn)?.iter().map(|t| t.id).collect();
+        backend.list_ready_tasks()?.iter().map(|t| t.id).collect();
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::complete_task(&conn, id, &now)?;
+    let updated = backend.complete_task(id, &now)?;
 
     // Fire hooks with unblocked tasks
-    let unblocked = localflow::hooks::compute_unblocked(&conn, &prev_ready_ids);
+    let unblocked = localflow::hooks::compute_unblocked(&backend, &prev_ready_ids);
     let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
     localflow::hooks::fire_hooks(
-        &config, "task_completed", &updated, &conn,
+        &config, "task_completed", &updated, &backend,
         Some(prev_status), unblocked_opt,
     );
 
@@ -1123,9 +1122,9 @@ fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
 
 fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
-    let task = db::get_task(&conn, id)?;
+    let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Canceled)?;
 
     if cli.dry_run {
@@ -1140,12 +1139,12 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = db::cancel_task(&conn, id, &now, reason)?;
+    let updated = backend.cancel_task(id, &now, reason)?;
 
     // Fire hooks
     let config = localflow::hooks::load_config(&root)?;
     localflow::hooks::fire_hooks(
-        &config, "task_canceled", &updated, &conn,
+        &config, "task_canceled", &updated, &backend,
         Some(prev_status), None,
     );
 
@@ -1246,11 +1245,11 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = localflow::hooks::load_config(&root)?;
-            let conn = db::open_db(&root)?;
+            let backend = db::SqliteBackend::new(&root)?;
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {
-                db::get_task(&conn, *id)?
+                backend.get_task(*id)?
             } else {
                 use localflow::models::{Priority, TaskStatus};
                 Task {
@@ -1279,7 +1278,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 }
             };
 
-            let event = localflow::hooks::build_event(event_name, &task, &conn, None, None);
+            let event = localflow::hooks::build_event(event_name, &task, &backend, None, None);
             let json = serde_json::to_string_pretty(&event)?;
 
             if *dry_run {
@@ -1441,7 +1440,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1457,7 +1456,7 @@ fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = db::check_dod(&conn, task_id, index)?;
+            let task = backend.check_dod(task_id, index)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1479,7 +1478,7 @@ fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = db::uncheck_dod(&conn, task_id, index)?;
+            let task = backend.uncheck_dod(task_id, index)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1501,7 +1500,7 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
 
 fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let conn = db::open_db(&root)?;
+    let backend = db::SqliteBackend::new(&root)?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1510,7 +1509,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
             }
-            let task = db::add_dependency(&conn, task_id, on)?;
+            let task = backend.add_dependency(task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
@@ -1522,7 +1521,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
             }
-            let task = db::remove_dependency(&conn, task_id, on)?;
+            let task = backend.remove_dependency(task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
@@ -1535,7 +1534,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
             }
-            let task = db::set_dependencies(&conn, task_id, on)?;
+            let task = backend.set_dependencies(task_id, on)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1550,7 +1549,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
-            let deps = db::list_dependencies(&conn, *task_id)?;
+            let deps = backend.list_dependencies(*task_id)?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
@@ -1846,8 +1845,8 @@ mod tests {
         )
         .unwrap();
 
-        let conn = db::open_db(tmp.path()).unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
+        let backend = db::SqliteBackend::new(tmp.path()).unwrap();
+        let task = backend.get_task(1).unwrap();
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
         assert_eq!(task.priority, localflow::models::Priority::P1);
@@ -1902,8 +1901,8 @@ mod tests {
         )
         .unwrap();
 
-        let conn = db::open_db(tmp.path()).unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
+        let backend = db::SqliteBackend::new(tmp.path()).unwrap();
+        let task = backend.get_task(1).unwrap();
         assert_eq!(task.title, "file task");
         assert_eq!(task.priority, localflow::models::Priority::P0);
     }
@@ -1994,8 +1993,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let conn = db::open_db(tmp.path()).unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
+        let backend = db::SqliteBackend::new(tmp.path()).unwrap();
+        let task = backend.get_task(1).unwrap();
         assert_eq!(task.title, "my task");
     }
 
@@ -2039,8 +2038,8 @@ mod tests {
             None,
         )
         .unwrap();
-        let conn = db::open_db(tmp.path()).unwrap();
-        let task = db::get_task(&conn, 1).unwrap();
+        let backend = db::SqliteBackend::new(tmp.path()).unwrap();
+        let task = backend.get_task(1).unwrap();
         assert_eq!(task.title, "json out");
     }
 

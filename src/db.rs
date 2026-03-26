@@ -908,6 +908,124 @@ fn query_i64_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<i64>
     Ok(items)
 }
 
+// --- TaskBackend trait and SqliteBackend implementation ---
+
+pub trait TaskBackend {
+    fn create_task(&self, params: &CreateTaskParams) -> Result<Task>;
+    fn get_task(&self, id: i64) -> Result<Task>;
+    fn ready_task(&self, id: i64) -> Result<Task>;
+    fn start_task(&self, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task>;
+    fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task>;
+    fn cancel_task(&self, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task>;
+    fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task>;
+    fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()>;
+    fn delete_task(&self, id: i64) -> Result<()>;
+    fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>>;
+    fn next_task(&self) -> Result<Option<Task>>;
+    fn task_stats(&self) -> Result<HashMap<String, i64>>;
+    fn ready_count(&self) -> Result<i64>;
+    fn list_ready_tasks(&self) -> Result<Vec<Task>>;
+    fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task>;
+    fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task>;
+    fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task>;
+    fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>>;
+    fn check_dod(&self, task_id: i64, index: usize) -> Result<Task>;
+    fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task>;
+}
+
+pub struct SqliteBackend {
+    conn: Connection,
+}
+
+impl SqliteBackend {
+    pub fn new(project_root: &Path) -> Result<Self> {
+        let conn = open_db(project_root)?;
+        Ok(Self { conn })
+    }
+}
+
+impl TaskBackend for SqliteBackend {
+    fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
+        create_task(&self.conn, params)
+    }
+
+    fn get_task(&self, id: i64) -> Result<Task> {
+        get_task(&self.conn, id)
+    }
+
+    fn ready_task(&self, id: i64) -> Result<Task> {
+        ready_task(&self.conn, id)
+    }
+
+    fn start_task(&self, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
+        start_task(&self.conn, id, assignee_session_id, started_at)
+    }
+
+    fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task> {
+        complete_task(&self.conn, id, completed_at)
+    }
+
+    fn cancel_task(&self, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
+        cancel_task(&self.conn, id, canceled_at, reason)
+    }
+
+    fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+        update_task(&self.conn, id, params)
+    }
+
+    fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+        update_task_arrays(&self.conn, id, params)
+    }
+
+    fn delete_task(&self, id: i64) -> Result<()> {
+        delete_task(&self.conn, id)
+    }
+
+    fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+        list_tasks(&self.conn, filter)
+    }
+
+    fn next_task(&self) -> Result<Option<Task>> {
+        next_task(&self.conn)
+    }
+
+    fn task_stats(&self) -> Result<HashMap<String, i64>> {
+        task_stats(&self.conn)
+    }
+
+    fn ready_count(&self) -> Result<i64> {
+        ready_count(&self.conn)
+    }
+
+    fn list_ready_tasks(&self) -> Result<Vec<Task>> {
+        list_ready_tasks(&self.conn)
+    }
+
+    fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+        add_dependency(&self.conn, task_id, dep_id)
+    }
+
+    fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+        remove_dependency(&self.conn, task_id, dep_id)
+    }
+
+    fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+        set_dependencies(&self.conn, task_id, dep_ids)
+    }
+
+    fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
+        list_dependencies(&self.conn, task_id)
+    }
+
+    fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+        check_dod(&self.conn, task_id, index)
+    }
+
+    fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+        uncheck_dod(&self.conn, task_id, index)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
