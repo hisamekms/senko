@@ -24,6 +24,7 @@ pub fn open_db(project_root: &Path) -> Result<Connection> {
 
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+    conn.execute_batch("PRAGMA busy_timeout=5000;")?;
 
     create_schema(&conn)?;
     migrate_dod_checked(&conn)?;
@@ -1000,6 +1001,15 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(fk, 1);
+    }
+
+    #[test]
+    fn busy_timeout_set() {
+        let (_tmp, conn) = setup();
+        let timeout: i32 = conn
+            .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
+            .unwrap();
+        assert_eq!(timeout, 5000);
     }
 
     #[test]
