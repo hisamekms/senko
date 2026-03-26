@@ -6,11 +6,42 @@ use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::{Parser, Subcommand, ValueEnum};
 use localflow::db::{self, TaskBackend};
+use localflow::hooks::{self, HookMode};
+use localflow::http_backend::HttpBackend;
 use localflow::models::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
 use localflow::project::resolve_project_root;
+
+/// Create the appropriate backend based on env var / config.
+/// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
+fn create_backend(
+    project_root: &std::path::Path,
+) -> Result<(Box<dyn TaskBackend>, bool)> {
+    // 1. LOCALFLOW_API_URL env var takes priority
+    if let Ok(url) = std::env::var("LOCALFLOW_API_URL") {
+        if !url.is_empty() {
+            return Ok((Box::new(HttpBackend::new(&url)), true));
+        }
+    }
+
+    // 2. config.toml [backend] api_url
+    let config = hooks::load_config(project_root)?;
+    if let Some(ref url) = config.backend.api_url {
+        return Ok((Box::new(HttpBackend::new(url)), true));
+    }
+
+    // 3. Default: SqliteBackend
+    Ok((Box::new(db::SqliteBackend::new(project_root)?), false))
+}
+
+fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
+    match config.backend.hook_mode {
+        HookMode::Server => !using_http,
+        HookMode::Client | HookMode::Both => true,
+    }
+}
 
 #[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
@@ -438,7 +469,7 @@ fn run(cli: Cli) -> Result<()> {
             remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            let backend = db::SqliteBackend::new(&project_root)?;
+            let (backend, _) = create_backend(&project_root)?;
 
             // Verify task exists (even in dry-run)
             let _task = backend.get_task(id)?;
@@ -604,7 +635,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::Deps { ref command } => cmd_deps(&cli, command),
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let _ = db::SqliteBackend::new(&root)?; // validate DB exists
+            let _ = db::SqliteBackend::new(&root)?; // web always uses SQLite directly
             let rt = tokio::runtime::Runtime::new()?;
             rt.block_on(localflow::web::serve(root, port, host))?;
             Ok(())
@@ -642,7 +673,7 @@ fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -757,8 +788,10 @@ fn cmd_add(
     };
 
     // Fire hooks
-    let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(&config, "task_added", &task, &backend, None, None);
+    let config = hooks::load_config(&root)?;
+    if should_fire_client_hooks(&config, using_http) {
+        hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None);
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -785,7 +818,7 @@ fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, _) = create_backend(&root)?;
 
     let statuses = status
         .into_iter()
@@ -824,7 +857,7 @@ fn cmd_get(
     task_id: i64,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, _) = create_backend(&root)?;
     let task = backend.get_task(task_id)?;
 
     match output {
@@ -904,7 +937,7 @@ fn cmd_get(
 
 fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
 
     let task = backend.get_task(id)?;
 
@@ -918,11 +951,13 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let updated = backend.ready_task(id)?;
 
     // Fire hooks
-    let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(
-        &config, "task_ready", &updated, &backend,
-        Some(TaskStatus::Draft), None,
-    );
+    let config = hooks::load_config(&root)?;
+    if should_fire_client_hooks(&config, using_http) {
+        hooks::fire_hooks(
+            &config, "task_ready", &updated, &*backend,
+            Some(TaskStatus::Draft), None,
+        );
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -938,7 +973,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
 
     let task = backend.get_task(id)?;
 
@@ -957,11 +992,13 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let updated = backend.start_task(id, session_id, &now)?;
 
     // Fire hooks
-    let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(
-        &config, "task_started", &updated, &backend,
-        Some(prev_status), None,
-    );
+    let config = hooks::load_config(&root)?;
+    if should_fire_client_hooks(&config, using_http) {
+        hooks::fire_hooks(
+            &config, "task_started", &updated, &*backend,
+            Some(prev_status), None,
+        );
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -977,7 +1014,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
 
 fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
 
     let task = backend.next_task()?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
 
@@ -997,11 +1034,13 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let updated = backend.start_task(task.id, session_id, &now)?;
 
     // Fire hooks
-    let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(
-        &config, "task_started", &updated, &backend,
-        Some(prev_status), None,
-    );
+    let config = hooks::load_config(&root)?;
+    if should_fire_client_hooks(&config, using_http) {
+        hooks::fire_hooks(
+            &config, "task_started", &updated, &*backend,
+            Some(prev_status), None,
+        );
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -1017,8 +1056,8 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 
 fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
-    let config = localflow::hooks::load_config(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
+    let config = hooks::load_config(&root)?;
 
     let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Completed)?;
@@ -1039,7 +1078,7 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     // PR workflow checks
     if !skip_pr_check
         && config.workflow.completion_mode
-            == localflow::hooks::CompletionMode::PrThenComplete
+            == hooks::CompletionMode::PrThenComplete
     {
         let pr_url = task.pr_url.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1068,12 +1107,14 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let updated = backend.complete_task(id, &now)?;
 
     // Fire hooks with unblocked tasks
-    let unblocked = localflow::hooks::compute_unblocked(&backend, &prev_ready_ids);
-    let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
-    localflow::hooks::fire_hooks(
-        &config, "task_completed", &updated, &backend,
-        Some(prev_status), unblocked_opt,
-    );
+    if should_fire_client_hooks(&config, using_http) {
+        let unblocked = hooks::compute_unblocked(&*backend, &prev_ready_ids);
+        let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
+        hooks::fire_hooks(
+            &config, "task_completed", &updated, &*backend,
+            Some(prev_status), unblocked_opt,
+        );
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -1138,7 +1179,7 @@ fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
 
 fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, using_http) = create_backend(&root)?;
 
     let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Canceled)?;
@@ -1158,11 +1199,13 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let updated = backend.cancel_task(id, &now, reason)?;
 
     // Fire hooks
-    let config = localflow::hooks::load_config(&root)?;
-    localflow::hooks::fire_hooks(
-        &config, "task_canceled", &updated, &backend,
-        Some(prev_status), None,
-    );
+    let config = hooks::load_config(&root)?;
+    if should_fire_client_hooks(&config, using_http) {
+        hooks::fire_hooks(
+            &config, "task_canceled", &updated, &*backend,
+            Some(prev_status), None,
+        );
+    }
 
     match cli.output {
         OutputFormat::Json => {
@@ -1192,6 +1235,10 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
 # auto_merge = true
+
+[backend]
+# api_url = "http://127.0.0.1:3142"  # uncomment to use HTTP backend
+# hook_mode = "server"  # "server" (default), "client", or "both"
 "#;
 
 fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
@@ -1202,7 +1249,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             clear,
             path,
         } => {
-            let log_path = localflow::hooks::log_file_path()
+            let log_path = hooks::log_file_path()
                 .ok_or_else(|| anyhow::anyhow!("cannot determine log path: neither XDG_STATE_HOME nor HOME is set"))?;
 
             if *path {
@@ -1260,8 +1307,8 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             }
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = localflow::hooks::load_config(&root)?;
-            let backend = db::SqliteBackend::new(&root)?;
+            let config = hooks::load_config(&root)?;
+            let (backend, _) = create_backend(&root)?;
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {
@@ -1294,7 +1341,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 }
             };
 
-            let event = localflow::hooks::build_event(event_name, &task, &backend, None, None);
+            let event = hooks::build_event(event_name, &task, &*backend, None, None);
             let json = serde_json::to_string_pretty(&event)?;
 
             if *dry_run {
@@ -1302,7 +1349,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 return Ok(());
             }
 
-            let commands = localflow::hooks::get_commands_for_event(&config, event_name)
+            let commands = hooks::get_commands_for_event(&config, event_name)
                 .expect("already validated event name");
 
             if commands.is_empty() {
@@ -1315,7 +1362,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 if commands.len() > 1 {
                     eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
                 }
-                match localflow::hooks::execute_hook_sync(cmd, &compact_json) {
+                match hooks::execute_hook_sync(cmd, &compact_json) {
                     Ok(status) => {
                         eprintln!("exit code: {}", status.code().unwrap_or(-1));
                     }
@@ -1394,7 +1441,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = localflow::hooks::load_config(&root)?;
+    let config = hooks::load_config(&root)?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);
@@ -1448,6 +1495,12 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                     config.hooks.on_task_canceled.join(", ")
                 );
             }
+            println!("  [backend]");
+            match config.backend.api_url {
+                Some(ref url) => println!("    api_url: {url}"),
+                None => println!("    api_url: (none, using SQLite)"),
+            }
+            println!("    hook_mode: {:?}", config.backend.hook_mode);
         }
     }
 
@@ -1456,7 +1509,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, _) = create_backend(&root)?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1516,7 +1569,7 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
 
 fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let backend = db::SqliteBackend::new(&root)?;
+    let (backend, _) = create_backend(&root)?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
