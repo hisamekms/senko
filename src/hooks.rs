@@ -175,8 +175,10 @@ fn log_to_file(path: &Path, level: &str, message: &str) {
         .append(true)
         .open(path)
     {
+        // Build the full line in a single buffer so the O_APPEND write is atomic.
         let ts = Utc::now().to_rfc3339();
-        let _ = writeln!(f, "[{}] [{}] {}", ts, level, message);
+        let line = format!("[{}] [{}] {}\n", ts, level, message);
+        let _ = f.write_all(line.as_bytes());
     }
 }
 

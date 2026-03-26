@@ -223,12 +223,36 @@ enum Command {
         #[arg(long)]
         yes: bool,
     },
+    /// Manage hooks
+    Hooks {
+        #[command(subcommand)]
+        command: HooksCommand,
+    },
     /// Show or initialize workflow configuration
     #[command(name = "config")]
     Config {
         /// Generate a template config.toml
         #[arg(long)]
         init: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum HooksCommand {
+    /// View hook execution log
+    Log {
+        /// Number of recent entries to show (default: 20)
+        #[arg(short, long, default_value_t = 20)]
+        n: usize,
+        /// Follow log output (like tail -f)
+        #[arg(short, long)]
+        follow: bool,
+        /// Clear the log file
+        #[arg(long)]
+        clear: bool,
+        /// Print the log file path
+        #[arg(long)]
+        path: bool,
     },
 }
 
@@ -569,6 +593,7 @@ fn run(cli: Cli) -> Result<()> {
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
         }
+        Command::Hooks { ref command } => cmd_hooks(command),
         Command::Config { init } => cmd_config(&cli, init),
     }
 }
@@ -1143,6 +1168,93 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
 # auto_merge = true
 "#;
+
+fn cmd_hooks(command: &HooksCommand) -> Result<()> {
+    match command {
+        HooksCommand::Log {
+            n,
+            follow,
+            clear,
+            path,
+        } => {
+            let log_path = localflow::hooks::log_file_path()
+                .ok_or_else(|| anyhow::anyhow!("cannot determine log path: neither XDG_STATE_HOME nor HOME is set"))?;
+
+            if *path {
+                println!("{}", log_path.display());
+                return Ok(());
+            }
+
+            if *clear {
+                if log_path.exists() {
+                    std::fs::remove_file(&log_path)?;
+                    eprintln!("Cleared {}", log_path.display());
+                } else {
+                    eprintln!("No log file to clear");
+                }
+                return Ok(());
+            }
+
+            if *follow {
+                return hooks_log_follow(&log_path);
+            }
+
+            // Show last N lines
+            if !log_path.exists() {
+                eprintln!("No hook log yet ({})", log_path.display());
+                return Ok(());
+            }
+
+            let content = std::fs::read_to_string(&log_path)
+                .context("failed to read hook log")?;
+            let lines: Vec<&str> = content.lines().collect();
+            let start = lines.len().saturating_sub(*n);
+            for line in &lines[start..] {
+                println!("{line}");
+            }
+            Ok(())
+        }
+    }
+}
+
+fn hooks_log_follow(log_path: &std::path::Path) -> Result<()> {
+    use std::io::{BufRead, BufReader, Seek, SeekFrom};
+
+    // If file doesn't exist yet, wait for it
+    if !log_path.exists() {
+        eprintln!("Waiting for hook log ({})...", log_path.display());
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            if log_path.exists() {
+                break;
+            }
+        }
+    }
+
+    let mut file = std::fs::File::open(log_path)
+        .context("failed to open hook log")?;
+    // Seek to end — only show new lines
+    file.seek(SeekFrom::End(0))?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+
+    eprintln!("Following {} (Ctrl+C to stop)...", log_path.display());
+    loop {
+        line.clear();
+        match reader.read_line(&mut line) {
+            Ok(0) => {
+                // No new data — poll
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+            Ok(_) => {
+                print!("{line}");
+            }
+            Err(e) => {
+                bail!("error reading hook log: {e}");
+            }
+        }
+    }
+}
 
 fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
