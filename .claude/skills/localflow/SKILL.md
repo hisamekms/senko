@@ -26,9 +26,11 @@ Manage and execute project tasks using the `localflow` CLI. localflow is a SQLit
 
 ## Argument Parsing
 
-Parse `$ARGUMENTS` with these rules:
+**Default action: When `$ARGUMENTS` is empty, blank, or contains only the literal placeholder `$ARGUMENTS`, execute Auto-Select (run `localflow next`).** Do NOT show the task list — always run `next` when no arguments are provided.
 
-1. **Empty**: Auto-select next task (see "Auto-Select")
+Parse `$ARGUMENTS` with these rules (check in order):
+
+1. **Empty / blank / literal `$ARGUMENTS`**: → Auto-select next task (see "Auto-Select"). **This is the default.**
 2. **Starts with `add`**: Create a new task with the rest as description (see "Add Task")
    - If `--simple` is present, use simple mode (skip planning phase)
 3. **`list`**: Show task list (see "List Tasks")
