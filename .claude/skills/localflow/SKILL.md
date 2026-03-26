@@ -58,12 +58,11 @@ localflow list --tag backend
 localflow get <id>
 
 # Auto-select next task (highest-priority ready task → in_progress)
-localflow next --session-id $CLAUDE_CODE_SESSION_ID
+localflow next
 
 # Status transitions (dedicated commands)
 localflow ready <id>                       # draft → todo
 localflow start <id>                       # todo → in_progress
-localflow start <id> --session-id <SID>    # todo → in_progress with session assignment
 localflow complete <id>                    # in_progress → completed (fails if unchecked DoD)
 localflow complete <id> --skip-pr-check    # bypass PR merge/review checks
 localflow cancel <id> --reason "Reason text"  # any active → canceled
@@ -267,10 +266,10 @@ Display the finalized task details to the user.
 
 ## Auto-Select
 
-Use `localflow next --session-id $CLAUDE_CODE_SESSION_ID` to auto-select the highest-priority eligible task.
+Use `localflow next` to auto-select the highest-priority eligible task.
 
 ```bash
-localflow next --session-id $CLAUDE_CODE_SESSION_ID
+localflow next
 ```
 
 - **Success**: The selected task moves to `in_progress`. Read task info from JSON output and proceed to "Execute Task" Step 2.
