@@ -18,6 +18,7 @@ use localflow::project::resolve_project_root;
 /// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
 fn create_backend(
     project_root: &std::path::Path,
+    config_path: Option<&std::path::Path>,
 ) -> Result<(Box<dyn TaskBackend>, bool)> {
     // 1. LOCALFLOW_API_URL env var takes priority
     if let Ok(url) = std::env::var("LOCALFLOW_API_URL") {
@@ -27,7 +28,7 @@ fn create_backend(
     }
 
     // 2. config.toml [backend] api_url
-    let config = hooks::load_config(project_root)?;
+    let config = hooks::load_config(project_root, config_path)?;
     if let Some(ref url) = config.backend.api_url {
         return Ok((Box::new(HttpBackend::new(url)), true));
     }
@@ -59,6 +60,10 @@ struct Cli {
     /// Project root directory
     #[arg(long)]
     project_root: Option<PathBuf>,
+
+    /// Path to config file (default: .localflow/config.toml)
+    #[arg(long)]
+    config: Option<PathBuf>,
 
     /// Dry run mode: show what would be done without executing
     #[arg(long)]
@@ -430,12 +435,15 @@ fn run(cli: Cli) -> Result<()> {
         } => cmd_list(
             &cli.output,
             cli.project_root.as_deref(),
+            cli.config.as_deref(),
             status,
             tag,
             depends_on,
             ready,
         ),
-        Command::Get { task_id } => cmd_get(&cli.output, cli.project_root.as_deref(), task_id),
+        Command::Get { task_id } => {
+            cmd_get(&cli.output, cli.project_root.as_deref(), cli.config.as_deref(), task_id)
+        }
         Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()),
         Command::Ready { id } => cmd_ready(&cli, id),
         Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()),
@@ -469,7 +477,7 @@ fn run(cli: Cli) -> Result<()> {
             remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            let (backend, _) = create_backend(&project_root)?;
+            let (backend, _) = create_backend(&project_root, cli.config.as_deref())?;
 
             // Verify task exists (even in dry-run)
             let _task = backend.get_task(id)?;
@@ -650,7 +658,7 @@ fn run(cli: Cli) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::open_db(&root)?; // validate DB exists
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::api::serve(root, effective_port, host))?;
+            rt.block_on(localflow::api::serve(root, effective_port, host, cli.config.clone()))?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
@@ -679,7 +687,7 @@ fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -794,7 +802,7 @@ fn cmd_add(
     };
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None);
     }
@@ -818,13 +826,14 @@ fn expand_branch_template(branch: &str, task_id: i64) -> String {
 fn cmd_list(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
+    config_path: Option<&std::path::Path>,
     status: Vec<String>,
     tag: Vec<String>,
     depends_on: Option<i64>,
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let (backend, _) = create_backend(&root)?;
+    let (backend, _) = create_backend(&root, config_path)?;
 
     let statuses = status
         .into_iter()
@@ -860,10 +869,11 @@ fn cmd_list(
 fn cmd_get(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
+    config_path: Option<&std::path::Path>,
     task_id: i64,
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
-    let (backend, _) = create_backend(&root)?;
+    let (backend, _) = create_backend(&root, config_path)?;
     let task = backend.get_task(task_id)?;
 
     match output {
@@ -943,7 +953,7 @@ fn cmd_get(
 
 fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
     let task = backend.get_task(id)?;
 
@@ -957,7 +967,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let updated = backend.ready_task(id)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_ready", &updated, &*backend,
@@ -979,7 +989,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
     let task = backend.get_task(id)?;
 
@@ -998,7 +1008,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let updated = backend.start_task(id, session_id, &now)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1020,7 +1030,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
 
 fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
     let task = backend.next_task()?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
 
@@ -1046,7 +1056,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     };
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1068,8 +1078,8 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 
 fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
-    let config = hooks::load_config(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
 
     let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Completed)?;
@@ -1191,7 +1201,7 @@ fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
 
 fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root)?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
     let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Canceled)?;
@@ -1211,7 +1221,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let updated = backend.cancel_task(id, &now, reason)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_canceled", &updated, &*backend,
@@ -1319,8 +1329,8 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             }
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = hooks::load_config(&root)?;
-            let (backend, _) = create_backend(&root)?;
+            let config = hooks::load_config(&root, cli.config.as_deref())?;
+            let (backend, _) = create_backend(&root, cli.config.as_deref())?;
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {
@@ -1453,7 +1463,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = hooks::load_config(&root)?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);
@@ -1521,7 +1531,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root)?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1581,7 +1591,7 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
 
 fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root)?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1891,6 +1901,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::Add {
                 title: None,
@@ -1947,6 +1958,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::Add {
                 title: None,
@@ -1994,6 +2006,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::Add {
                 title: None,
@@ -2040,6 +2053,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::Add {
                 title: None,
@@ -2085,6 +2099,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Json,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::Add {
                 title: None,
@@ -2403,6 +2418,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: None,
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
@@ -2424,6 +2440,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2461,6 +2478,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2494,6 +2512,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2542,6 +2561,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2564,6 +2584,7 @@ mod tests {
         let cli = Cli {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
+            config: None,
             dry_run: false,
             command: Command::SkillInstall {
                 output_dir: None,

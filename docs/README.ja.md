@@ -134,6 +134,13 @@ auto_merge = false                    # デフォルト: true
 
 `localflow config`で現在の設定を表示、`localflow config --init`でテンプレートを生成できます。
 
+カスタムパスの設定ファイルを使用するには、`--config` フラグまたは `LOCALFLOW_CONFIG` 環境変数を使用します:
+
+```bash
+localflow --config /path/to/config.toml list
+LOCALFLOW_CONFIG=/path/to/config.toml localflow list
+```
+
 ## CLIリファレンス
 
 CLIを直接使用する場合は[CLIリファレンス](CLI.ja.md)を参照してください。

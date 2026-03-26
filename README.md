@@ -128,6 +128,13 @@ auto_merge = false                    # default: true
 
 Use `localflow config` to view current settings, or `localflow config --init` to generate a template.
 
+To use a config file at a custom location, use the `--config` flag or the `LOCALFLOW_CONFIG` environment variable:
+
+```bash
+localflow --config /path/to/config.toml list
+LOCALFLOW_CONFIG=/path/to/config.toml localflow list
+```
+
 When `completion_mode = "pr_then_complete"`:
 1. Set the PR URL on the task: `localflow edit <id> --pr-url <url>`
 2. The PR must be merged before `localflow complete <id>` succeeds

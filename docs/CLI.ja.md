@@ -7,6 +7,7 @@
 ```
 --output <FORMAT>       json または text（デフォルト: json）
 --project-root <PATH>   プロジェクトルート（省略時は自動検出）
+--config <PATH>         設定ファイルのパス（環境変数: LOCALFLOW_CONFIG、デフォルト: .localflow/config.toml）
 --dry-run               実行せずに結果を表示（状態変更コマンドのみ）
 ```
 
@@ -246,6 +247,7 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 | `LOCALFLOW_PORT` | `web` / `serve` コマンドのポート | `3141`（web）/ `3142`（serve） |
 | `LOCALFLOW_HOST` | バインドアドレス（例: `0.0.0.0`, `192.168.1.5`） | `127.0.0.1` |
 | `LOCALFLOW_PROJECT_ROOT` | プロジェクトルートディレクトリ | 自動検出 |
+| `LOCALFLOW_CONFIG` | 設定ファイルのパス | `.localflow/config.toml` |
 
 ### ワークフロー
 

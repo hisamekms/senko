@@ -7,6 +7,7 @@
 ```
 --output <FORMAT>       json or text (default: json)
 --project-root <PATH>   Project root (auto-detected if omitted)
+--config <PATH>         Path to config file (env: LOCALFLOW_CONFIG, default: .localflow/config.toml)
 --dry-run               Show what would happen without executing (state-changing commands only)
 ```
 
@@ -250,6 +251,7 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 | `LOCALFLOW_PORT` | Port for `web` and `serve` commands | `3141` (web) / `3142` (serve) |
 | `LOCALFLOW_HOST` | Bind address (e.g. `0.0.0.0`, `192.168.1.5`) | `127.0.0.1` |
 | `LOCALFLOW_PROJECT_ROOT` | Project root directory | Auto-detected |
+| `LOCALFLOW_CONFIG` | Path to config file | `.localflow/config.toml` |
 
 ### Workflow
 

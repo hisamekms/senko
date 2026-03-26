@@ -22,6 +22,7 @@ use crate::models::{
 #[derive(Clone)]
 struct AppState {
     project_root: Arc<PathBuf>,
+    config_path: Option<Arc<PathBuf>>,
 }
 
 // --- Error handling ---
@@ -158,9 +159,15 @@ struct EditTaskBody {
 
 // --- Server entry point ---
 
-pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>) -> Result<()> {
+pub async fn serve(
+    project_root: PathBuf,
+    port: u16,
+    host: Option<String>,
+    config_path: Option<PathBuf>,
+) -> Result<()> {
     let state = AppState {
         project_root: Arc::new(project_root),
+        config_path: config_path.map(Arc::new),
     };
 
     let app = Router::new()
@@ -295,7 +302,7 @@ async fn create_task(
         };
 
         // Fire hooks
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(&config, "task_added", &task, &backend, None, None);
 
         Ok((StatusCode::CREATED, Json(task)))
@@ -421,7 +428,7 @@ async fn ready_task(
         let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let updated = backend.ready_task(id).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_ready",
@@ -452,7 +459,7 @@ async fn start_task(
         let updated =
             backend.start_task(id, body.session_id, &now).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
@@ -478,7 +485,7 @@ async fn complete_task(
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
     tokio::task::spawn_blocking(move || {
         let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
 
         let task = backend.get_task(id).map_err(classify_error)?;
         task.status
@@ -562,7 +569,7 @@ async fn cancel_task(
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated = backend.cancel_task(id, &now, reason).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_canceled",
@@ -596,7 +603,7 @@ async fn next_task(
         let updated =
             backend.start_task(task.id, session_id, &now).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
@@ -694,7 +701,7 @@ async fn get_config(
 ) -> Result<Json<hooks::Config>, ApiError> {
     let root = state.project_root.clone();
     tokio::task::spawn_blocking(move || {
-        let config = hooks::load_config(&root).map_err(classify_error)?;
+        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         Ok(Json(config))
     })
     .await
