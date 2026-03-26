@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -151,22 +151,97 @@ pub fn build_event(
     }
 }
 
-fn execute_hook(command: &str, json: &str) -> Result<()> {
-    let mut child = std::process::Command::new("sh")
+/// Return the hook log file path following XDG Base Directory specification.
+/// `$XDG_STATE_HOME/localflow/hooks.log` (default: `~/.local/state/localflow/hooks.log`)
+pub fn log_file_path() -> Option<PathBuf> {
+    let state_dir = std::env::var("XDG_STATE_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".local").join("state"))
+        })?;
+    Some(state_dir.join("localflow").join("hooks.log"))
+}
+
+fn log_to_file(path: &Path, level: &str, message: &str) {
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let ts = Utc::now().to_rfc3339();
+        let _ = writeln!(f, "[{}] [{}] {}", ts, level, message);
+    }
+}
+
+fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&Path>) {
+    let mut child = match std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .stdin(std::process::Stdio::piped())
         .spawn()
-        .context("failed to spawn hook command")?;
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let msg = format!("hook spawn error ({}): {}: {:#}", event_name, command, e);
+            eprintln!("{msg}");
+            if let Some(p) = log_path {
+                log_to_file(p, "ERROR", &msg);
+            }
+            return;
+        }
+    };
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(json.as_bytes())?;
+        if let Err(e) = stdin.write_all(json.as_bytes()) {
+            let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
+            eprintln!("{msg}");
+            if let Some(p) = log_path {
+                log_to_file(p, "ERROR", &msg);
+            }
+            return;
+        }
     }
-    // Don't wait — fire and forget. The child process runs independently.
-    Ok(())
+
+    // Spawn a thread to wait for exit and log the result.
+    // The CLI returns immediately; the thread outlives the main function
+    // but Rust waits for non-daemon threads before process exit.
+    let cmd = command.to_owned();
+    let event = event_name.to_owned();
+    let log = log_path.map(|p| p.to_owned());
+    std::thread::spawn(move || {
+        match child.wait() {
+            Ok(status) if status.success() => {
+                if let Some(p) = log {
+                    log_to_file(&p, "INFO", &format!("hook ok ({}): {} (exit: {})", event, cmd, status));
+                }
+            }
+            Ok(status) => {
+                let msg = format!("hook failed ({}): {} (exit: {})", event, cmd, status);
+                eprintln!("{msg}");
+                if let Some(p) = log {
+                    log_to_file(&p, "WARN", &msg);
+                }
+            }
+            Err(e) => {
+                let msg = format!("hook wait error ({}): {}: {:#}", event, cmd, e);
+                eprintln!("{msg}");
+                if let Some(p) = log {
+                    log_to_file(&p, "ERROR", &msg);
+                }
+            }
+        }
+    });
 }
 
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
+/// Results are logged to `$XDG_STATE_HOME/localflow/hooks.log`.
 pub fn fire_hooks(
     config: &Config,
     event_name: &str,
@@ -187,19 +262,23 @@ pub fn fire_hooks(
         return;
     }
 
+    let log_path = log_file_path();
+
     let event = build_event(event_name, task, conn, from_status, unblocked);
     let json = match serde_json::to_string(&event) {
         Ok(j) => j,
         Err(e) => {
-            eprintln!("hook error: failed to serialize event: {e}");
+            let msg = format!("hook error: failed to serialize event: {e}");
+            eprintln!("{msg}");
+            if let Some(ref p) = log_path {
+                log_to_file(p, "ERROR", &msg);
+            }
             return;
         }
     };
 
     for cmd in commands {
-        if let Err(e) = execute_hook(cmd, &json) {
-            eprintln!("hook error ({}): {:#}", event_name, e);
-        }
+        execute_hook(cmd, event_name, &json, log_path.as_deref());
     }
 }
 
@@ -539,6 +618,109 @@ on_task_completed = "echo completed"
         };
         // Should not panic
         fire_hooks(&config, "task_added", &task, &conn, None, None);
+    }
+
+    #[test]
+    fn log_file_path_uses_xdg_state_home() {
+        unsafe {
+            let orig = std::env::var("XDG_STATE_HOME").ok();
+            std::env::set_var("XDG_STATE_HOME", "/tmp/test-xdg-state");
+            let path = log_file_path().unwrap();
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/test-xdg-state/localflow/hooks.log")
+            );
+            match orig {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => std::env::remove_var("XDG_STATE_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn log_file_path_falls_back_to_home() {
+        unsafe {
+            let orig_xdg = std::env::var("XDG_STATE_HOME").ok();
+            let orig_home = std::env::var("HOME").ok();
+            std::env::remove_var("XDG_STATE_HOME");
+            std::env::set_var("HOME", "/tmp/test-home");
+            let path = log_file_path().unwrap();
+            assert_eq!(
+                path,
+                PathBuf::from("/tmp/test-home/.local/state/localflow/hooks.log")
+            );
+            match orig_xdg {
+                Some(v) => std::env::set_var("XDG_STATE_HOME", v),
+                None => {}
+            }
+            match orig_home {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn log_to_file_creates_and_appends() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("nested").join("hooks.log");
+        log_to_file(&log_path, "INFO", "first message");
+        log_to_file(&log_path, "WARN", "second message");
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("[INFO] first message"));
+        assert!(content.contains("[WARN] second message"));
+    }
+
+    #[test]
+    fn hook_failure_logged_to_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("hooks.log");
+
+        // Run a hook that exits with non-zero
+        let config = Config {
+            workflow: Default::default(),
+            hooks: HooksConfig {
+                on_task_added: vec!["exit 1".into()],
+                ..Default::default()
+            },
+        };
+
+        let (_db_dir, conn) = setup_db();
+        let task = Task {
+            id: 1,
+            title: "Test".into(),
+            background: None,
+            description: None,
+            plan: None,
+            priority: crate::models::Priority::P2,
+            status: TaskStatus::Draft,
+            assignee_session_id: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            updated_at: "2026-01-01T00:00:00Z".into(),
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            pr_url: None,
+            metadata: None,
+            definition_of_done: vec![],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            tags: vec![],
+            dependencies: vec![],
+        };
+
+        // Call execute_hook directly with our log path
+        let json = serde_json::to_string(&build_event("task_added", &task, &conn, None, None)).unwrap();
+        execute_hook("exit 1", "task_added", &json, Some(&log_path));
+
+        // Wait for the thread to finish logging
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(content.contains("[WARN]"), "should log failure: {content}");
+        assert!(content.contains("hook failed"), "should contain hook failed: {content}");
     }
 
     #[test]
