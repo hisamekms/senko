@@ -1029,9 +1029,15 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
+    // HttpBackend's next_task() already starts the task (API does next+start atomically),
+    // so only call start_task for SqliteBackend where next_task() just selects without starting.
     let prev_status = task.status;
-    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.start_task(task.id, session_id, &now)?;
+    let updated = if using_http {
+        task
+    } else {
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        backend.start_task(task.id, session_id, &now)?
+    };
 
     // Fire hooks
     let config = hooks::load_config(&root)?;
