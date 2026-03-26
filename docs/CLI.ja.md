@@ -143,30 +143,9 @@ localflow web --host         # 0.0.0.0:3141 でリッスン（全インターフ
 
 `--host` フラグは環境変数 `LOCALFLOW_WEB_HOST` でも設定可能です（`0` と `false` 以外の非空値で有効になります）。
 
-## `watch` – タスクイベントの監視とフック実行
+## フック – タスク状態変更時の自動アクション
 
-タスクデータベースの変更をポーリングし、イベント検出時に設定されたフックを実行します。
-
-```bash
-localflow watch                           # フォアグラウンド（5秒間隔）
-localflow watch --interval 10             # ポーリング間隔を変更
-localflow watch -d                        # バックグラウンドデーモンとして起動
-localflow watch -d --interval 10          # デーモン＋カスタム間隔
-localflow watch --log-file /tmp/watch.log # ログファイルパスを指定
-localflow watch stop                      # デーモンを停止
-localflow watch status                    # デーモンの状態を表示
-```
-
-| オプション | 説明 |
-|--------|-------------|
-| `--interval <SECONDS>` | ポーリング間隔（秒）（デフォルト: `5`） |
-| `-d, --daemon` | バックグラウンドデーモンとして実行 |
-| `--log-file <PATH>` | ログファイルパス（デーモン時デフォルト: `.localflow/watch.log`） |
-
-| サブコマンド | 説明 |
-|------------|-------------|
-| `stop` | 実行中のデーモンを停止 |
-| `status` | デーモンの状態を表示（実行中/停止、PID、稼働時間） |
+フックはCLIコマンドがタスク状態を変更した際に自動実行されるシェルコマンドです。デーモン不要で、fire-and-forget（発火後即座に制御を返す）方式で子プロセスとして実行されるため、CLIをブロックしません。
 
 ### 設定
 
@@ -175,23 +154,28 @@ localflow watch status                    # デーモンの状態を表示
 ```toml
 [hooks]
 on_task_added = "echo '新しいタスク' | notify-send -"
-on_task_ready = "echo 'タスク準備完了'"
-on_task_started = "echo 'タスク開始'"
+on_task_ready = "curl -X POST https://example.com/ready"
+on_task_started = "slack-notify started"
 on_task_completed = "curl -X POST https://example.com/webhook"
-on_task_canceled = "echo 'タスクキャンセル'"
+on_task_canceled = "echo canceled"
+```
+
+イベントごとに複数コマンドを配列で指定できます:
+
+```toml
+[hooks]
+on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 ```
 
 | フック | トリガー |
 |------|---------|
-| `on_task_added` | 新しいタスクがデータベースに追加された |
-| `on_task_ready` | タスクが `todo` ステータスに遷移した |
-| `on_task_started` | タスクが `in_progress` ステータスに遷移した |
-| `on_task_completed` | タスクが `completed` ステータスに遷移した |
-| `on_task_canceled` | タスクが `canceled` ステータスに遷移した |
+| `on_task_added` | `localflow add` で新しいタスクを作成 |
+| `on_task_ready` | `localflow ready` でタスクを draft から todo に遷移 |
+| `on_task_started` | `localflow start` または `localflow next` でタスクを開始 |
+| `on_task_completed` | `localflow complete` でタスクを完了 |
+| `on_task_canceled` | `localflow cancel` でタスクをキャンセル |
 
 フックは **stdin** でイベントペイロード（JSON）を受け取り、`sh -c` で実行されます。
-
-> イベントは対応するフックが設定されている場合のみ検出されます。
 
 ### イベントペイロード
 
@@ -200,46 +184,23 @@ on_task_canceled = "echo 'タスクキャンセル'"
 ```json
 {
   "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_started",
+  "event": "task_completed",
   "timestamp": "2026-03-24T12:00:00Z",
-  "task": {
-    "id": 3,
-    "title": "Write unit tests",
-    "background": null,
-    "description": "Add tests for the API module",
-    "plan": null,
-    "priority": "P1",
-    "status": "in_progress",
-    "assignee_session_id": null,
-    "created_at": "2026-03-24T10:00:00Z",
-    "updated_at": "2026-03-24T12:00:00Z",
-    "started_at": "2026-03-24T12:00:00Z",
-    "completed_at": null,
-    "canceled_at": null,
-    "cancel_reason": null,
-    "branch": null,
-    "pr_url": null,
-    "metadata": null,
-    "definition_of_done": [],
-    "in_scope": [],
-    "out_of_scope": [],
-    "tags": [],
-    "dependencies": [1]
-  },
-  "from_status": "todo",
+  "from_status": "in_progress",
+  "task": { },
   "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
   "ready_count": 2,
-  "unblocked_tasks": null
+  "unblocked_tasks": [{ "id": 3, "title": "次のタスク", "priority": "P1", "metadata": null }]
 }
 ```
 
 | フィールド | 型 | 説明 |
 |-------|------|-------------|
 | `event_id` | string | UUID v4 一意識別子 |
-| `event` | string | `"task_added"`, `"task_ready"`, `"task_started"`, `"task_completed"`, `"task_canceled"` のいずれか |
+| `event` | string | イベント名（例: `"task_added"`, `"task_completed"`） |
 | `timestamp` | string | ISO 8601（RFC 3339）タイムスタンプ |
+| `from_status` | string \| null | 遷移前のステータス |
 | `task` | object | タスクオブジェクト全体（`localflow get` と同じスキーマ） |
-| `from_status` | string \| null | 遷移前のステータス（例: `"todo"`, `"in_progress"`）。`task_added` イベントでは存在しない。 |
 | `stats` | object | ステータス別タスク数（`{"todo": 3, "completed": 5, ...}`） |
 | `ready_count` | integer | 依存解決済みの `todo` タスク数 |
 | `unblocked_tasks` | array \| null | このイベントで新たにブロック解除されたタスク（`task_completed` のみ） |
@@ -254,41 +215,6 @@ on_task_canceled = "echo 'タスクキャンセル'"
 | `title` | string | タスクタイトル |
 | `priority` | string | `"P0"` – `"P3"` |
 | `metadata` | object \| null | タスクメタデータ（任意のJSON） |
-
-### フックスクリプトの例
-
-フックコマンドはstdinでイベントペイロード（JSON）を受け取ります。`jq` などのツールでフィールドを抽出できます:
-
-```bash
-# タスクタイトルを抽出して通知
-on_task_added = "jq -r '.task.title' | xargs notify-send 'New Task:'"
-
-# ステータス遷移をログに記録
-on_task_started = "jq -r '\"[\\(.timestamp)] \\(.task.title): \\(.from_status) → \\(.task.status)\"' >> /tmp/transitions.log"
-
-# todoからの遷移時のみWebhookを送信
-on_task_started = "jq -e '.from_status == \"todo\"' > /dev/null && curl -X POST https://example.com/webhook"
-
-# 1つのイベントに複数コマンド
-on_task_completed = [
-  "jq -r '.task.title' | xargs notify-send 'Task Completed:'",
-  "curl -s -X POST -H 'Content-Type: application/json' -d @- https://example.com/webhook"
-]
-```
-
-### ログ出力
-
-デーモン実行時（`-d`）はデフォルトで `.localflow/watch.log` にログを出力します。`--log-file` でパスを変更できます。フォアグラウンドモードでは `--log-file` を指定するとファイルログが有効になります。
-
-ログフォーマット:
-
-```
-[2026-03-24T12:00:00Z] [INFO] watch started (interval: 5s)
-[2026-03-24T12:00:05Z] [INFO] event detected: task_added task #1 "Write docs"
-[2026-03-24T12:00:05Z] [INFO] hook executed: task_added (exit: 0)
-[2026-03-24T12:00:10Z] [WARN] hook executed: task_completed (exit: 1)
-[2026-03-24T12:00:15Z] [ERROR] hook failed: task_added: No such file or directory
-```
 
 | レベル | 説明 |
 |-------|-------------|

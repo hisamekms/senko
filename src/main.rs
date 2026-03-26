@@ -214,23 +214,6 @@ enum Command {
         #[arg(long)]
         host: bool,
     },
-    /// Watch for task events and run hooks
-    Watch {
-        #[command(subcommand)]
-        action: Option<WatchAction>,
-
-        /// Polling interval in seconds
-        #[arg(long, default_value_t = 5)]
-        interval: u64,
-
-        /// Run as background daemon
-        #[arg(short = 'd', long)]
-        daemon: bool,
-
-        /// Log file path (default: .localflow/watch.log when running as daemon)
-        #[arg(long)]
-        log_file: Option<PathBuf>,
-    },
     /// Install a skill
     SkillInstall {
         /// Output directory for SKILL.md
@@ -247,14 +230,6 @@ enum Command {
         #[arg(long)]
         init: bool,
     },
-}
-
-#[derive(Debug, Subcommand)]
-enum WatchAction {
-    /// Stop the watch daemon
-    Stop,
-    /// Show daemon status
-    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -584,23 +559,6 @@ fn run(cli: Cli) -> Result<()> {
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
         Command::Dod { ref command } => cmd_dod(&cli, command),
         Command::Deps { ref command } => cmd_deps(&cli, command),
-        Command::Watch {
-            action,
-            interval,
-            daemon,
-            log_file,
-        } => {
-            let root = resolve_project_root(cli.project_root.as_deref())?;
-            match action {
-                Some(WatchAction::Stop) => localflow::watch::stop_daemon(&root),
-                Some(WatchAction::Status) => localflow::watch::daemon_status(
-                    &root,
-                    matches!(cli.output, OutputFormat::Json),
-                ),
-                None if daemon => localflow::watch::start_daemon(&root, interval, log_file.as_deref()),
-                None => localflow::watch::run_watch_loop(&root, interval, log_file.as_deref()),
-            }
-        }
         Command::Web { port, host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let _ = db::open_db(&root)?; // validate DB exists
@@ -747,6 +705,10 @@ fn cmd_add(
     } else {
         db::create_task(&conn, &params)?
     };
+
+    // Fire hooks
+    let config = localflow::hooks::load_config(&root)?;
+    localflow::hooks::fire_hooks(&config, "task_added", &task, &conn, None, None);
 
     match cli.output {
         OutputFormat::Json => {
@@ -905,6 +867,13 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
     let updated = db::ready_task(&conn, id)?;
 
+    // Fire hooks
+    let config = localflow::hooks::load_config(&root)?;
+    localflow::hooks::fire_hooks(
+        &config, "task_ready", &updated, &conn,
+        Some(TaskStatus::Draft), None,
+    );
+
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&updated)?);
@@ -933,8 +902,16 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
+    let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::start_task(&conn, id, session_id, &now)?;
+
+    // Fire hooks
+    let config = localflow::hooks::load_config(&root)?;
+    localflow::hooks::fire_hooks(
+        &config, "task_started", &updated, &conn,
+        Some(prev_status), None,
+    );
 
     match cli.output {
         OutputFormat::Json => {
@@ -965,8 +942,16 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
+    let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::start_task(&conn, task.id, session_id, &now)?;
+
+    // Fire hooks
+    let config = localflow::hooks::load_config(&root)?;
+    localflow::hooks::fire_hooks(
+        &config, "task_started", &updated, &conn,
+        Some(prev_status), None,
+    );
 
     match cli.output {
         OutputFormat::Json => {
@@ -983,7 +968,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let conn = db::open_db(&root)?;
-    let config = localflow::watch::load_config(&root)?;
+    let config = localflow::hooks::load_config(&root)?;
 
     let task = db::get_task(&conn, id)?;
     task.status.transition_to(TaskStatus::Completed)?;
@@ -1004,7 +989,7 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     // PR workflow checks
     if !skip_pr_check
         && config.workflow.completion_mode
-            == localflow::watch::CompletionMode::PrThenComplete
+            == localflow::hooks::CompletionMode::PrThenComplete
     {
         let pr_url = task.pr_url.as_deref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1024,8 +1009,21 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
 
+    // Capture ready tasks before completion for unblocked detection
+    let prev_ready_ids: std::collections::HashSet<i64> =
+        db::list_ready_tasks(&conn)?.iter().map(|t| t.id).collect();
+
+    let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::complete_task(&conn, id, &now)?;
+
+    // Fire hooks with unblocked tasks
+    let unblocked = localflow::hooks::compute_unblocked(&conn, &prev_ready_ids);
+    let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
+    localflow::hooks::fire_hooks(
+        &config, "task_completed", &updated, &conn,
+        Some(prev_status), unblocked_opt,
+    );
 
     match cli.output {
         OutputFormat::Json => {
@@ -1105,8 +1103,16 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
     }
 
+    let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated = db::cancel_task(&conn, id, &now, reason)?;
+
+    // Fire hooks
+    let config = localflow::hooks::load_config(&root)?;
+    localflow::hooks::fire_hooks(
+        &config, "task_canceled", &updated, &conn,
+        Some(prev_status), None,
+    );
 
     match cli.output {
         OutputFormat::Json => {
@@ -1163,7 +1169,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
         return Ok(());
     }
 
-    let config = localflow::watch::load_config(&root)?;
+    let config = localflow::hooks::load_config(&root)?;
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&config)?);
