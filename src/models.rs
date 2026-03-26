@@ -155,7 +155,7 @@ pub struct Task {
     pub dependencies: Vec<i64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,

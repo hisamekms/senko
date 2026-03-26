@@ -12,7 +12,7 @@ use axum_extra::extract::Query;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
-use crate::db;
+use crate::db::{self, TaskBackend};
 use crate::hooks;
 use crate::models::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -258,7 +258,7 @@ async fn create_task(
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     let root = state.project_root.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
 
         // Handle branch template expansion
         let needs_template = params
@@ -271,11 +271,10 @@ async fn create_task(
             let mut params_without_branch = params;
             params_without_branch.branch = None;
             let created =
-                db::create_task(&conn, &params_without_branch).map_err(classify_error)?;
+                backend.create_task(&params_without_branch).map_err(classify_error)?;
             let expanded =
                 branch_template.as_deref().unwrap().replace("${task_id}", &created.id.to_string());
-            db::update_task(
-                &conn,
+            backend.update_task(
                 created.id,
                 &UpdateTaskParams {
                     title: None,
@@ -295,12 +294,12 @@ async fn create_task(
             )
             .map_err(classify_error)?
         } else {
-            db::create_task(&conn, &params).map_err(classify_error)?
+            backend.create_task(&params).map_err(classify_error)?
         };
 
         // Fire hooks
         let config = hooks::load_config(&root).map_err(classify_error)?;
-        hooks::fire_hooks(&config, "task_added", &task, &conn, None, None);
+        hooks::fire_hooks(&config, "task_added", &task, &backend, None, None);
 
         Ok((StatusCode::CREATED, Json(task)))
     })
@@ -422,15 +421,15 @@ async fn ready_task(
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let updated = db::ready_task(&conn, id).map_err(classify_error)?;
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
+        let updated = backend.ready_task(id).map_err(classify_error)?;
 
         let config = hooks::load_config(&root).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_ready",
             &updated,
-            &conn,
+            &backend,
             Some(TaskStatus::Draft),
             None,
         );
@@ -449,19 +448,19 @@ async fn start_task(
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::get_task(&conn, id).map_err(classify_error)?;
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
+        let task = backend.get_task(id).map_err(classify_error)?;
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated =
-            db::start_task(&conn, id, body.session_id, &now).map_err(classify_error)?;
+            backend.start_task(id, body.session_id, &now).map_err(classify_error)?;
 
         let config = hooks::load_config(&root).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
             &updated,
-            &conn,
+            &backend,
             Some(prev_status),
             None,
         );
@@ -481,10 +480,10 @@ async fn complete_task(
     let root = state.project_root.clone();
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let config = hooks::load_config(&root).map_err(classify_error)?;
 
-        let task = db::get_task(&conn, id).map_err(classify_error)?;
+        let task = backend.get_task(id).map_err(classify_error)?;
         task.status
             .transition_to(TaskStatus::Completed)
             .map_err(classify_error)?;
@@ -516,7 +515,7 @@ async fn complete_task(
             verify_pr_status(pr_url, config.workflow.auto_merge)?;
         }
 
-        let prev_ready_ids: std::collections::HashSet<i64> = db::list_ready_tasks(&conn)
+        let prev_ready_ids: std::collections::HashSet<i64> = backend.list_ready_tasks()
             .map_err(classify_error)?
             .iter()
             .map(|t| t.id)
@@ -524,9 +523,9 @@ async fn complete_task(
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated = db::complete_task(&conn, id, &now).map_err(classify_error)?;
+        let updated = backend.complete_task(id, &now).map_err(classify_error)?;
 
-        let unblocked = hooks::compute_unblocked(&conn, &prev_ready_ids);
+        let unblocked = hooks::compute_unblocked(&backend, &prev_ready_ids);
         let unblocked_opt = if unblocked.is_empty() {
             None
         } else {
@@ -536,7 +535,7 @@ async fn complete_task(
             &config,
             "task_completed",
             &updated,
-            &conn,
+            &backend,
             Some(prev_status),
             unblocked_opt,
         );
@@ -556,22 +555,22 @@ async fn cancel_task(
     let root = state.project_root.clone();
     let reason = body.and_then(|b| b.0.reason);
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::get_task(&conn, id).map_err(classify_error)?;
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
+        let task = backend.get_task(id).map_err(classify_error)?;
         task.status
             .transition_to(TaskStatus::Canceled)
             .map_err(classify_error)?;
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated = db::cancel_task(&conn, id, &now, reason).map_err(classify_error)?;
+        let updated = backend.cancel_task(id, &now, reason).map_err(classify_error)?;
 
         let config = hooks::load_config(&root).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_canceled",
             &updated,
-            &conn,
+            &backend,
             Some(prev_status),
             None,
         );
@@ -590,22 +589,22 @@ async fn next_task(
     let root = state.project_root.clone();
     let session_id = body.and_then(|b| b.0.session_id);
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::next_task(&conn)
+        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
+        let task = backend.next_task()
             .map_err(classify_error)?
             .ok_or_else(|| ApiError::NotFound("no eligible task found".to_string()))?;
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated =
-            db::start_task(&conn, task.id, session_id, &now).map_err(classify_error)?;
+            backend.start_task(task.id, session_id, &now).map_err(classify_error)?;
 
         let config = hooks::load_config(&root).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
             &updated,
-            &conn,
+            &backend,
             Some(prev_status),
             None,
         );

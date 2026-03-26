@@ -17,6 +17,24 @@ pub struct Config {
     pub hooks: HooksConfig,
     #[serde(default)]
     pub workflow: WorkflowConfig,
+    #[serde(default)]
+    pub backend: BackendConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct BackendConfig {
+    pub api_url: Option<String>,
+    #[serde(default)]
+    pub hook_mode: HookMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum HookMode {
+    #[default]
+    Server,
+    Client,
+    Both,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -580,12 +598,12 @@ on_task_completed = "echo completed"
         let cmd2 = format!("echo hook2 > {}", marker2.display());
 
         let config = Config {
-            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![cmd1, cmd2],
                 on_task_completed: vec![],
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let (_db_dir, backend) = setup_db();
@@ -712,11 +730,11 @@ on_task_completed = "echo completed"
 
         // Run a hook that exits with non-zero
         let config = Config {
-            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec!["exit 1".into()],
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let (_db_dir, backend) = setup_db();
@@ -799,11 +817,11 @@ on_task_completed = ["notify", "log"]
         let cmd = format!("cat > {}", output_file.display());
 
         let config = Config {
-            workflow: Default::default(),
             hooks: HooksConfig {
                 on_task_added: vec![cmd],
                 ..Default::default()
             },
+            ..Default::default()
         };
 
         let (_db_dir, backend) = setup_db();
