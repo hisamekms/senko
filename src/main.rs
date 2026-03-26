@@ -36,6 +36,14 @@ fn create_backend(
     Ok((Box::new(db::SqliteBackend::new(project_root)?), false))
 }
 
+fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<hooks::Config> {
+    let mut config = hooks::load_config(root)?;
+    if let Some(ref d) = cli.log_dir {
+        config.log.dir = Some(d.to_string_lossy().into_owned());
+    }
+    Ok(config)
+}
+
 fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
     match config.backend.hook_mode {
         HookMode::Server => !using_http,
@@ -63,6 +71,10 @@ struct Cli {
     /// Dry run mode: show what would be done without executing
     #[arg(long)]
     dry_run: bool,
+
+    /// Override log output directory
+    #[arg(long)]
+    log_dir: Option<PathBuf>,
 
     #[command(subcommand)]
     command: Command,
@@ -794,7 +806,7 @@ fn cmd_add(
     };
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None);
     }
@@ -957,7 +969,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let updated = backend.ready_task(id)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_ready", &updated, &*backend,
@@ -998,7 +1010,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let updated = backend.start_task(id, session_id, &now)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1046,7 +1058,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     };
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1069,7 +1081,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
 fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root)?;
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
 
     let task = backend.get_task(id)?;
     task.status.transition_to(TaskStatus::Completed)?;
@@ -1211,7 +1223,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let updated = backend.cancel_task(id, &now, reason)?;
 
     // Fire hooks
-    let config = hooks::load_config(&root)?;
+    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_canceled", &updated, &*backend,
@@ -1251,6 +1263,9 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 [backend]
 # api_url = "http://127.0.0.1:3142"  # uncomment to use HTTP backend
 # hook_mode = "server"  # "server" (default), "client", or "both"
+
+[log]
+# dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/localflow)
 "#;
 
 fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
@@ -1261,7 +1276,9 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             clear,
             path,
         } => {
-            let log_path = hooks::log_file_path()
+            let root = resolve_project_root(cli.project_root.as_deref())?;
+            let config = load_config_with_cli(&root, cli)?;
+            let log_path = hooks::log_file_path_with_dir(config.log.dir.as_deref())
                 .ok_or_else(|| anyhow::anyhow!("cannot determine log path: neither XDG_STATE_HOME nor HOME is set"))?;
 
             if *path {
@@ -1892,6 +1909,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1948,6 +1966,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1995,6 +2014,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2041,6 +2061,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2086,6 +2107,7 @@ mod tests {
             output: OutputFormat::Json,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2404,6 +2426,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: None,
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
                 yes: false,
@@ -2425,6 +2448,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2462,6 +2486,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: false,
@@ -2495,6 +2520,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2543,6 +2569,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2565,6 +2592,7 @@ mod tests {
             output: OutputFormat::Text,
             project_root: Some(tmp.path().to_path_buf()),
             dry_run: false,
+            log_dir: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,

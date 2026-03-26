@@ -8,6 +8,7 @@
 --output <FORMAT>       json または text（デフォルト: json）
 --project-root <PATH>   プロジェクトルート（省略時は自動検出）
 --dry-run               実行せずに結果を表示（状態変更コマンドのみ）
+--log-dir <PATH>        ログ出力ディレクトリを上書き（デフォルト: $XDG_STATE_HOME/localflow）
 ```
 
 > **注意**: `--output` と `--dry-run` はグローバルフラグです。サブコマンドの**前**に配置してください: `localflow --output text list`
@@ -312,6 +313,12 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 |------|------|----------|
 | `LOCALFLOW_API_URL` | APIサーバーURL（設定するとSQLiteの代わりにHTTPバックエンドを使用） | _（未設定 = SQLite）_ |
 | `LOCALFLOW_HOOK_MODE` | `server`、`client`、または `both` | `server` |
+
+### ログ
+
+| 変数 | 説明 | デフォルト |
+|------|------|----------|
+| `LOCALFLOW_LOG_DIR` | フックログの出力ディレクトリ | `$XDG_STATE_HOME/localflow` |
 
 ### フック
 
