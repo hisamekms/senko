@@ -13,6 +13,7 @@ use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
 pub const DEFAULT_PROJECT_ID: i64 = 1;
+pub const DEFAULT_USER_ID: i64 = 1;
 
 /// Create the appropriate backend based on env var / config.
 /// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
@@ -136,6 +137,27 @@ pub async fn resolve_project_id(
             Ok(project.id)
         }
         None => Ok(DEFAULT_PROJECT_ID),
+    }
+}
+
+/// Resolve the user ID from CLI flag, config, or default.
+///
+/// Priority: --user / LOCALFLOW_USER env > config.toml [user] name > DEFAULT_USER_ID
+pub async fn resolve_user_id(
+    backend: &dyn TaskBackend,
+    cli_user: Option<&str>,
+    config: &hooks::Config,
+) -> Result<i64> {
+    let name = cli_user.or(config.user.name.as_deref());
+    match name {
+        Some(n) => {
+            let user = backend
+                .get_user_by_username(n)
+                .await
+                .with_context(|| format!("user not found: {n}"))?;
+            Ok(user.id)
+        }
+        None => Ok(DEFAULT_USER_ID),
     }
 }
 

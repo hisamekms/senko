@@ -149,6 +149,13 @@ fn apply_env_overrides(mut config: Config) -> Config {
         }
     }
 
+    // User settings
+    if let Ok(val) = std::env::var("LOCALFLOW_USER") {
+        if !val.is_empty() {
+            config.user.name = Some(val);
+        }
+    }
+
     // Log settings
     if let Ok(val) = std::env::var("LOCALFLOW_LOG_DIR") {
         if !val.is_empty() {

@@ -149,6 +149,17 @@ const MIGRATIONS: &[Migration] = &[
             CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);
         ",
     },
+    Migration {
+        version: 5,
+        name: "add_default_user",
+        sql: "
+            INSERT OR IGNORE INTO users (id, username, display_name)
+            VALUES (1, 'default', 'Default User');
+
+            INSERT OR IGNORE INTO project_members (project_id, user_id, role)
+            VALUES (1, 1, 'owner');
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -2559,7 +2570,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
     }
 
     #[test]
@@ -2652,9 +2663,9 @@ mod tests {
         // Open via open_db which runs migrations
         let conn = open_db(tmp.path()).unwrap();
 
-        // Version should be 2 (legacy v1 + add_projects v2)
+        // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2692,13 +2703,12 @@ mod tests {
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 
-        // Three rows in schema_migrations (v1 + v2 + v3)
         let count: i64 = conn2
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     #[test]
@@ -2874,7 +2884,7 @@ mod tests {
         assert_eq!(by_name.id, user.id);
 
         let list = backend.list_users().await.unwrap();
-        assert_eq!(list.len(), 1);
+        assert_eq!(list.len(), 2); // default user + alice
 
         backend.delete_user(user.id).await.unwrap();
         assert!(backend.get_user(user.id).await.is_err());
@@ -2905,11 +2915,11 @@ mod tests {
         assert_eq!(updated.role, Role::Owner);
 
         let members = backend.list_project_members(1).await.unwrap();
-        assert_eq!(members.len(), 1);
+        assert_eq!(members.len(), 2); // default user (owner) + bob
 
         backend.remove_project_member(1, user.id).await.unwrap();
         let members = backend.list_project_members(1).await.unwrap();
-        assert!(members.is_empty());
+        assert_eq!(members.len(), 1); // only default user (owner) remains
     }
 
     #[tokio::test]

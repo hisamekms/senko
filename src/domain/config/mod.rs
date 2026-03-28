@@ -13,6 +13,8 @@ pub struct Config {
     #[serde(default)]
     pub project: ProjectConfig,
     #[serde(default)]
+    pub user: UserConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
 }
 
@@ -24,6 +26,11 @@ pub struct AuthConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProjectConfig {
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserConfig {
     pub name: Option<String>,
 }
 

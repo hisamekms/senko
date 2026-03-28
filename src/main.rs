@@ -829,7 +829,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            localflow::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            localflow::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
@@ -838,7 +838,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            localflow::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            localflow::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
