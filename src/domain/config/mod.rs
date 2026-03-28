@@ -66,6 +66,12 @@ pub struct DynamoDbConfig {
     pub region: Option<String>,
 }
 
+#[cfg(feature = "postgres")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct PostgresConfig {
+    pub url: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StorageConfig {
     pub db_path: Option<String>,
@@ -80,6 +86,9 @@ pub struct BackendConfig {
     #[cfg(feature = "dynamodb")]
     #[serde(default)]
     pub dynamodb: Option<DynamoDbConfig>,
+    #[cfg(feature = "postgres")]
+    #[serde(default)]
+    pub postgres: Option<PostgresConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -213,6 +222,8 @@ pub struct RawBackendConfig {
     pub hook_mode: Option<HookMode>,
     #[cfg(feature = "dynamodb")]
     pub dynamodb: Option<DynamoDbConfig>,
+    #[cfg(feature = "postgres")]
+    pub postgres: Option<PostgresConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -242,6 +253,8 @@ impl RawConfig {
                 hook_mode: overlay.backend.hook_mode.or(self.backend.hook_mode),
                 #[cfg(feature = "dynamodb")]
                 dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
+                #[cfg(feature = "postgres")]
+                postgres: overlay.backend.postgres.or(self.backend.postgres),
             },
             log: RawLogConfig {
                 dir: overlay.log.dir.or(self.log.dir),
@@ -277,6 +290,8 @@ impl RawConfig {
                 hook_mode: self.backend.hook_mode.unwrap_or_default(),
                 #[cfg(feature = "dynamodb")]
                 dynamodb: self.backend.dynamodb,
+                #[cfg(feature = "postgres")]
+                postgres: self.backend.postgres,
             },
             log: LogConfig {
                 dir: self.log.dir,

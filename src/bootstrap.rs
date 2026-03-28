@@ -22,6 +22,8 @@ pub fn create_backend(
     project_root: &Path,
     config_path: Option<&Path>,
     db_path: Option<&Path>,
+    #[cfg_attr(not(feature = "postgres"), allow(unused_variables))]
+    postgres_url: Option<&str>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
@@ -75,7 +77,29 @@ pub fn create_backend(
         }
     }
 
-    // 4. Default: SqliteBackend
+    // 4. PostgreSQL backend (via CLI arg, env var, or config)
+    #[cfg(feature = "postgres")]
+    {
+        use crate::infra::postgres::PostgresBackend;
+
+        // Priority: CLI --postgres-url > LOCALFLOW_POSTGRES_URL env > config.toml
+        let url = postgres_url
+            .map(|s| s.to_string())
+            .or_else(|| {
+                std::env::var("LOCALFLOW_POSTGRES_URL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .or_else(|| {
+                config.backend.postgres.as_ref().and_then(|pg| pg.url.clone())
+            });
+
+        if let Some(database_url) = url {
+            return Ok((Arc::new(PostgresBackend::new(database_url)), false));
+        }
+    }
+
+    // 5. Default: SqliteBackend
     Ok((Arc::new(crate::infra::sqlite::SqliteBackend::new(project_root, db_path, config.storage.db_path.as_deref())?), false))
 }
 

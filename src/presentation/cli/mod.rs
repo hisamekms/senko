@@ -46,6 +46,10 @@ pub struct Cli {
     #[arg(long, env = "LOCALFLOW_DB_PATH")]
     pub db_path: Option<PathBuf>,
 
+    /// PostgreSQL connection URL (env: LOCALFLOW_POSTGRES_URL)
+    #[arg(long, env = "LOCALFLOW_POSTGRES_URL")]
+    pub postgres_url: Option<String>,
+
     /// Project name to operate on (overrides config; env: LOCALFLOW_PROJECT)
     #[arg(long, env = "LOCALFLOW_PROJECT")]
     pub project: Option<String>,

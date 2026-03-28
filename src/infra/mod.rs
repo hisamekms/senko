@@ -6,3 +6,6 @@ pub mod sqlite;
 
 #[cfg(feature = "dynamodb")]
 pub mod dynamodb;
+
+#[cfg(feature = "postgres")]
+pub mod postgres;
