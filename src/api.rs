@@ -11,9 +11,12 @@ use axum::{Json, Router};
 use axum_extra::extract::Query;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use tower_http::trace::TraceLayer;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::backend::TaskBackend;
 use crate::hooks;
+use crate::hooks::LogFormat;
 use crate::models::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
@@ -42,13 +45,43 @@ struct ErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match self {
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
+        let (status, message) = match &self {
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
+            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
         };
+        let error_type = match self {
+            ApiError::NotFound(_) => "not_found",
+            ApiError::BadRequest(_) => "bad_request",
+            ApiError::Conflict(_) => "conflict",
+            ApiError::Internal(_) => "internal",
+        };
+        tracing::warn!(
+            status = status.as_u16(),
+            error_type,
+            error = %message,
+            "api_error"
+        );
         (status, Json(ErrorBody { error: message })).into_response()
+    }
+}
+
+pub fn init_tracing(config: &hooks::LogConfig) {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(&config.level));
+
+    let registry = tracing_subscriber::registry().with(env_filter);
+
+    match config.format {
+        LogFormat::Json => {
+            registry
+                .with(tracing_subscriber::fmt::layer().json())
+                .init();
+        }
+        LogFormat::Pretty => {
+            registry.with(tracing_subscriber::fmt::layer()).init();
+        }
     }
 }
 
@@ -167,6 +200,10 @@ pub async fn serve(
     config_path: Option<PathBuf>,
     backend: Arc<dyn TaskBackend>,
 ) -> Result<()> {
+    let config = hooks::load_config(&project_root, config_path.as_deref())
+        .unwrap_or_default();
+    init_tracing(&config.log);
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
@@ -199,7 +236,39 @@ pub async fn serve(
         // Other
         .route("/api/v1/config", get(get_config))
         .route("/api/v1/stats", get(get_stats))
-        .with_state(state);
+        .with_state(state)
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &axum::http::Request<_>| {
+                    tracing::info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                })
+                .on_response(
+                    |response: &axum::http::Response<_>,
+                     latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        tracing::info!(
+                            status = response.status().as_u16(),
+                            latency_ms = latency.as_millis() as u64,
+                            "response"
+                        );
+                    },
+                )
+                .on_failure(
+                    |error: tower_http::classify::ServerErrorsFailureClass,
+                     latency: std::time::Duration,
+                     _span: &tracing::Span| {
+                        tracing::error!(
+                            latency_ms = latency.as_millis() as u64,
+                            error = %error,
+                            "request failed"
+                        );
+                    },
+                ),
+        );
 
     let bind_addr_str = host
         .or_else(|| std::env::var("LOCALFLOW_HOST").ok().filter(|v| !v.is_empty()))
@@ -212,10 +281,10 @@ pub async fn serve(
         let device_ip = get_local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "0.0.0.0".to_string());
-        eprintln!("Listening on http://localhost:{port}");
-        eprintln!("             http://{device_ip}:{port}");
+        tracing::info!(port, "Listening on http://localhost:{port}");
+        tracing::info!(port, addr = %device_ip, "Listening on http://{device_ip}:{port}");
     } else {
-        eprintln!("Listening on http://{bind_ip}:{port}");
+        tracing::info!(port, addr = %bind_ip, "Listening on http://{bind_ip}:{port}");
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

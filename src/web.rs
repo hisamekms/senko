@@ -8,10 +8,13 @@ use axum::http::StatusCode;
 use axum::response::Html;
 use axum::routing::get;
 use axum::Router;
+use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
+use crate::api;
 use crate::backend::TaskBackend;
+use crate::hooks;
 use crate::models::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
@@ -28,7 +31,17 @@ struct ListQuery {
     tag: Vec<String>,
 }
 
-pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>, backend: Arc<dyn TaskBackend>) -> Result<()> {
+pub async fn serve(
+    project_root: PathBuf,
+    port: u16,
+    host: Option<String>,
+    config_path: Option<PathBuf>,
+    backend: Arc<dyn TaskBackend>,
+) -> Result<()> {
+    let config = hooks::load_config(&project_root, config_path.as_deref())
+        .unwrap_or_default();
+    api::init_tracing(&config.log);
+
     let state = AppState {
         project_root: Arc::new(project_root),
         backend,
@@ -38,7 +51,8 @@ pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>, backe
         .route("/", get(index_handler))
         .route("/tasks/{id}", get(task_handler))
         .route("/graph", get(graph_handler))
-        .with_state(state);
+        .with_state(state)
+        .layer(TraceLayer::new_for_http());
 
     let bind_addr_str = host
         .or_else(|| std::env::var("LOCALFLOW_HOST").ok().filter(|v| !v.is_empty()))
@@ -51,10 +65,10 @@ pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>, backe
         let device_ip = get_local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "0.0.0.0".to_string());
-        eprintln!("Listening on http://localhost:{port}");
-        eprintln!("             http://{device_ip}:{port}");
+        tracing::info!(port, "Listening on http://localhost:{port}");
+        tracing::info!(port, addr = %device_ip, "Listening on http://{device_ip}:{port}");
     } else {
-        eprintln!("Listening on http://{bind_ip}:{port}");
+        tracing::info!(port, addr = %bind_ip, "Listening on http://{bind_ip}:{port}");
     }
 
     let listener = tokio::net::TcpListener::bind(addr).await?;

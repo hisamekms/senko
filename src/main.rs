@@ -662,7 +662,7 @@ fn run(cli: Cli) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::web::serve(root, effective_port, host, backend))?;
+            rt.block_on(localflow::web::serve(root, effective_port, host, cli.config.clone(), backend))?;
             Ok(())
         }
         Command::Serve { port, host } => {

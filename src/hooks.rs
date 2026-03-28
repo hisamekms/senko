@@ -26,6 +26,22 @@ pub struct Config {
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct LogConfig {
     pub dir: Option<String>,
+    #[serde(default = "default_log_level")]
+    pub level: String,
+    #[serde(default)]
+    pub format: LogFormat,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum LogFormat {
+    #[default]
+    Json,
+    Pretty,
+}
+
+fn default_log_level() -> String {
+    "info".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]
@@ -265,6 +281,18 @@ fn apply_env_overrides(mut config: Config) -> Config {
     if let Ok(val) = std::env::var("LOCALFLOW_LOG_DIR") {
         if !val.is_empty() {
             config.log.dir = Some(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_LOG_LEVEL") {
+        if !val.is_empty() {
+            config.log.level = val;
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_LOG_FORMAT") {
+        match val.to_lowercase().as_str() {
+            "json" => config.log.format = LogFormat::Json,
+            "pretty" => config.log.format = LogFormat::Pretty,
+            other => eprintln!("warning: unknown LOCALFLOW_LOG_FORMAT={other}, ignoring"),
         }
     }
 
