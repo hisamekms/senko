@@ -62,7 +62,7 @@ async fn check_project_permission(
     permission: Permission,
 ) -> Result<(), ApiError> {
     if let Some(user) = require_auth_user(auth, state.auth_enabled())? {
-        auth::require_project_role(state.backend.as_ref(), user.id, project_id, permission)
+        auth::require_project_role(state.backend.as_ref(), user.id(), project_id, permission)
             .await
             .map_err(ApiError::from)?;
     }

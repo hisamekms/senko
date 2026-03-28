@@ -435,12 +435,7 @@ fn get_project(conn: &Connection, id: i64) -> Result<Project> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .context("project not found")?;
-    Ok(Project {
-        id,
-        name,
-        description,
-        created_at,
-    })
+    Ok(Project::new(id, name, description, created_at))
 }
 
 fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
@@ -451,24 +446,19 @@ fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .context("project not found")?;
-    Ok(Project {
-        id,
-        name: name.to_string(),
-        description,
-        created_at,
-    })
+    Ok(Project::new(id, name.to_string(), description, created_at))
 }
 
 fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
     let mut stmt = conn.prepare("SELECT id, name, description, created_at FROM projects ORDER BY id")?;
     let projects = stmt
         .query_map([], |row| {
-            Ok(Project {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                description: row.get(2)?,
-                created_at: row.get(3)?,
-            })
+            Ok(Project::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(projects)
@@ -513,13 +503,7 @@ fn get_user(conn: &Connection, id: i64) -> Result<User> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .context("user not found")?;
-    Ok(User {
-        id,
-        username,
-        display_name,
-        email,
-        created_at,
-    })
+    Ok(User::new(id, username, display_name, email, created_at))
 }
 
 fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
@@ -530,13 +514,7 @@ fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .context("user not found")?;
-    Ok(User {
-        id,
-        username: username.to_string(),
-        display_name,
-        email,
-        created_at,
-    })
+    Ok(User::new(id, username.to_string(), display_name, email, created_at))
 }
 
 fn list_users(conn: &Connection) -> Result<Vec<User>> {
@@ -545,13 +523,13 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
     )?;
     let users = stmt
         .query_map([], |row| {
-            Ok(User {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                display_name: row.get(2)?,
-                email: row.get(3)?,
-                created_at: row.get(4)?,
-            })
+            Ok(User::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(users)
@@ -581,14 +559,14 @@ fn create_api_key(conn: &Connection, user_id: i64, name: &str, new_key: &NewApiK
         |row| row.get(0),
     )?;
 
-    Ok(ApiKeyWithSecret {
+    Ok(ApiKeyWithSecret::new(
         id,
         user_id,
-        key: new_key.raw_key.clone(),
-        key_prefix: new_key.key_prefix.clone(),
-        name: name.to_string(),
+        new_key.raw_key.clone(),
+        new_key.key_prefix.clone(),
+        name.to_string(),
         created_at,
-    })
+    ))
 }
 
 fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<User> {
@@ -614,14 +592,14 @@ fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
     )?;
     let keys = stmt
         .query_map(params![user_id], |row| {
-            Ok(ApiKey {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                key_prefix: row.get(2)?,
-                name: row.get(3)?,
-                created_at: row.get(4)?,
-                last_used_at: row.get(5)?,
-            })
+            Ok(ApiKey::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+            ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(keys)
@@ -652,13 +630,7 @@ fn add_project_member(
         rusqlite::params![id],
         |row| row.get(0),
     )?;
-    Ok(ProjectMember {
-        id,
-        project_id,
-        user_id: params.user_id,
-        role: params.role,
-        created_at,
-    })
+    Ok(ProjectMember::new(id, project_id, params.user_id, params.role, created_at))
 }
 
 fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<()> {
@@ -689,13 +661,7 @@ fn list_project_members(conn: &Connection, project_id: i64) -> Result<Vec<Projec
             let role: Role = role_str
                 .parse()
                 .map_err(|e| anyhow::anyhow!("invalid role in database: {e}"))?;
-            Ok(ProjectMember {
-                id,
-                project_id,
-                user_id,
-                role,
-                created_at,
-            })
+            Ok(ProjectMember::new(id, project_id, user_id, role, created_at))
         })
         .collect()
 }
@@ -709,13 +675,7 @@ fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Resul
         )
         .context("project member not found")?;
     let role: Role = role_str.parse()?;
-    Ok(ProjectMember {
-        id,
-        project_id,
-        user_id,
-        role,
-        created_at,
-    })
+    Ok(ProjectMember::new(id, project_id, user_id, role, created_at))
 }
 
 fn update_member_role(
@@ -844,7 +804,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         id,
     )?;
 
-    Ok(Task {
+    Ok(Task::new(
         id,
         project_id,
         title,
@@ -869,7 +829,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
         out_of_scope,
         tags,
         dependencies,
-    })
+    ))
 }
 
 fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
@@ -1006,8 +966,7 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
 
 fn save_task(conn: &Connection, task: &Task) -> Result<()> {
     let metadata_str: Option<String> = task
-        .metadata
-        .as_ref()
+        .metadata()
         .map(|v| serde_json::to_string(v))
         .transpose()
         .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
@@ -1022,36 +981,36 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
             updated_at = ?17
         WHERE id = ?1",
         params![
-            task.id,
-            task.title,
-            task.background,
-            task.description,
-            task.plan,
-            i32::from(task.priority),
-            task.status.to_string(),
-            task.assignee_session_id,
-            task.assignee_user_id,
-            task.started_at,
-            task.completed_at,
-            task.canceled_at,
-            task.cancel_reason,
-            task.branch,
-            task.pr_url,
+            task.id(),
+            task.title(),
+            task.background(),
+            task.description(),
+            task.plan(),
+            i32::from(task.priority()),
+            task.status().to_string(),
+            task.assignee_session_id(),
+            task.assignee_user_id(),
+            task.started_at(),
+            task.completed_at(),
+            task.canceled_at(),
+            task.cancel_reason(),
+            task.branch(),
+            task.pr_url(),
             metadata_str,
-            task.updated_at,
+            task.updated_at(),
         ],
     )?;
 
     // Sync definition_of_done
     conn.execute(
         "DELETE FROM task_definition_of_done WHERE task_id = ?1",
-        params![task.id],
+        params![task.id()],
     )?;
-    for dod in &task.definition_of_done {
-        let checked_val: i32 = if dod.checked { 1 } else { 0 };
+    for dod in task.definition_of_done() {
+        let checked_val: i32 = if dod.checked() { 1 } else { 0 };
         conn.execute(
             "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES (?1, ?2, ?3)",
-            params![task.id, dod.content, checked_val],
+            params![task.id(), dod.content(), checked_val],
         )?;
     }
 
@@ -1355,10 +1314,7 @@ fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
     )?;
     let items = stmt
         .query_map(params![task_id], |row| {
-            Ok(DodItem {
-                content: row.get(0)?,
-                checked: row.get::<_, i32>(1)? != 0,
-            })
+            Ok(DodItem::new(row.get(0)?, row.get::<_, i32>(1)? != 0))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(items)
@@ -1642,26 +1598,26 @@ mod tests {
 
     /// Helper to transition a task through statuses using domain methods + save
     fn transition_to(conn: &Connection, id: i64, target: TaskStatus) {
-        let mut task = get_task(conn, id).unwrap();
+        let task = get_task(conn, id).unwrap();
         match target {
             TaskStatus::Draft => {} // already draft
             TaskStatus::Todo => {
-                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::InProgress => {
-                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
-                task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
-                task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Canceled => {
-                task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+                let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
                 save_task(conn, &task).unwrap();
             }
         }
@@ -1757,39 +1713,39 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(task.title, "Test task");
-        assert_eq!(task.background.as_deref(), Some("bg"));
-        assert_eq!(task.description.as_deref(), Some("det"));
-        assert_eq!(task.priority, Priority::P1);
-        assert_eq!(task.status, TaskStatus::Draft);
+        assert_eq!(task.title(), "Test task");
+        assert_eq!(task.background(), Some("bg"));
+        assert_eq!(task.description(), Some("det"));
+        assert_eq!(task.priority(), Priority::P1);
+        assert_eq!(task.status(), TaskStatus::Draft);
         assert_eq!(
-            task.definition_of_done,
-            vec![
-                DodItem { content: "done1".to_string(), checked: false },
-                DodItem { content: "done2".to_string(), checked: false },
+            task.definition_of_done(),
+            &[
+                DodItem::new("done1".to_string(), false),
+                DodItem::new("done2".to_string(), false),
             ]
         );
-        assert_eq!(task.in_scope, vec!["scope1"]);
-        assert_eq!(task.out_of_scope, vec!["out1"]);
-        assert_eq!(task.tags.len(), 2);
-        assert!(task.tags.contains(&"rust".to_string()));
-        assert!(task.tags.contains(&"cli".to_string()));
-        assert!(task.dependencies.is_empty());
-        assert!(task.assignee_session_id.is_none());
-        assert!(task.started_at.is_none());
-        assert!(task.canceled_at.is_none());
-        assert!(task.cancel_reason.is_none());
+        assert_eq!(task.in_scope(), &["scope1"]);
+        assert_eq!(task.out_of_scope(), &["out1"]);
+        assert_eq!(task.tags().len(), 2);
+        assert!(task.tags().contains(&"rust".to_string()));
+        assert!(task.tags().contains(&"cli".to_string()));
+        assert!(task.dependencies().is_empty());
+        assert!(task.assignee_session_id().is_none());
+        assert!(task.started_at().is_none());
+        assert!(task.canceled_at().is_none());
+        assert!(task.cancel_reason().is_none());
 
-        let fetched = get_task(&conn, task.id).unwrap();
-        assert_eq!(fetched.title, task.title);
-        assert_eq!(fetched.tags, task.tags);
+        let fetched = get_task(&conn, task.id()).unwrap();
+        assert_eq!(fetched.title(), task.title());
+        assert_eq!(fetched.tags(), task.tags());
     }
 
     #[test]
     fn create_task_default_priority() {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, 1, &default_create_params("default prio")).unwrap();
-        assert_eq!(task.priority, Priority::P2);
+        assert_eq!(task.priority(), Priority::P2);
     }
 
     #[test]
@@ -1799,7 +1755,7 @@ mod tests {
 
         let updated = update_task(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskParams {
                 title: Some("updated".to_string()),
                 background: Some(Some("new bg".to_string())),
@@ -1819,43 +1775,41 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(updated.title, "updated");
-        assert_eq!(updated.background.as_deref(), Some("new bg"));
-        assert_eq!(updated.description.as_deref(), Some("new description"));
-        assert_eq!(updated.priority, Priority::P0);
-        assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
-        assert!(updated.updated_at >= task.updated_at);
+        assert_eq!(updated.title(), "updated");
+        assert_eq!(updated.background(), Some("new bg"));
+        assert_eq!(updated.description(), Some("new description"));
+        assert_eq!(updated.priority(), Priority::P0);
+        assert_eq!(updated.assignee_session_id(), Some("session-1"));
+        assert!(updated.updated_at() >= task.updated_at());
     }
 
     #[test]
     fn status_transition_saved() {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
-        assert_eq!(task.status, TaskStatus::Draft);
+        assert_eq!(task.status(), TaskStatus::Draft);
 
         // draft -> todo via domain method + save
-        let mut task = get_task(&conn, task.id).unwrap();
-        task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let task = get_task(&conn, task.id()).unwrap();
+        let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.status, TaskStatus::Todo);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.status(), TaskStatus::Todo);
 
         // todo -> in_progress
-        let mut task = updated;
-        task.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.status, TaskStatus::InProgress);
-        assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
-        assert_eq!(updated.started_at.as_deref(), Some("2025-01-01T00:00:00Z"));
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.status(), TaskStatus::InProgress);
+        assert_eq!(updated.assignee_session_id(), Some("session-1"));
+        assert_eq!(updated.started_at(), Some("2025-01-01T00:00:00Z"));
 
         // in_progress -> completed
-        let mut task = updated;
-        task.complete("2025-01-01T01:00:00Z".to_string()).unwrap();
+        let (task, _) = updated.complete("2025-01-01T01:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.status, TaskStatus::Completed);
-        assert_eq!(updated.completed_at.as_deref(), Some("2025-01-01T01:00:00Z"));
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.status(), TaskStatus::Completed);
+        assert_eq!(updated.completed_at(), Some("2025-01-01T01:00:00Z"));
     }
 
     #[test]
@@ -1864,30 +1818,30 @@ mod tests {
 
         // cancel from draft
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let mut task = get_task(&conn, t1.id).unwrap();
-        task.cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into())).unwrap();
+        let task = get_task(&conn, t1.id()).unwrap();
+        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into())).unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t1.id).unwrap();
-        assert_eq!(canceled.status, TaskStatus::Canceled);
-        assert_eq!(canceled.cancel_reason.as_deref(), Some("reason1"));
+        let canceled = get_task(&conn, t1.id()).unwrap();
+        assert_eq!(canceled.status(), TaskStatus::Canceled);
+        assert_eq!(canceled.cancel_reason(), Some("reason1"));
 
         // cancel from todo
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        transition_to(&conn, t2.id, TaskStatus::Todo);
-        let mut task = get_task(&conn, t2.id).unwrap();
-        task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        transition_to(&conn, t2.id(), TaskStatus::Todo);
+        let task = get_task(&conn, t2.id()).unwrap();
+        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t2.id).unwrap();
-        assert_eq!(canceled.status, TaskStatus::Canceled);
+        let canceled = get_task(&conn, t2.id()).unwrap();
+        assert_eq!(canceled.status(), TaskStatus::Canceled);
 
         // cancel from in_progress
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
-        transition_to(&conn, t3.id, TaskStatus::InProgress);
-        let mut task = get_task(&conn, t3.id).unwrap();
-        task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        transition_to(&conn, t3.id(), TaskStatus::InProgress);
+        let task = get_task(&conn, t3.id()).unwrap();
+        let (task, _) = task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t3.id).unwrap();
-        assert_eq!(canceled.status, TaskStatus::Canceled);
+        let canceled = get_task(&conn, t3.id()).unwrap();
+        assert_eq!(canceled.status(), TaskStatus::Canceled);
     }
 
     #[test]
@@ -1913,14 +1867,14 @@ mod tests {
         )
         .unwrap();
 
-        delete_task(&conn, task.id).unwrap();
+        delete_task(&conn, task.id()).unwrap();
 
-        assert!(get_task(&conn, task.id).is_err());
+        assert!(get_task(&conn, task.id()).is_err());
 
         let count: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM task_tags WHERE task_id = ?1",
-                params![task.id],
+                params![task.id()],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1929,7 +1883,7 @@ mod tests {
         let count: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM task_definition_of_done WHERE task_id = ?1",
-                params![task.id],
+                params![task.id()],
                 |row| row.get(0),
             )
             .unwrap();
@@ -1959,7 +1913,7 @@ mod tests {
         let _t2 = create_task(&conn, 1, &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
-        transition_to(&conn, t1.id, TaskStatus::Todo);
+        transition_to(&conn, t1.id(), TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
@@ -1973,7 +1927,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(drafts.len(), 1);
-        assert_eq!(drafts[0].title, "todo");
+        assert_eq!(drafts[0].title(), "todo");
 
         let todos = list_tasks(
             &conn,
@@ -1987,7 +1941,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(todos.len(), 1);
-        assert_eq!(todos[0].title, "draft");
+        assert_eq!(todos[0].title(), "draft");
     }
 
     #[test]
@@ -2020,7 +1974,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].title, "tagged");
+        assert_eq!(result[0].title(), "tagged");
     }
 
     #[test]
@@ -2029,7 +1983,7 @@ mod tests {
 
         // Create dep task and move to completed
         let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
-        transition_to(&conn, dep.id, TaskStatus::Completed);
+        transition_to(&conn, dep.id(), TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
         let ready_t = create_task(
@@ -2037,11 +1991,11 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "ready".to_string(),
-                dependencies: vec![dep.id],
+                dependencies: vec![dep.id()],
                 ..default_create_params("ready")
             },
         ).unwrap();
-        transition_to(&conn, ready_t.id, TaskStatus::Todo);
+        transition_to(&conn, ready_t.id(), TaskStatus::Todo);
 
         // Create another dep that is NOT completed
         let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
@@ -2050,11 +2004,11 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
-                dependencies: vec![dep2.id],
+                dependencies: vec![dep2.id()],
                 ..default_create_params("blocked")
             },
         ).unwrap();
-        transition_to(&conn, blocked_task.id, TaskStatus::Todo);
+        transition_to(&conn, blocked_task.id(), TaskStatus::Todo);
 
         let result = list_tasks(
             &conn,
@@ -2068,7 +2022,7 @@ mod tests {
         ).unwrap();
 
         assert_eq!(result.len(), 1);
-        assert_eq!(result[0].title, "ready");
+        assert_eq!(result[0].title(), "ready");
     }
 
     #[test]
@@ -2091,7 +2045,7 @@ mod tests {
         // Duplicate tag should fail
         let result = conn.execute(
             "INSERT INTO task_tags (task_id, tag) VALUES (?1, 'rust')",
-            params![task.id],
+            params![task.id()],
         );
         assert!(result.is_err());
     }
@@ -2107,15 +2061,15 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "with deps".to_string(),
-                dependencies: vec![dep1.id, dep2.id],
+                dependencies: vec![dep1.id(), dep2.id()],
                 ..default_create_params("with deps")
             },
         )
         .unwrap();
 
-        assert_eq!(task.dependencies.len(), 2);
-        assert!(task.dependencies.contains(&dep1.id));
-        assert!(task.dependencies.contains(&dep2.id));
+        assert_eq!(task.dependencies().len(), 2);
+        assert!(task.dependencies().contains(&dep1.id()));
+        assert!(task.dependencies().contains(&dep2.id()));
     }
 
     fn default_array_params() -> UpdateTaskArrayParams {
@@ -2153,7 +2107,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskArrayParams {
                 set_tags: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -2161,11 +2115,11 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.tags.len(), 2);
-        assert!(updated.tags.contains(&"new1".to_string()));
-        assert!(updated.tags.contains(&"new2".to_string()));
-        assert!(!updated.tags.contains(&"old".to_string()));
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.tags().len(), 2);
+        assert!(updated.tags().contains(&"new1".to_string()));
+        assert!(updated.tags().contains(&"new2".to_string()));
+        assert!(!updated.tags().contains(&"old".to_string()));
     }
 
     #[test]
@@ -2186,7 +2140,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskArrayParams {
                 add_tags: vec!["new".to_string(), "existing".to_string()],
                 ..default_array_params()
@@ -2194,10 +2148,10 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.tags.len(), 2);
-        assert!(updated.tags.contains(&"existing".to_string()));
-        assert!(updated.tags.contains(&"new".to_string()));
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.tags().len(), 2);
+        assert!(updated.tags().contains(&"existing".to_string()));
+        assert!(updated.tags().contains(&"new".to_string()));
     }
 
     #[test]
@@ -2218,7 +2172,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskArrayParams {
                 remove_tags: vec!["remove".to_string()],
                 ..default_array_params()
@@ -2226,8 +2180,8 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.tags, vec!["keep"]);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.tags(), &["keep"]);
     }
 
     #[test]
@@ -2245,7 +2199,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskArrayParams {
                 set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -2253,12 +2207,12 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id).unwrap();
+        let updated = get_task(&conn, task.id()).unwrap();
         assert_eq!(
-            updated.definition_of_done,
-            vec![
-                DodItem { content: "new1".to_string(), checked: false },
-                DodItem { content: "new2".to_string(), checked: false },
+            updated.definition_of_done(),
+            &[
+                DodItem::new("new1".to_string(), false),
+                DodItem::new("new2".to_string(), false),
             ]
         );
     }
@@ -2278,7 +2232,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskArrayParams {
                 add_in_scope: vec!["c".to_string()],
                 remove_in_scope: vec!["a".to_string()],
@@ -2287,8 +2241,8 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id).unwrap();
-        assert_eq!(updated.in_scope, vec!["b", "c"]);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert_eq!(updated.in_scope(), &["b", "c"]);
     }
 
     fn make_todo(conn: &Connection, title: &str, priority: Option<Priority>) -> Task {
@@ -2301,14 +2255,14 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(conn, task.id, TaskStatus::Todo);
-        get_task(conn, task.id).unwrap()
+        transition_to(conn, task.id(), TaskStatus::Todo);
+        get_task(conn, task.id()).unwrap()
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
         let task = create_task(conn, 1, &default_create_params(title)).unwrap();
-        transition_to(conn, task.id, TaskStatus::Completed);
-        get_task(conn, task.id).unwrap()
+        transition_to(conn, task.id(), TaskStatus::Completed);
+        get_task(conn, task.id()).unwrap()
     }
 
     #[test]
@@ -2330,11 +2284,11 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
-                dependencies: vec![dep.id],
+                dependencies: vec![dep.id()],
                 ..default_create_params("blocked")
             },
         ).unwrap();
-        transition_to(&conn, task.id, TaskStatus::Todo);
+        transition_to(&conn, task.id(), TaskStatus::Todo);
 
         assert!(next_task(&conn, 1).unwrap().is_none());
     }
@@ -2348,7 +2302,7 @@ mod tests {
         make_todo(&conn, "mid", Some(Priority::P1));
 
         let task = next_task(&conn, 1).unwrap().unwrap();
-        assert_eq!(task.title, "high");
+        assert_eq!(task.title(), "high");
     }
 
     #[test]
@@ -2361,7 +2315,7 @@ mod tests {
         make_todo(&conn, "second", Some(Priority::P2));
 
         let task = next_task(&conn, 1).unwrap().unwrap();
-        assert_eq!(task.title, "first");
+        assert_eq!(task.title(), "first");
     }
 
     #[test]
@@ -2375,8 +2329,8 @@ mod tests {
 
         let task = next_task(&conn, 1).unwrap().unwrap();
         // t1 was created first, so it has lower id
-        assert!(t1.id < t2.id);
-        assert_eq!(task.id, t1.id);
+        assert!(t1.id() < t2.id());
+        assert_eq!(task.id(), t1.id());
     }
 
     #[test]
@@ -2390,14 +2344,14 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "ready".to_string(),
-                dependencies: vec![dep.id],
+                dependencies: vec![dep.id()],
                 ..default_create_params("ready")
             },
         ).unwrap();
-        transition_to(&conn, task.id, TaskStatus::Todo);
+        transition_to(&conn, task.id(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1).unwrap().unwrap();
-        assert_eq!(result.title, "ready");
+        assert_eq!(result.title(), "ready");
     }
 
     // --- Dependency tests ---
@@ -2408,8 +2362,8 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("task2")).unwrap();
 
-        let updated = add_dependency(&conn, t1.id, t2.id).unwrap();
-        assert!(updated.dependencies.contains(&t2.id));
+        let updated = add_dependency(&conn, t1.id(), t2.id()).unwrap();
+        assert!(updated.dependencies().contains(&t2.id()));
     }
 
     #[test]
@@ -2418,7 +2372,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
         // Self-dep insert is idempotent (INSERT OR IGNORE)
-        let result = add_dependency(&conn, t1.id, t1.id);
+        let result = add_dependency(&conn, t1.id(), t1.id());
         assert!(result.is_ok());
     }
 
@@ -2426,8 +2380,8 @@ mod tests {
     fn add_dependency_nonexistent_task() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
-        assert!(add_dependency(&conn, t1.id, 999).is_err());
-        assert!(add_dependency(&conn, 999, t1.id).is_err());
+        assert!(add_dependency(&conn, t1.id(), 999).is_err());
+        assert!(add_dependency(&conn, 999, t1.id()).is_err());
     }
 
     #[test]
@@ -2437,9 +2391,9 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        add_dependency(&conn, t1.id, t2.id).unwrap();
+        add_dependency(&conn, t1.id(), t2.id()).unwrap();
         // Direct cycle: repo no longer rejects this (service layer does)
-        let result = add_dependency(&conn, t2.id, t1.id);
+        let result = add_dependency(&conn, t2.id(), t1.id());
         assert!(result.is_ok());
     }
 
@@ -2449,11 +2403,11 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        add_dependency(&conn, t1.id, t2.id).unwrap();
-        let result = add_dependency(&conn, t1.id, t2.id);
+        add_dependency(&conn, t1.id(), t2.id()).unwrap();
+        let result = add_dependency(&conn, t1.id(), t2.id());
         assert!(result.is_ok());
         let task = result.unwrap();
-        assert_eq!(task.dependencies.len(), 1);
+        assert_eq!(task.dependencies().len(), 1);
     }
 
     #[test]
@@ -2462,9 +2416,9 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        add_dependency(&conn, t1.id, t2.id).unwrap();
-        let updated = remove_dependency(&conn, t1.id, t2.id).unwrap();
-        assert!(updated.dependencies.is_empty());
+        add_dependency(&conn, t1.id(), t2.id()).unwrap();
+        let updated = remove_dependency(&conn, t1.id(), t2.id()).unwrap();
+        assert!(updated.dependencies().is_empty());
     }
 
     #[test]
@@ -2473,7 +2427,7 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        let result = remove_dependency(&conn, t1.id, t2.id);
+        let result = remove_dependency(&conn, t1.id(), t2.id());
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("dependency not found"));
     }
@@ -2485,10 +2439,10 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        let updated = set_dependencies(&conn, t1.id, &[t2.id, t3.id]).unwrap();
-        assert_eq!(updated.dependencies.len(), 2);
-        assert!(updated.dependencies.contains(&t2.id));
-        assert!(updated.dependencies.contains(&t3.id));
+        let updated = set_dependencies(&conn, t1.id(), &[t2.id(), t3.id()]).unwrap();
+        assert_eq!(updated.dependencies().len(), 2);
+        assert!(updated.dependencies().contains(&t2.id()));
+        assert!(updated.dependencies().contains(&t3.id()));
     }
 
     #[test]
@@ -2498,9 +2452,9 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        set_dependencies(&conn, t1.id, &[t2.id]).unwrap();
-        let updated = set_dependencies(&conn, t1.id, &[t3.id]).unwrap();
-        assert_eq!(updated.dependencies, vec![t3.id]);
+        set_dependencies(&conn, t1.id(), &[t2.id()]).unwrap();
+        let updated = set_dependencies(&conn, t1.id(), &[t3.id()]).unwrap();
+        assert_eq!(updated.dependencies(), &[t3.id()]);
     }
 
     #[test]
@@ -2509,9 +2463,9 @@ mod tests {
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        add_dependency(&conn, t1.id, t2.id).unwrap();
-        let updated = set_dependencies(&conn, t1.id, &[]).unwrap();
-        assert!(updated.dependencies.is_empty());
+        add_dependency(&conn, t1.id(), t2.id()).unwrap();
+        let updated = set_dependencies(&conn, t1.id(), &[]).unwrap();
+        assert!(updated.dependencies().is_empty());
     }
 
     #[test]
@@ -2522,12 +2476,12 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        add_dependency(&conn, t2.id, t1.id).unwrap();
+        add_dependency(&conn, t2.id(), t1.id()).unwrap();
         // Repo no longer rejects cycles
-        let result = set_dependencies(&conn, t1.id, &[t3.id, t2.id]);
+        let result = set_dependencies(&conn, t1.id(), &[t3.id(), t2.id()]);
         assert!(result.is_ok());
-        let task = get_task(&conn, t1.id).unwrap();
-        assert_eq!(task.dependencies.len(), 2);
+        let task = get_task(&conn, t1.id()).unwrap();
+        assert_eq!(task.dependencies().len(), 2);
     }
 
     #[test]
@@ -2537,14 +2491,14 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        add_dependency(&conn, t1.id, t2.id).unwrap();
-        add_dependency(&conn, t1.id, t3.id).unwrap();
+        add_dependency(&conn, t1.id(), t2.id()).unwrap();
+        add_dependency(&conn, t1.id(), t3.id()).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id).unwrap();
+        let deps = list_dependencies(&conn, t1.id()).unwrap();
         assert_eq!(deps.len(), 2);
-        let dep_ids: Vec<i64> = deps.iter().map(|t| t.id).collect();
-        assert!(dep_ids.contains(&t2.id));
-        assert!(dep_ids.contains(&t3.id));
+        let dep_ids: Vec<i64> = deps.iter().map(|t| t.id()).collect();
+        assert!(dep_ids.contains(&t2.id()));
+        assert!(dep_ids.contains(&t3.id()));
     }
 
     #[test]
@@ -2552,7 +2506,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id).unwrap();
+        let deps = list_dependencies(&conn, t1.id()).unwrap();
         assert!(deps.is_empty());
     }
 
@@ -2569,11 +2523,11 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(task.background.as_deref(), Some("bg"));
+        assert_eq!(task.background(), Some("bg"));
 
         let updated = update_task(
             &conn,
-            task.id,
+            task.id(),
             &UpdateTaskParams {
                 title: None,
                 background: Some(None), // clear it
@@ -2592,7 +2546,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert!(updated.background.is_none());
+        assert!(updated.background().is_none());
     }
 
     #[test]
@@ -2609,28 +2563,26 @@ mod tests {
         .unwrap();
 
         // Check first item via domain method + save
-        let mut task = get_task(&conn, task.id).unwrap();
-        task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let task = get_task(&conn, task.id()).unwrap();
+        let task = task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert!(updated.definition_of_done[0].checked);
-        assert!(!updated.definition_of_done[1].checked);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert!(updated.definition_of_done()[0].checked());
+        assert!(!updated.definition_of_done()[1].checked());
 
         // Check second item
-        let mut task = updated;
-        task.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let task = updated.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert!(updated.definition_of_done[0].checked);
-        assert!(updated.definition_of_done[1].checked);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert!(updated.definition_of_done()[0].checked());
+        assert!(updated.definition_of_done()[1].checked());
 
         // Uncheck first item
-        let mut task = updated;
-        task.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let task = updated.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id).unwrap();
-        assert!(!updated.definition_of_done[0].checked);
-        assert!(updated.definition_of_done[1].checked);
+        let updated = get_task(&conn, task.id()).unwrap();
+        assert!(!updated.definition_of_done()[0].checked());
+        assert!(updated.definition_of_done()[1].checked());
     }
 
     // --- Migration system tests ---
@@ -2843,64 +2795,62 @@ mod tests {
             .await
             .unwrap();
 
-        let got = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(got.title, "Round-trip test");
-        assert_eq!(got.background.as_deref(), Some("bg"));
-        assert_eq!(got.description.as_deref(), Some("desc"));
-        assert_eq!(got.priority, Priority::P1);
-        assert_eq!(got.definition_of_done.len(), 1);
-        assert_eq!(got.definition_of_done[0].content, "Write tests");
-        assert!(!got.definition_of_done[0].checked);
-        assert_eq!(got.in_scope, vec!["API"]);
-        assert_eq!(got.out_of_scope, vec!["UI"]);
-        assert_eq!(got.branch.as_deref(), Some("feat/test"));
-        assert_eq!(got.tags, vec!["backend"]);
-        assert_eq!(got.status, TaskStatus::Draft);
-        assert!(got.metadata.is_some());
+        let got = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(got.title(), "Round-trip test");
+        assert_eq!(got.background(), Some("bg"));
+        assert_eq!(got.description(), Some("desc"));
+        assert_eq!(got.priority(), Priority::P1);
+        assert_eq!(got.definition_of_done().len(), 1);
+        assert_eq!(got.definition_of_done()[0].content(), "Write tests");
+        assert!(!got.definition_of_done()[0].checked());
+        assert_eq!(got.in_scope(), &["API"]);
+        assert_eq!(got.out_of_scope(), &["UI"]);
+        assert_eq!(got.branch(), Some("feat/test"));
+        assert_eq!(got.tags(), &["backend"]);
+        assert_eq!(got.status(), TaskStatus::Draft);
+        assert!(got.metadata().is_some());
     }
 
     #[tokio::test]
     async fn inmem_task_lifecycle() {
         let backend = mem_backend();
-        let mut task = backend
+        let task = backend
             .create_task(1, &params("Lifecycle"))
             .await
             .unwrap();
-        assert_eq!(task.status, TaskStatus::Draft);
+        assert_eq!(task.status(), TaskStatus::Draft);
 
-        task.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task_got.status, TaskStatus::Todo);
+        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task_got.status(), TaskStatus::Todo);
 
-        let mut task = task_got;
-        task.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task_got.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task_got.status, TaskStatus::InProgress);
-        assert_eq!(task_got.assignee_session_id.as_deref(), Some("sess-1"));
-        assert!(task_got.started_at.is_some());
+        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task_got.status(), TaskStatus::InProgress);
+        assert_eq!(task_got.assignee_session_id(), Some("sess-1"));
+        assert!(task_got.started_at().is_some());
 
-        let mut task = task_got;
-        task.complete("2026-01-02T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task_got.complete("2026-01-02T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task_got.status, TaskStatus::Completed);
-        assert!(task_got.completed_at.is_some());
+        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task_got.status(), TaskStatus::Completed);
+        assert!(task_got.completed_at().is_some());
     }
 
     #[tokio::test]
     async fn inmem_task_cancel() {
         let backend = mem_backend();
-        let mut task = backend
+        let task = backend
             .create_task(1, &params("Cancel me"))
             .await
             .unwrap();
-        task.cancel("2026-01-01T00:00:00Z".to_string(), Some("no longer needed".into())).unwrap();
+        let (task, _) = task.cancel("2026-01-01T00:00:00Z".to_string(), Some("no longer needed".into())).unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task_got.status, TaskStatus::Canceled);
-        assert_eq!(task_got.cancel_reason.as_deref(), Some("no longer needed"));
+        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task_got.status(), TaskStatus::Canceled);
+        assert_eq!(task_got.cancel_reason(), Some("no longer needed"));
     }
 
     #[tokio::test]
@@ -2913,20 +2863,20 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(proj.name, "test-project");
+        assert_eq!(proj.name(), "test-project");
 
-        let got = backend.get_project(proj.id).await.unwrap();
-        assert_eq!(got.name, "test-project");
-        assert_eq!(got.description.as_deref(), Some("A test project"));
+        let got = backend.get_project(proj.id()).await.unwrap();
+        assert_eq!(got.name(), "test-project");
+        assert_eq!(got.description(), Some("A test project"));
 
         let by_name = backend.get_project_by_name("test-project").await.unwrap();
-        assert_eq!(by_name.id, proj.id);
+        assert_eq!(by_name.id(), proj.id());
 
         let list = backend.list_projects().await.unwrap();
         assert!(list.len() >= 1);
 
-        backend.delete_project(proj.id).await.unwrap();
-        assert!(backend.get_project(proj.id).await.is_err());
+        backend.delete_project(proj.id()).await.unwrap();
+        assert!(backend.get_project(proj.id()).await.is_err());
     }
 
     #[tokio::test]
@@ -2940,20 +2890,20 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(user.username, "alice");
+        assert_eq!(user.username(), "alice");
 
-        let got = backend.get_user(user.id).await.unwrap();
-        assert_eq!(got.display_name.as_deref(), Some("Alice"));
-        assert_eq!(got.email.as_deref(), Some("alice@example.com"));
+        let got = backend.get_user(user.id()).await.unwrap();
+        assert_eq!(got.display_name(), Some("Alice"));
+        assert_eq!(got.email(), Some("alice@example.com"));
 
         let by_name = backend.get_user_by_username("alice").await.unwrap();
-        assert_eq!(by_name.id, user.id);
+        assert_eq!(by_name.id(), user.id());
 
         let list = backend.list_users().await.unwrap();
         assert_eq!(list.len(), 2); // default user + alice
 
-        backend.delete_user(user.id).await.unwrap();
-        assert!(backend.get_user(user.id).await.is_err());
+        backend.delete_user(user.id()).await.unwrap();
+        assert!(backend.get_user(user.id()).await.is_err());
     }
 
     #[tokio::test]
@@ -2969,21 +2919,21 @@ mod tests {
             .unwrap();
 
         let member = backend
-            .add_project_member(1, &AddProjectMemberParams::new(user.id, Some(Role::Member)))
+            .add_project_member(1, &AddProjectMemberParams::new(user.id(), Some(Role::Member)))
             .await
             .unwrap();
-        assert_eq!(member.role, Role::Member);
+        assert_eq!(member.role(), Role::Member);
 
-        let got = backend.get_project_member(1, user.id).await.unwrap();
-        assert_eq!(got.user_id, user.id);
+        let got = backend.get_project_member(1, user.id()).await.unwrap();
+        assert_eq!(got.user_id(), user.id());
 
-        let updated = backend.update_member_role(1, user.id, Role::Owner).await.unwrap();
-        assert_eq!(updated.role, Role::Owner);
+        let updated = backend.update_member_role(1, user.id(), Role::Owner).await.unwrap();
+        assert_eq!(updated.role(), Role::Owner);
 
         let members = backend.list_project_members(1).await.unwrap();
         assert_eq!(members.len(), 2); // default user (owner) + bob
 
-        backend.remove_project_member(1, user.id).await.unwrap();
+        backend.remove_project_member(1, user.id()).await.unwrap();
         let members = backend.list_project_members(1).await.unwrap();
         assert_eq!(members.len(), 1); // only default user (owner) remains
     }
@@ -2991,31 +2941,31 @@ mod tests {
     #[tokio::test]
     async fn inmem_dependencies() {
         let backend = mem_backend();
-        let mut t1 = backend
+        let t1 = backend
             .create_task(1, &params("T1"))
             .await
             .unwrap();
-        let mut t2 = backend
+        let t2 = backend
             .create_task(1, &params("T2"))
             .await
             .unwrap();
-        t1.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (t1, _) = t1.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
-        t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (t2, _) = t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
 
-        let t2 = backend.add_dependency(1, t2.id, t1.id).await.unwrap();
-        assert_eq!(t2.dependencies, vec![t1.id]);
+        let t2 = backend.add_dependency(1, t2.id(), t1.id()).await.unwrap();
+        assert_eq!(t2.dependencies(), &[t1.id()]);
 
-        let deps = backend.list_dependencies(1, t2.id).await.unwrap();
+        let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
         assert_eq!(deps.len(), 1);
-        assert_eq!(deps[0].id, t1.id);
+        assert_eq!(deps[0].id(), t1.id());
 
         let next = backend.next_task(1).await.unwrap();
-        assert!(next.is_none() || next.unwrap().id == t1.id);
+        assert!(next.is_none() || next.unwrap().id() == t1.id());
 
-        let t2 = backend.remove_dependency(1, t2.id, t1.id).await.unwrap();
-        assert!(t2.dependencies.is_empty());
+        let t2 = backend.remove_dependency(1, t2.id(), t1.id()).await.unwrap();
+        assert!(t2.dependencies().is_empty());
     }
 
     #[tokio::test]
@@ -3023,31 +2973,29 @@ mod tests {
         let backend = mem_backend();
         let mut p = params("DoD test");
         p.definition_of_done = vec!["Item A".into(), "Item B".into()];
-        let mut task = backend
+        let task = backend
             .create_task(1, &p)
             .await
             .unwrap();
-        assert!(!task.definition_of_done[0].checked);
-        assert!(!task.definition_of_done[1].checked);
+        assert!(!task.definition_of_done()[0].checked());
+        assert!(!task.definition_of_done()[1].checked());
 
-        task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let task = task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert!(task.definition_of_done[0].checked);
-        assert!(!task.definition_of_done[1].checked);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert!(task.definition_of_done()[0].checked());
+        assert!(!task.definition_of_done()[1].checked());
 
-        let mut task = task;
-        task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let task = task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert!(task.definition_of_done[0].checked);
-        assert!(task.definition_of_done[1].checked);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert!(task.definition_of_done()[0].checked());
+        assert!(task.definition_of_done()[1].checked());
 
-        let mut task = task;
-        task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let task = task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert!(!task.definition_of_done[0].checked);
-        assert!(task.definition_of_done[1].checked);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert!(!task.definition_of_done()[0].checked());
+        assert!(task.definition_of_done()[1].checked());
     }
 }

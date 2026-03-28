@@ -134,7 +134,7 @@ pub async fn cmd_add(
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("Created task #{}: \"{}\"", task.id, task.title);
+            println!("Created task #{}: \"{}\"", task.id(), task.title());
         }
     }
 
@@ -176,7 +176,7 @@ pub async fn cmd_list(
             for task in &tasks {
                 println!(
                     "[{}] #{} {} ({})",
-                    task.status, task.id, task.title, task.priority
+                    task.status(), task.id(), task.title(), task.priority()
                 );
             }
         }
@@ -196,72 +196,72 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("ID:       {}", task.id);
-            println!("Title:    {}", task.title);
-            println!("Status:   {}", task.status);
-            println!("Priority: {}", task.priority);
-            if let Some(ref bg) = task.background {
+            println!("ID:       {}", task.id());
+            println!("Title:    {}", task.title());
+            println!("Status:   {}", task.status());
+            println!("Priority: {}", task.priority());
+            if let Some(bg) = task.background() {
                 println!("Background: {bg}");
             }
-            if let Some(ref desc) = task.description {
+            if let Some(desc) = task.description() {
                 println!("Description: {desc}");
             }
-            if let Some(ref p) = task.plan {
+            if let Some(p) = task.plan() {
                 println!("Plan:     {p}");
             }
-            if let Some(ref branch) = task.branch {
+            if let Some(branch) = task.branch() {
                 println!("Branch:   {branch}");
             }
-            if let Some(ref pr_url) = task.pr_url {
+            if let Some(pr_url) = task.pr_url() {
                 println!("PR URL:   {pr_url}");
             }
-            if let Some(ref assignee) = task.assignee_session_id {
+            if let Some(assignee) = task.assignee_session_id() {
                 println!("Assignee (session): {assignee}");
             }
-            if let Some(uid) = task.assignee_user_id {
+            if let Some(uid) = task.assignee_user_id() {
                 println!("Assignee (user): #{uid}");
             }
-            if !task.tags.is_empty() {
-                println!("Tags:     {}", task.tags.join(", "));
+            if !task.tags().is_empty() {
+                println!("Tags:     {}", task.tags().join(", "));
             }
-            if !task.dependencies.is_empty() {
-                let deps: Vec<String> = task.dependencies.iter().map(|d| d.to_string()).collect();
+            if !task.dependencies().is_empty() {
+                let deps: Vec<String> = task.dependencies().iter().map(|d| d.to_string()).collect();
                 println!("Deps:     {}", deps.join(", "));
             }
-            if let Some(ref meta) = task.metadata {
+            if let Some(meta) = task.metadata() {
                 println!("Metadata: {}", serde_json::to_string_pretty(meta)?);
             }
-            if !task.definition_of_done.is_empty() {
+            if !task.definition_of_done().is_empty() {
                 println!("DoD:");
-                for item in &task.definition_of_done {
-                    let mark = if item.checked { "x" } else { " " };
-                    println!("  [{mark}] {}", item.content);
+                for item in task.definition_of_done() {
+                    let mark = if item.checked() { "x" } else { " " };
+                    println!("  [{mark}] {}", item.content());
                 }
             }
-            if !task.in_scope.is_empty() {
+            if !task.in_scope().is_empty() {
                 println!("In scope:");
-                for item in &task.in_scope {
+                for item in task.in_scope() {
                     println!("  - {item}");
                 }
             }
-            if !task.out_of_scope.is_empty() {
+            if !task.out_of_scope().is_empty() {
                 println!("Out of scope:");
-                for item in &task.out_of_scope {
+                for item in task.out_of_scope() {
                     println!("  - {item}");
                 }
             }
-            println!("Created:  {}", task.created_at);
-            println!("Updated:  {}", task.updated_at);
-            if let Some(ref t) = task.started_at {
+            println!("Created:  {}", task.created_at());
+            println!("Updated:  {}", task.updated_at());
+            if let Some(t) = task.started_at() {
                 println!("Started:  {t}");
             }
-            if let Some(ref t) = task.completed_at {
+            if let Some(t) = task.completed_at() {
                 println!("Completed: {t}");
             }
-            if let Some(ref t) = task.canceled_at {
+            if let Some(t) = task.canceled_at() {
                 println!("Canceled: {t}");
             }
-            if let Some(ref reason) = task.cancel_reason {
+            if let Some(reason) = task.cancel_reason() {
                 println!("Cancel reason: {reason}");
             }
         }
@@ -277,9 +277,9 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Todo)?;
+        task.status().transition_to(TaskStatus::Todo)?;
         let operations = vec![
-            format!("Ready task #{} (status: {} → todo)", id, task.status),
+            format!("Ready task #{} (status: {} → todo)", id, task.status()),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
@@ -292,7 +292,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Ready task #{}: {}", updated.id, updated.title);
+            println!("Ready task #{}: {}", updated.id(), updated.title());
         }
     }
 
@@ -311,9 +311,9 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::InProgress)?;
+        task.status().transition_to(TaskStatus::InProgress)?;
         let mut operations = vec![
-            format!("Start task #{} (status: {} → in_progress)", id, task.status),
+            format!("Start task #{} (status: {} → in_progress)", id, task.status()),
         ];
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
@@ -332,7 +332,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.id, updated.title);
+            println!("Started task #{}: {}", updated.id(), updated.title());
         }
     }
 
@@ -359,8 +359,8 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
             }
         };
         let mut operations = vec![
-            format!("Start next eligible task #{}: \"{}\"", task.id, task.title),
-            format!("Change status: {} → in_progress", task.status),
+            format!("Start next eligible task #{}: \"{}\"", task.id(), task.title()),
+            format!("Change status: {} → in_progress", task.status()),
         ];
         if let Some(ref sid) = session_id {
             operations.push(format!("Set assignee_session_id to \"{}\"", sid));
@@ -382,13 +382,13 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
                 anyhow::bail!("no eligible task found");
             }
         };
-        let prev_status = task.status;
+        let prev_status = task.status();
         hook_executor
             .fire_task_hook("task_started", &task, backend.as_ref(), Some(prev_status), None)
             .await;
         match cli.output {
             OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
-            OutputFormat::Text => println!("Started task #{}: {}", task.id, task.title),
+            OutputFormat::Text => println!("Started task #{}: {}", task.id(), task.title()),
         }
         return Ok(());
     }
@@ -401,7 +401,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Started task #{}: {}", updated.id, updated.title);
+            println!("Started task #{}: {}", updated.id(), updated.title());
         }
     }
 
@@ -416,9 +416,9 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Completed)?;
+        task.status().transition_to(TaskStatus::Completed)?;
         let operations = vec![
-            format!("Complete task #{} (status: {} → completed)", id, task.status),
+            format!("Complete task #{} (status: {} → completed)", id, task.status()),
         ];
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
@@ -431,7 +431,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Completed task #{}: {}", updated.id, updated.title);
+            println!("Completed task #{}: {}", updated.id(), updated.title());
         }
     }
 
@@ -446,9 +446,9 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Canceled)?;
+        task.status().transition_to(TaskStatus::Canceled)?;
         let mut operations = vec![
-            format!("Cancel task #{} (status: {} → canceled)", id, task.status),
+            format!("Cancel task #{} (status: {} → canceled)", id, task.status()),
         ];
         if let Some(ref r) = reason {
             operations.push(format!("Set cancel reason: \"{}\"", r));
@@ -464,8 +464,8 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Canceled task #{}: {}", updated.id, updated.title);
-            if let Some(ref r) = updated.cancel_reason {
+            println!("Canceled task #{}: {}", updated.id(), updated.title());
+            if let Some(r) = updated.cancel_reason() {
                 println!("  reason: {r}");
             }
         }
@@ -669,32 +669,14 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 backend.get_task(project_id, *id).await?
             } else {
                 use crate::domain::task::{Priority, TaskStatus};
-                Task {
-                    id: 0,
-                    project_id,
-                    title: "Sample task".into(),
-                    background: None,
-                    description: Some("This is a sample task for hook testing".into()),
-                    plan: None,
-                    priority: Priority::P2,
-                    status: TaskStatus::Todo,
-                    assignee_session_id: None,
-                    assignee_user_id: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                    updated_at: chrono::Utc::now().to_rfc3339(),
-                    started_at: None,
-                    completed_at: None,
-                    canceled_at: None,
-                    cancel_reason: None,
-                    branch: None,
-                    pr_url: None,
-                    metadata: None,
-                    definition_of_done: vec![],
-                    in_scope: vec![],
-                    out_of_scope: vec![],
-                    tags: vec![],
-                    dependencies: vec![],
-                }
+                Task::new(
+                    0, project_id, "Sample task".into(), None,
+                    Some("This is a sample task for hook testing".into()),
+                    None, Priority::P2, TaskStatus::Todo, None, None,
+                    chrono::Utc::now().to_rfc3339(), chrono::Utc::now().to_rfc3339(),
+                    None, None, None, None, None, None, None,
+                    vec![], vec![], vec![], vec![], vec![],
+                )
             };
 
             let event = hooks::build_event(event_name, &task, &*backend, None, None).await;
@@ -937,30 +919,30 @@ pub async fn cmd_edit(
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
         OutputFormat::Text => {
-            println!("Updated task {}", task.id);
-            println!("  title: {}", task.title);
-            println!("  status: {}", task.status);
-            println!("  priority: {}", task.priority);
-            if let Some(ref bg) = task.background {
+            println!("Updated task {}", task.id());
+            println!("  title: {}", task.title());
+            println!("  status: {}", task.status());
+            println!("  priority: {}", task.priority());
+            if let Some(bg) = task.background() {
                 println!("  background: {bg}");
             }
-            if let Some(ref desc) = task.description {
+            if let Some(desc) = task.description() {
                 println!("  description: {desc}");
             }
-            if let Some(ref p) = task.plan {
+            if let Some(p) = task.plan() {
                 println!("  plan: {p}");
             }
-            if let Some(ref branch) = task.branch {
+            if let Some(branch) = task.branch() {
                 println!("  branch: {branch}");
             }
-            if let Some(ref pr_url) = task.pr_url {
+            if let Some(pr_url) = task.pr_url() {
                 println!("  pr_url: {pr_url}");
             }
-            if let Some(ref meta) = task.metadata {
+            if let Some(meta) = task.metadata() {
                 println!("  metadata: {}", serde_json::to_string(meta)?);
             }
-            if !task.tags.is_empty() {
-                println!("  tags: {}", task.tags.join(", "));
+            if !task.tags().is_empty() {
+                println!("  tags: {}", task.tags().join(", "));
             }
         }
     }
@@ -993,7 +975,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
                     println!("Checked DoD item #{index} of task #{task_id}");
-                    print_dod_items(&task.definition_of_done);
+                    print_dod_items(task.definition_of_done());
                 }
             }
         }
@@ -1015,7 +997,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
                     println!("Unchecked DoD item #{index} of task #{task_id}");
-                    print_dod_items(&task.definition_of_done);
+                    print_dod_items(task.definition_of_done());
                 }
             }
         }
@@ -1025,8 +1007,8 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
 
 fn print_dod_items(items: &[crate::domain::task::DodItem]) {
     for item in items {
-        let mark = if item.checked { "x" } else { " " };
-        println!("  [{mark}] {}", item.content);
+        let mark = if item.checked() { "x" } else { " " };
+        println!("  [{mark}] {}", item.content());
     }
 }
 
@@ -1073,10 +1055,10 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
-                    if task.dependencies.is_empty() {
+                    if task.dependencies().is_empty() {
                         println!("Cleared all dependencies for task #{}", task_id);
                     } else {
-                        let dep_strs: Vec<String> = task.dependencies.iter().map(|d| format!("#{d}")).collect();
+                        let dep_strs: Vec<String> = task.dependencies().iter().map(|d| format!("#{d}")).collect();
                         println!("Set dependencies for task #{}: {}", task_id, dep_strs.join(", "));
                     }
                 }
@@ -1089,7 +1071,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
                     for task in &deps {
-                        println!("[{}] #{} {} ({})", task.status, task.id, task.title, task.priority);
+                        println!("[{}] #{} {} ({})", task.status(), task.id(), task.title(), task.priority());
                     }
                 }
             }
@@ -1113,10 +1095,9 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 OutputFormat::Text => {
                     for project in &projects {
                         let desc = project
-                            .description
-                            .as_deref()
+                            .description()
                             .unwrap_or("");
-                        println!("#{} {} {}", project.id, project.name, desc);
+                        println!("#{} {} {}", project.id(), project.name(), desc);
                     }
                 }
             }
@@ -1135,7 +1116,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&project)?);
                 }
                 OutputFormat::Text => {
-                    println!("Created project #{}: {}", project.id, project.name);
+                    println!("Created project #{}: {}", project.id(), project.name());
                 }
             }
         }
@@ -1169,10 +1150,9 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 OutputFormat::Text => {
                     for user in &users {
                         let display = user
-                            .display_name
-                            .as_deref()
+                            .display_name()
                             .unwrap_or("");
-                        println!("#{} {} {}", user.id, user.username, display);
+                        println!("#{} {} {}", user.id(), user.username(), display);
                     }
                 }
             }
@@ -1193,7 +1173,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                     println!("{}", serde_json::to_string_pretty(&user)?);
                 }
                 OutputFormat::Text => {
-                    println!("Created user #{}: {}", user.id, user.username);
+                    println!("Created user #{}: {}", user.id(), user.username());
                 }
             }
         }
@@ -1228,7 +1208,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                     for member in &members {
                         println!(
                             "user #{} — role: {}",
-                            member.user_id, member.role
+                            member.user_id(), member.role()
                         );
                     }
                 }
@@ -1246,7 +1226,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 OutputFormat::Text => {
                     println!(
                         "Added user #{} to project as {}",
-                        member.user_id, member.role
+                        member.user_id(), member.role()
                     );
                 }
             }
@@ -1278,7 +1258,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
                 OutputFormat::Text => {
                     println!(
                         "Updated user #{} role to {}",
-                        member.user_id, member.role
+                        member.user_id(), member.role()
                     );
                 }
             }
@@ -1342,14 +1322,13 @@ mod tests {
 
         let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
-        assert_eq!(task.title, "test task");
-        assert_eq!(task.background.as_deref(), Some("bg"));
-        assert_eq!(task.priority, crate::domain::task::Priority::P1);
-        assert_eq!(
-            task.definition_of_done,
-            vec![crate::domain::task::DodItem { content: "done".to_string(), checked: false }]
-        );
-        assert_eq!(task.tags, vec!["rust"]);
+        assert_eq!(task.title(), "test task");
+        assert_eq!(task.background(), Some("bg"));
+        assert_eq!(task.priority(), crate::domain::task::Priority::P1);
+        assert_eq!(task.definition_of_done().len(), 1);
+        assert_eq!(task.definition_of_done()[0].content(), "done");
+        assert!(!task.definition_of_done()[0].checked());
+        assert_eq!(task.tags(), &["rust"]);
     }
 
     #[tokio::test]
@@ -1404,8 +1383,8 @@ mod tests {
 
         let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
-        assert_eq!(task.title, "file task");
-        assert_eq!(task.priority, crate::domain::task::Priority::P0);
+        assert_eq!(task.title(), "file task");
+        assert_eq!(task.priority(), crate::domain::task::Priority::P0);
     }
 
     #[tokio::test]
@@ -1507,7 +1486,7 @@ mod tests {
         .unwrap();
         let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
-        assert_eq!(task.title, "my task");
+        assert_eq!(task.title(), "my task");
     }
 
     #[tokio::test]
@@ -1558,6 +1537,6 @@ mod tests {
         .unwrap();
         let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
-        assert_eq!(task.title, "json out");
+        assert_eq!(task.title(), "json out");
     }
 }

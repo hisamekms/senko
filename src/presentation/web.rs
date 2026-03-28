@@ -108,7 +108,7 @@ async fn index_handler(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut all_tags: Vec<String> = all_tasks
         .iter()
-        .flat_map(|t| t.tags.iter().cloned())
+        .flat_map(|t| t.tags().iter().cloned())
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
         .collect();
@@ -125,7 +125,7 @@ async fn task_handler(
     let task = state.backend.get_task(1, id).await.map_err(|_| StatusCode::NOT_FOUND)?;
 
     let body = render_task_detail(&task);
-    let title = format!("#{} {}", task.id, escape_html(&task.title));
+    let title = format!("#{} {}", task.id(), escape_html(task.title()));
     Ok(Html(layout(&title, &body)))
 }
 
@@ -144,18 +144,18 @@ fn render_graph_page(tasks: &[Task]) -> String {
     let mut mermaid = String::from("graph TD\n");
 
     for task in tasks {
-        let title = escape_mermaid(&task.title);
-        let priority = task.priority;
+        let title = escape_mermaid(task.title());
+        let priority = task.priority();
         mermaid.push_str(&format!(
             "    node_{}[\"#{} {} ({})\"]\n",
-            task.id, task.id, title, priority
+            task.id(), task.id(), title, priority
         ));
     }
 
     // Dependency edges: dep_id --> task_id
     for task in tasks {
-        for dep in &task.dependencies {
-            mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id));
+        for dep in task.dependencies() {
+            mermaid.push_str(&format!("    node_{} --> node_{}\n", dep, task.id()));
         }
     }
 
@@ -163,7 +163,7 @@ fn render_graph_page(tasks: &[Task]) -> String {
     for task in tasks {
         mermaid.push_str(&format!(
             "    click node_{} \"/tasks/{}\"\n",
-            task.id, task.id
+            task.id(), task.id()
         ));
     }
 
@@ -175,8 +175,8 @@ fn render_graph_page(tasks: &[Task]) -> String {
     let mut canceled = Vec::new();
 
     for task in tasks {
-        let node = format!("node_{}", task.id);
-        match task.status {
+        let node = format!("node_{}", task.id());
+        match task.status() {
             TaskStatus::Completed => completed.push(node),
             TaskStatus::InProgress => in_progress.push(node),
             TaskStatus::Todo => todo.push(node),
@@ -421,14 +421,14 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
     let rows: String = tasks
         .iter()
         .map(|t| {
-            let title = escape_html(&t.title);
-            let status = status_badge(t.status);
-            let priority = priority_badge(t.priority);
-            let created = escape_html(&t.created_at.split('T').next().unwrap_or(&t.created_at));
-            let tags_html = if t.tags.is_empty() {
+            let title = escape_html(t.title());
+            let status = status_badge(t.status());
+            let priority = priority_badge(t.priority());
+            let created = escape_html(&t.created_at().split('T').next().unwrap_or(t.created_at()));
+            let tags_html = if t.tags().is_empty() {
                 String::new()
             } else {
-                t.tags
+                t.tags()
                     .iter()
                     .map(|tag| format!(r#"<span class="tag-pill">{}</span>"#, escape_html(tag)))
                     .collect::<Vec<_>>()
@@ -443,7 +443,7 @@ fn render_task_list(tasks: &[Task], query: &ListQuery, all_tags: &[String]) -> S
 <td>{}</td>
 <td>{}</td>
 </tr>"#,
-                t.id, t.id, title, status, priority, tags_html, created
+                t.id(), t.id(), title, status, priority, tags_html, created
             )
         })
         .collect();
@@ -465,38 +465,38 @@ fn render_task_detail(task: &Task) -> String {
     // Header
     html.push_str(&format!(
         "<h1>#{} {}</h1>",
-        task.id,
-        escape_html(&task.title)
+        task.id(),
+        escape_html(task.title())
     ));
 
     // Meta grid
     html.push_str("<div class=\"meta\">");
-    html.push_str(&meta_item("Status", &status_badge(task.status)));
-    html.push_str(&meta_item("Priority", &priority_badge(task.priority)));
-    html.push_str(&meta_item("Created", &escape_html(&task.created_at)));
-    html.push_str(&meta_item("Updated", &escape_html(&task.updated_at)));
-    if let Some(ref started) = task.started_at {
+    html.push_str(&meta_item("Status", &status_badge(task.status())));
+    html.push_str(&meta_item("Priority", &priority_badge(task.priority())));
+    html.push_str(&meta_item("Created", &escape_html(task.created_at())));
+    html.push_str(&meta_item("Updated", &escape_html(task.updated_at())));
+    if let Some(started) = task.started_at() {
         html.push_str(&meta_item("Started", &escape_html(started)));
     }
-    if let Some(ref completed) = task.completed_at {
+    if let Some(completed) = task.completed_at() {
         html.push_str(&meta_item("Completed", &escape_html(completed)));
     }
-    if let Some(ref canceled) = task.canceled_at {
+    if let Some(canceled) = task.canceled_at() {
         html.push_str(&meta_item("Canceled", &escape_html(canceled)));
     }
-    if let Some(ref session) = task.assignee_session_id {
+    if let Some(session) = task.assignee_session_id() {
         html.push_str(&meta_item("Assignee (session)", &escape_html(session)));
     }
-    if let Some(uid) = task.assignee_user_id {
+    if let Some(uid) = task.assignee_user_id() {
         html.push_str(&meta_item("Assignee (user)", &format!("#{uid}")));
     }
-    if let Some(ref branch) = task.branch {
+    if let Some(branch) = task.branch() {
         html.push_str(&meta_item("Branch", &escape_html(branch)));
     }
     html.push_str("</div>");
 
     // Background
-    if let Some(ref bg) = task.background {
+    if let Some(bg) = task.background() {
         html.push_str("<h2>Background</h2>");
         html.push_str(&format!(
             "<div class=\"section\"><pre>{}</pre></div>",
@@ -505,7 +505,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Description
-    if let Some(ref description) = task.description {
+    if let Some(description) = task.description() {
         html.push_str("<h2>Description</h2>");
         html.push_str(&format!(
             "<div class=\"section markdown\">{}</div>",
@@ -514,7 +514,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Plan
-    if let Some(ref plan) = task.plan {
+    if let Some(plan) = task.plan() {
         html.push_str("<h2>Plan</h2>");
         html.push_str(&format!(
             "<div class=\"section markdown\">{}</div>",
@@ -523,7 +523,7 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Cancel reason
-    if let Some(ref reason) = task.cancel_reason {
+    if let Some(reason) = task.cancel_reason() {
         html.push_str("<h2>Cancel Reason</h2>");
         html.push_str(&format!(
             "<div class=\"section\"><pre>{}</pre></div>",
@@ -532,30 +532,30 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // Definition of Done
-    if !task.definition_of_done.is_empty() {
+    if !task.definition_of_done().is_empty() {
         html.push_str("<h2>Definition of Done</h2>");
         html.push_str("<div class=\"section\">");
-        for (i, item) in task.definition_of_done.iter().enumerate() {
+        for (i, item) in task.definition_of_done().iter().enumerate() {
             html.push_str(&render_dod_item(i + 1, item));
         }
         html.push_str("</div>");
     }
 
     // Tags
-    if !task.tags.is_empty() {
+    if !task.tags().is_empty() {
         html.push_str("<h2>Tags</h2>");
         html.push_str("<ul class=\"tag-list\">");
-        for tag in &task.tags {
+        for tag in task.tags() {
             html.push_str(&format!("<li>{}</li>", escape_html(tag)));
         }
         html.push_str("</ul>");
     }
 
     // Dependencies
-    if !task.dependencies.is_empty() {
+    if !task.dependencies().is_empty() {
         html.push_str("<h2>Dependencies</h2>");
         html.push_str("<div class=\"section\">");
-        for dep in &task.dependencies {
+        for dep in task.dependencies() {
             html.push_str(&format!(
                 "<div><a href=\"/tasks/{dep}\">#{dep}</a></div>"
             ));
@@ -564,20 +564,20 @@ fn render_task_detail(task: &Task) -> String {
     }
 
     // In scope
-    if !task.in_scope.is_empty() {
+    if !task.in_scope().is_empty() {
         html.push_str("<h2>In Scope</h2>");
         html.push_str("<div class=\"section\"><ul>");
-        for item in &task.in_scope {
+        for item in task.in_scope() {
             html.push_str(&format!("<li>{}</li>", escape_html(item)));
         }
         html.push_str("</ul></div>");
     }
 
     // Out of scope
-    if !task.out_of_scope.is_empty() {
+    if !task.out_of_scope().is_empty() {
         html.push_str("<h2>Out of Scope</h2>");
         html.push_str("<div class=\"section\"><ul>");
-        for item in &task.out_of_scope {
+        for item in task.out_of_scope() {
             html.push_str(&format!("<li>{}</li>", escape_html(item)));
         }
         html.push_str("</ul></div>");
@@ -593,14 +593,14 @@ fn meta_item(label: &str, value: &str) -> String {
 }
 
 fn render_dod_item(index: usize, item: &DodItem) -> String {
-    let (class, icon) = if item.checked {
+    let (class, icon) = if item.checked() {
         ("dod-checked", "&#9745;")
     } else {
         ("dod-unchecked", "&#9744;")
     };
     format!(
         r#"<div class="dod-item {class}">{icon} {index}. {}</div>"#,
-        escape_html(&item.content)
+        escape_html(item.content())
     )
 }
 

@@ -196,7 +196,7 @@ impl ProjectRepository for HttpBackend {
         };
         projects
             .into_iter()
-            .find(|p| p.name == name)
+            .find(|p| p.name() == name)
             .ok_or_else(|| anyhow::anyhow!("project not found"))
     }
 
@@ -250,7 +250,7 @@ impl ProjectRepository for HttpBackend {
         };
         users
             .into_iter()
-            .find(|u| u.username == username)
+            .find(|u| u.username() == username)
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
@@ -496,7 +496,7 @@ impl TaskRepository for HttpBackend {
     async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
         let current_deps = self.list_dependencies(project_id, task_id).await?;
         let current_ids: std::collections::HashSet<i64> =
-            current_deps.iter().map(|t| t.id).collect();
+            current_deps.iter().map(|t| t.id()).collect();
         let desired: std::collections::HashSet<i64> = dep_ids.iter().copied().collect();
 
         for id in current_ids.difference(&desired) {
@@ -521,7 +521,7 @@ impl TaskRepository for HttpBackend {
     async fn save(&self, task: &Task) -> Result<()> {
         let resp = self.auth(self
             .client
-            .put(self.project_url(task.project_id, &format!("/tasks/{}", task.id)))
+            .put(self.project_url(task.project_id(), &format!("/tasks/{}", task.id())))
             .json(task))
             .send()
             .await?;

@@ -169,14 +169,14 @@ pub async fn require_project_role(
 
     let allowed = match permission {
         Permission::View => true,
-        Permission::Edit => matches!(member.role, Role::Owner | Role::Member),
-        Permission::Admin => matches!(member.role, Role::Owner),
+        Permission::Edit => matches!(member.role(), Role::Owner | Role::Member),
+        Permission::Admin => matches!(member.role(), Role::Owner),
     };
 
     if !allowed {
         return Err(AuthError::Forbidden(format!(
             "insufficient permissions: {:?} role cannot perform {:?} operations",
-            member.role, permission
+            member.role(), permission
         )));
     }
 

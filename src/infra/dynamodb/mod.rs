@@ -192,7 +192,7 @@ impl DynamoDbBackend {
             }
         }
 
-        tasks.sort_by_key(|t| t.id);
+        tasks.sort_by_key(|t| t.id());
         Ok(tasks)
     }
 
@@ -255,7 +255,7 @@ impl DynamoDbBackend {
 
     async fn get_ready_tasks(&self) -> Result<Vec<Task>> {
         let all = self.scan_all_tasks().await?;
-        let todo_tasks: Vec<&Task> = all.iter().filter(|t| t.status == TaskStatus::Todo).collect();
+        let todo_tasks: Vec<&Task> = all.iter().filter(|t| t.status() == TaskStatus::Todo).collect();
 
         if todo_tasks.is_empty() {
             return Ok(Vec::new());
@@ -263,17 +263,17 @@ impl DynamoDbBackend {
 
         let dep_ids: HashSet<i64> = todo_tasks
             .iter()
-            .flat_map(|t| t.dependencies.iter().copied())
+            .flat_map(|t| t.dependencies().iter().copied())
             .collect();
         let dep_tasks = self.batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>()).await?;
         let dep_status: HashMap<i64, TaskStatus> = dep_tasks
             .into_iter()
-            .map(|t| (t.id, t.status))
+            .map(|t| (t.id(), t.status()))
             .collect();
 
         let mut ready = Vec::new();
         for task in todo_tasks {
-            let all_deps_completed = task.dependencies.iter().all(|dep_id| {
+            let all_deps_completed = task.dependencies().iter().all(|dep_id| {
                 dep_status.get(dep_id).map_or(true, |s| *s == TaskStatus::Completed)
             });
             if all_deps_completed {
@@ -373,7 +373,7 @@ fn opt_dod_list(item: &HashMap<String, AttributeValue>, key: &str) -> Vec<DodIte
                     let m = v.as_m().ok()?;
                     let content = opt_s(m, "content")?;
                     let checked = m.get("checked").and_then(|v| get_bool(v)).unwrap_or(false);
-                    Some(DodItem { content, checked })
+                    Some(DodItem::new(content, checked))
                 })
                 .collect()
         })
@@ -384,63 +384,63 @@ fn opt_dod_list(item: &HashMap<String, AttributeValue>, key: &str) -> Vec<DodIte
 
 fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     let mut item = HashMap::new();
-    let pk = format!("TASK#{}", task.id);
+    let pk = format!("TASK#{}", task.id());
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
-    item.insert("id".into(), AttributeValue::N(task.id.to_string()));
-    item.insert("project_id".into(), AttributeValue::N(task.project_id.to_string()));
-    item.insert("title".into(), AttributeValue::S(task.title.clone()));
-    item.insert("status".into(), AttributeValue::S(task.status.to_string()));
-    item.insert("priority".into(), AttributeValue::N(i32::from(task.priority).to_string()));
-    item.insert("created_at".into(), AttributeValue::S(task.created_at.clone()));
-    item.insert("updated_at".into(), AttributeValue::S(task.updated_at.clone()));
+    item.insert("id".into(), AttributeValue::N(task.id().to_string()));
+    item.insert("project_id".into(), AttributeValue::N(task.project_id().to_string()));
+    item.insert("title".into(), AttributeValue::S(task.title().to_string()));
+    item.insert("status".into(), AttributeValue::S(task.status().to_string()));
+    item.insert("priority".into(), AttributeValue::N(i32::from(task.priority()).to_string()));
+    item.insert("created_at".into(), AttributeValue::S(task.created_at().to_string()));
+    item.insert("updated_at".into(), AttributeValue::S(task.updated_at().to_string()));
 
-    if let Some(ref v) = task.background {
-        item.insert("background".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.background() {
+        item.insert("background".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.description {
-        item.insert("description".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.description() {
+        item.insert("description".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.plan {
-        item.insert("plan".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.plan() {
+        item.insert("plan".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.assignee_session_id {
-        item.insert("assignee_session_id".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.assignee_session_id() {
+        item.insert("assignee_session_id".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(v) = task.assignee_user_id {
+    if let Some(v) = task.assignee_user_id() {
         item.insert("assignee_user_id".into(), AttributeValue::N(v.to_string()));
     }
-    if let Some(ref v) = task.started_at {
-        item.insert("started_at".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.started_at() {
+        item.insert("started_at".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.completed_at {
-        item.insert("completed_at".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.completed_at() {
+        item.insert("completed_at".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.canceled_at {
-        item.insert("canceled_at".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.canceled_at() {
+        item.insert("canceled_at".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.cancel_reason {
-        item.insert("cancel_reason".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.cancel_reason() {
+        item.insert("cancel_reason".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.branch {
-        item.insert("branch".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.branch() {
+        item.insert("branch".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.pr_url {
-        item.insert("pr_url".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = task.pr_url() {
+        item.insert("pr_url".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = task.metadata {
+    if let Some(v) = task.metadata() {
         item.insert("metadata".into(), AttributeValue::S(serde_json::to_string(v).unwrap()));
     }
 
     // Lists
     item.insert(
         "tags".into(),
-        AttributeValue::L(task.tags.iter().map(|t| AttributeValue::S(t.clone())).collect()),
+        AttributeValue::L(task.tags().iter().map(|t| AttributeValue::S(t.clone())).collect()),
     );
     item.insert(
         "dependencies".into(),
         AttributeValue::L(
-            task.dependencies
+            task.dependencies()
                 .iter()
                 .map(|d| AttributeValue::N(d.to_string()))
                 .collect(),
@@ -449,12 +449,12 @@ fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     item.insert(
         "definition_of_done".into(),
         AttributeValue::L(
-            task.definition_of_done
+            task.definition_of_done()
                 .iter()
                 .map(|d| {
                     let mut m = HashMap::new();
-                    m.insert("content".into(), AttributeValue::S(d.content.clone()));
-                    m.insert("checked".into(), AttributeValue::Bool(d.checked));
+                    m.insert("content".into(), AttributeValue::S(d.content().to_string()));
+                    m.insert("checked".into(), AttributeValue::Bool(d.checked()));
                     AttributeValue::M(m)
                 })
                 .collect(),
@@ -462,12 +462,12 @@ fn task_to_item(task: &Task) -> HashMap<String, AttributeValue> {
     );
     item.insert(
         "in_scope".into(),
-        AttributeValue::L(task.in_scope.iter().map(|s| AttributeValue::S(s.clone())).collect()),
+        AttributeValue::L(task.in_scope().iter().map(|s| AttributeValue::S(s.clone())).collect()),
     );
     item.insert(
         "out_of_scope".into(),
         AttributeValue::L(
-            task.out_of_scope
+            task.out_of_scope()
                 .iter()
                 .map(|s| AttributeValue::S(s.clone()))
                 .collect(),
@@ -503,107 +503,107 @@ fn item_to_task(item: &HashMap<String, AttributeValue>) -> Result<Task> {
         .transpose()
         .context("invalid metadata JSON")?;
 
-    Ok(Task {
+    Ok(Task::new(
         id,
         project_id,
         title,
-        background: opt_s(item, "background"),
-        description: opt_s(item, "description"),
-        plan: opt_s(item, "plan"),
+        opt_s(item, "background"),
+        opt_s(item, "description"),
+        opt_s(item, "plan"),
         priority,
         status,
-        assignee_session_id: opt_s(item, "assignee_session_id"),
-        assignee_user_id: opt_n(item, "assignee_user_id"),
+        opt_s(item, "assignee_session_id"),
+        opt_n(item, "assignee_user_id"),
         created_at,
         updated_at,
-        started_at: opt_s(item, "started_at"),
-        completed_at: opt_s(item, "completed_at"),
-        canceled_at: opt_s(item, "canceled_at"),
-        cancel_reason: opt_s(item, "cancel_reason"),
-        branch: opt_s(item, "branch"),
-        pr_url: opt_s(item, "pr_url"),
+        opt_s(item, "started_at"),
+        opt_s(item, "completed_at"),
+        opt_s(item, "canceled_at"),
+        opt_s(item, "cancel_reason"),
+        opt_s(item, "branch"),
+        opt_s(item, "pr_url"),
         metadata,
-        definition_of_done: opt_dod_list(item, "definition_of_done"),
-        in_scope: opt_s_list(item, "in_scope"),
-        out_of_scope: opt_s_list(item, "out_of_scope"),
-        tags: opt_s_list(item, "tags"),
-        dependencies: opt_n_list(item, "dependencies"),
-    })
+        opt_dod_list(item, "definition_of_done"),
+        opt_s_list(item, "in_scope"),
+        opt_s_list(item, "out_of_scope"),
+        opt_s_list(item, "tags"),
+        opt_n_list(item, "dependencies"),
+    ))
 }
 
 fn project_to_item(project: &Project) -> HashMap<String, AttributeValue> {
     let mut item = HashMap::new();
-    let pk = format!("PROJECT#{}", project.id);
+    let pk = format!("PROJECT#{}", project.id());
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
-    item.insert("id".into(), AttributeValue::N(project.id.to_string()));
-    item.insert("name".into(), AttributeValue::S(project.name.clone()));
-    if let Some(ref desc) = project.description {
-        item.insert("description".into(), AttributeValue::S(desc.clone()));
+    item.insert("id".into(), AttributeValue::N(project.id().to_string()));
+    item.insert("name".into(), AttributeValue::S(project.name().to_string()));
+    if let Some(desc) = project.description() {
+        item.insert("description".into(), AttributeValue::S(desc.to_string()));
     }
-    item.insert("created_at".into(), AttributeValue::S(project.created_at.clone()));
+    item.insert("created_at".into(), AttributeValue::S(project.created_at().to_string()));
     item
 }
 
 fn item_to_project(item: &HashMap<String, AttributeValue>) -> Result<Project> {
-    Ok(Project {
-        id: opt_n(item, "id").context("missing id")?,
-        name: req_s(item, "name")?,
-        description: opt_s(item, "description"),
-        created_at: req_s(item, "created_at")?,
-    })
+    Ok(Project::new(
+        opt_n(item, "id").context("missing id")?,
+        req_s(item, "name")?,
+        opt_s(item, "description"),
+        req_s(item, "created_at")?,
+    ))
 }
 
 fn user_to_item(user: &User) -> HashMap<String, AttributeValue> {
     let mut item = HashMap::new();
-    let pk = format!("USER#{}", user.id);
+    let pk = format!("USER#{}", user.id());
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
-    item.insert("id".into(), AttributeValue::N(user.id.to_string()));
-    item.insert("username".into(), AttributeValue::S(user.username.clone()));
-    if let Some(ref v) = user.display_name {
-        item.insert("display_name".into(), AttributeValue::S(v.clone()));
+    item.insert("id".into(), AttributeValue::N(user.id().to_string()));
+    item.insert("username".into(), AttributeValue::S(user.username().to_string()));
+    if let Some(v) = user.display_name() {
+        item.insert("display_name".into(), AttributeValue::S(v.to_string()));
     }
-    if let Some(ref v) = user.email {
-        item.insert("email".into(), AttributeValue::S(v.clone()));
+    if let Some(v) = user.email() {
+        item.insert("email".into(), AttributeValue::S(v.to_string()));
     }
-    item.insert("created_at".into(), AttributeValue::S(user.created_at.clone()));
+    item.insert("created_at".into(), AttributeValue::S(user.created_at().to_string()));
     item
 }
 
 fn item_to_user(item: &HashMap<String, AttributeValue>) -> Result<User> {
-    Ok(User {
-        id: opt_n(item, "id").context("missing id")?,
-        username: req_s(item, "username")?,
-        display_name: opt_s(item, "display_name"),
-        email: opt_s(item, "email"),
-        created_at: req_s(item, "created_at")?,
-    })
+    Ok(User::new(
+        opt_n(item, "id").context("missing id")?,
+        req_s(item, "username")?,
+        opt_s(item, "display_name"),
+        opt_s(item, "email"),
+        req_s(item, "created_at")?,
+    ))
 }
 
 fn member_to_item(member: &ProjectMember) -> HashMap<String, AttributeValue> {
     let mut item = HashMap::new();
-    let pk = format!("PROJMEMBER#{}#{}", member.project_id, member.user_id);
+    let pk = format!("PROJMEMBER#{}#{}", member.project_id(), member.user_id());
     item.insert("PK".into(), AttributeValue::S(pk.clone()));
     item.insert("SK".into(), AttributeValue::S(pk));
-    item.insert("id".into(), AttributeValue::N(member.id.to_string()));
-    item.insert("project_id".into(), AttributeValue::N(member.project_id.to_string()));
-    item.insert("user_id".into(), AttributeValue::N(member.user_id.to_string()));
-    item.insert("role".into(), AttributeValue::S(member.role.to_string()));
-    item.insert("created_at".into(), AttributeValue::S(member.created_at.clone()));
+    item.insert("id".into(), AttributeValue::N(member.id().to_string()));
+    item.insert("project_id".into(), AttributeValue::N(member.project_id().to_string()));
+    item.insert("user_id".into(), AttributeValue::N(member.user_id().to_string()));
+    item.insert("role".into(), AttributeValue::S(member.role().to_string()));
+    item.insert("created_at".into(), AttributeValue::S(member.created_at().to_string()));
     item
 }
 
 fn item_to_member(item: &HashMap<String, AttributeValue>) -> Result<ProjectMember> {
     let role_str = req_s(item, "role")?;
     let role: Role = role_str.parse()?;
-    Ok(ProjectMember {
-        id: opt_n(item, "id").context("missing id")?,
-        project_id: opt_n(item, "project_id").context("missing project_id")?,
-        user_id: opt_n(item, "user_id").context("missing user_id")?,
+    Ok(ProjectMember::new(
+        opt_n(item, "id").context("missing id")?,
+        opt_n(item, "project_id").context("missing project_id")?,
+        opt_n(item, "user_id").context("missing user_id")?,
         role,
-        created_at: req_s(item, "created_at")?,
-    })
+        req_s(item, "created_at")?,
+    ))
 }
 
 #[async_trait]
@@ -613,12 +613,12 @@ impl ProjectRepository for DynamoDbBackend {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
         let id = self.next_id("PROJECT").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let project = Project {
+        let project = Project::new(
             id,
-            name: params.name.clone(),
-            description: params.description.clone(),
-            created_at: now,
-        };
+            params.name.clone(),
+            params.description.clone(),
+            now,
+        );
         self.put_item(project_to_item(&project)).await?;
         Ok(project)
     }
@@ -641,14 +641,14 @@ impl ProjectRepository for DynamoDbBackend {
         let projects = self.list_projects().await?;
         projects
             .into_iter()
-            .find(|p| p.name == name)
+            .find(|p| p.name() == name)
             .ok_or_else(|| anyhow::anyhow!("project not found"))
     }
 
     async fn list_projects(&self) -> Result<Vec<Project>> {
         let items = self.scan_items_by_prefix("PROJECT#").await?;
         let mut projects: Vec<Project> = items.iter().map(|i| item_to_project(i)).collect::<Result<_>>()?;
-        projects.sort_by_key(|p| p.id);
+        projects.sort_by_key(|p| p.id());
         Ok(projects)
     }
 
@@ -673,13 +673,13 @@ impl ProjectRepository for DynamoDbBackend {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let id = self.next_id("USER").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let user = User {
+        let user = User::new(
             id,
-            username: params.username.clone(),
-            display_name: params.display_name.clone(),
-            email: params.email.clone(),
-            created_at: now,
-        };
+            params.username.clone(),
+            params.display_name.clone(),
+            params.email.clone(),
+            now,
+        );
         self.put_item(user_to_item(&user)).await?;
         Ok(user)
     }
@@ -702,14 +702,14 @@ impl ProjectRepository for DynamoDbBackend {
         let users = self.list_users().await?;
         users
             .into_iter()
-            .find(|u| u.username == username)
+            .find(|u| u.username() == username)
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
     async fn list_users(&self) -> Result<Vec<User>> {
         let items = self.scan_items_by_prefix("USER#").await?;
         let mut users: Vec<User> = items.iter().map(|i| item_to_user(i)).collect::<Result<_>>()?;
-        users.sort_by_key(|u| u.id);
+        users.sort_by_key(|u| u.id());
         Ok(users)
     }
 
@@ -731,13 +731,13 @@ impl ProjectRepository for DynamoDbBackend {
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
         let id = self.next_id("MEMBER").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let member = ProjectMember {
+        let member = ProjectMember::new(
             id,
             project_id,
-            user_id: params.user_id,
-            role: params.role,
-            created_at: now,
-        };
+            params.user_id,
+            params.role,
+            now,
+        );
         self.put_item(member_to_item(&member)).await?;
         Ok(member)
     }
@@ -760,7 +760,7 @@ impl ProjectRepository for DynamoDbBackend {
         let prefix = format!("PROJMEMBER#{project_id}#");
         let items = self.scan_items_by_prefix(&prefix).await?;
         let mut members: Vec<ProjectMember> = items.iter().map(|i| item_to_member(i)).collect::<Result<_>>()?;
-        members.sort_by_key(|m| m.id);
+        members.sort_by_key(|m| m.id());
         Ok(members)
     }
 
@@ -780,8 +780,8 @@ impl ProjectRepository for DynamoDbBackend {
     }
 
     async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
-        let mut member = self.get_project_member(project_id, user_id).await?;
-        member.role = role;
+        let member = self.get_project_member(project_id, user_id).await?;
+        let member = ProjectMember::new(member.id(), member.project_id(), member.user_id(), role, member.created_at().to_string());
         self.put_item(member_to_item(&member)).await?;
         Ok(member)
     }
@@ -812,39 +812,36 @@ impl TaskRepository for DynamoDbBackend {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let priority = params.priority.unwrap_or(Priority::P2);
 
-        let task = Task {
+        let task = Task::new(
             id,
             project_id,
-            title: params.title.clone(),
-            background: params.background.clone(),
-            description: params.description.clone(),
-            plan: None,
+            params.title.clone(),
+            params.background.clone(),
+            params.description.clone(),
+            None,
             priority,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: now.clone(),
-            updated_at: now,
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: params.branch.clone(),
-            pr_url: params.pr_url.clone(),
-            metadata: params.metadata.clone(),
-            definition_of_done: params
+            TaskStatus::Draft,
+            None,
+            None,
+            now.clone(),
+            now,
+            None,
+            None,
+            None,
+            None,
+            params.branch.clone(),
+            params.pr_url.clone(),
+            params.metadata.clone(),
+            params
                 .definition_of_done
                 .iter()
-                .map(|c| DodItem {
-                    content: c.clone(),
-                    checked: false,
-                })
+                .map(|c| DodItem::new(c.clone(), false))
                 .collect(),
-            in_scope: params.in_scope.clone(),
-            out_of_scope: params.out_of_scope.clone(),
-            tags: params.tags.clone(),
-            dependencies: params.dependencies.clone(),
-        };
+            params.in_scope.clone(),
+            params.out_of_scope.clone(),
+            params.tags.clone(),
+            params.dependencies.clone(),
+        );
 
         self.put_task(&task).await?;
         Ok(task)
@@ -852,163 +849,25 @@ impl TaskRepository for DynamoDbBackend {
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let task = self.get_task_internal(id).await?;
-        if task.project_id != project_id {
+        if task.project_id() != project_id {
             bail!("task {id} does not belong to project {project_id}");
         }
         Ok(task)
     }
 
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
-        let mut task = self.get_task(project_id, id).await?;
-        let mut changed = false;
-
-        if let Some(ref title) = params.title {
-            task.title = title.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.background {
-            task.background = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.description {
-            task.description = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.plan {
-            task.plan = v.clone();
-            changed = true;
-        }
-        if let Some(p) = params.priority {
-            task.priority = p;
-            changed = true;
-        }
-        if let Some(ref v) = params.assignee_session_id {
-            task.assignee_session_id = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.assignee_user_id {
-            task.assignee_user_id = *v;
-            changed = true;
-        }
-        if let Some(ref v) = params.started_at {
-            task.started_at = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.completed_at {
-            task.completed_at = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.canceled_at {
-            task.canceled_at = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.cancel_reason {
-            task.cancel_reason = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.branch {
-            task.branch = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.pr_url {
-            task.pr_url = v.clone();
-            changed = true;
-        }
-        if let Some(ref v) = params.metadata {
-            task.metadata = v.clone();
-            changed = true;
-        }
-
-        if changed {
-            task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            self.put_task(&task).await?;
-        }
-
+        let task = self.get_task(project_id, id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let task = task.apply_update(params, now);
+        self.put_task(&task).await?;
         Ok(task)
     }
 
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
-        let mut task = self.get_task(project_id, id).await?;
-        let mut changed = false;
-
-        // Tags
-        if let Some(ref set_tags) = params.set_tags {
-            task.tags = set_tags.clone();
-            changed = true;
-        }
-        if !params.add_tags.is_empty() {
-            for tag in &params.add_tags {
-                if !task.tags.contains(tag) {
-                    task.tags.push(tag.clone());
-                }
-            }
-            changed = true;
-        }
-        if !params.remove_tags.is_empty() {
-            task.tags.retain(|t| !params.remove_tags.contains(t));
-            changed = true;
-        }
-
-        // Definition of Done
-        if let Some(ref set_dod) = params.set_definition_of_done {
-            task.definition_of_done = set_dod
-                .iter()
-                .map(|c| DodItem {
-                    content: c.clone(),
-                    checked: false,
-                })
-                .collect();
-            changed = true;
-        }
-        if !params.add_definition_of_done.is_empty() {
-            for item in &params.add_definition_of_done {
-                task.definition_of_done.push(DodItem {
-                    content: item.clone(),
-                    checked: false,
-                });
-            }
-            changed = true;
-        }
-        if !params.remove_definition_of_done.is_empty() {
-            task.definition_of_done
-                .retain(|d| !params.remove_definition_of_done.contains(&d.content));
-            changed = true;
-        }
-
-        // In Scope
-        if let Some(ref set_scope) = params.set_in_scope {
-            task.in_scope = set_scope.clone();
-            changed = true;
-        }
-        if !params.add_in_scope.is_empty() {
-            task.in_scope.extend(params.add_in_scope.clone());
-            changed = true;
-        }
-        if !params.remove_in_scope.is_empty() {
-            task.in_scope.retain(|s| !params.remove_in_scope.contains(s));
-            changed = true;
-        }
-
-        // Out of Scope
-        if let Some(ref set_scope) = params.set_out_of_scope {
-            task.out_of_scope = set_scope.clone();
-            changed = true;
-        }
-        if !params.add_out_of_scope.is_empty() {
-            task.out_of_scope.extend(params.add_out_of_scope.clone());
-            changed = true;
-        }
-        if !params.remove_out_of_scope.is_empty() {
-            task.out_of_scope
-                .retain(|s| !params.remove_out_of_scope.contains(s));
-            changed = true;
-        }
-
-        if changed {
-            task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-            self.put_task(&task).await?;
-        }
-
+        let task = self.get_task(project_id, id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let task = task.apply_array_update(params, now);
+        self.put_task(&task).await?;
         Ok(())
     }
 
@@ -1032,23 +891,23 @@ impl TaskRepository for DynamoDbBackend {
         let mut result: Vec<Task> = all
             .into_iter()
             .filter(|task| {
-                if task.project_id != project_id {
+                if task.project_id() != project_id {
                     return false;
                 }
-                if !filter.statuses.is_empty() && !filter.statuses.contains(&task.status) {
+                if !filter.statuses.is_empty() && !filter.statuses.contains(&task.status()) {
                     return false;
                 }
                 if !filter.tags.is_empty()
-                    && !filter.tags.iter().any(|t| task.tags.contains(t))
+                    && !filter.tags.iter().any(|t| task.tags().contains(t))
                 {
                     return false;
                 }
                 if let Some(dep_id) = filter.depends_on {
-                    if !task.dependencies.contains(&dep_id) {
+                    if !task.dependencies().contains(&dep_id) {
                         return false;
                     }
                 }
-                if filter.ready && task.status != TaskStatus::Todo {
+                if filter.ready && task.status() != TaskStatus::Todo {
                     return false;
                 }
                 true
@@ -1058,16 +917,16 @@ impl TaskRepository for DynamoDbBackend {
         if filter.ready && !result.is_empty() {
             let dep_ids: HashSet<i64> = result
                 .iter()
-                .flat_map(|t| t.dependencies.iter().copied())
+                .flat_map(|t| t.dependencies().iter().copied())
                 .collect();
             let dep_tasks = self
                 .batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>())
                 .await?;
             let dep_status: HashMap<i64, TaskStatus> =
-                dep_tasks.into_iter().map(|t| (t.id, t.status)).collect();
+                dep_tasks.into_iter().map(|t| (t.id(), t.status())).collect();
 
             result.retain(|task| {
-                task.dependencies.iter().all(|dep_id| {
+                task.dependencies().iter().all(|dep_id| {
                     dep_status
                         .get(dep_id)
                         .map_or(true, |s| *s == TaskStatus::Completed)
@@ -1075,7 +934,7 @@ impl TaskRepository for DynamoDbBackend {
             });
         }
 
-        result.sort_by_key(|t| t.id);
+        result.sort_by_key(|t| t.id());
         Ok(result)
     }
 
@@ -1083,7 +942,7 @@ impl TaskRepository for DynamoDbBackend {
         let all = self.scan_all_tasks().await?;
         let todo_tasks: Vec<Task> = all
             .into_iter()
-            .filter(|t| t.project_id == project_id && t.status == TaskStatus::Todo)
+            .filter(|t| t.project_id() == project_id && t.status() == TaskStatus::Todo)
             .collect();
 
         if todo_tasks.is_empty() {
@@ -1092,26 +951,26 @@ impl TaskRepository for DynamoDbBackend {
 
         let dep_ids: HashSet<i64> = todo_tasks
             .iter()
-            .flat_map(|t| t.dependencies.iter().copied())
+            .flat_map(|t| t.dependencies().iter().copied())
             .collect();
         let dep_tasks = self.batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>()).await?;
-        let dep_status: HashMap<i64, TaskStatus> = dep_tasks.into_iter().map(|t| (t.id, t.status)).collect();
+        let dep_status: HashMap<i64, TaskStatus> = dep_tasks.into_iter().map(|t| (t.id(), t.status())).collect();
 
         let mut ready: Vec<Task> = todo_tasks
             .into_iter()
             .filter(|task| {
-                task.dependencies.iter().all(|dep_id| {
+                task.dependencies().iter().all(|dep_id| {
                     dep_status.get(dep_id).map_or(true, |s| *s == TaskStatus::Completed)
                 })
             })
             .collect();
 
         ready.sort_by(|a, b| {
-            let pa = i32::from(a.priority);
-            let pb = i32::from(b.priority);
+            let pa = i32::from(a.priority());
+            let pb = i32::from(b.priority());
             pa.cmp(&pb)
-                .then_with(|| a.created_at.cmp(&b.created_at))
-                .then_with(|| a.id.cmp(&b.id))
+                .then_with(|| a.created_at().cmp(b.created_at()))
+                .then_with(|| a.id().cmp(&b.id()))
         });
 
         Ok(ready.into_iter().next())
@@ -1120,8 +979,8 @@ impl TaskRepository for DynamoDbBackend {
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
         let all = self.scan_all_tasks().await?;
         let mut stats = HashMap::new();
-        for task in all.iter().filter(|t| t.project_id == project_id) {
-            *stats.entry(task.status.to_string()).or_insert(0) += 1;
+        for task in all.iter().filter(|t| t.project_id() == project_id) {
+            *stats.entry(task.status().to_string()).or_insert(0) += 1;
         }
         Ok(stats)
     }
@@ -1142,47 +1001,40 @@ impl TaskRepository for DynamoDbBackend {
     }
 
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let mut task = self.get_task(project_id, task_id).await?;
+        let task = self.get_task(project_id, task_id).await?;
         let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
 
-        if !task.dependencies.contains(&dep_id) {
-            task.dependencies.push(dep_id);
-        }
-
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let task = task.add_dependency(dep_id, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }
 
     async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let mut task = self.get_task(project_id, task_id).await?;
+        let task = self.get_task(project_id, task_id).await?;
 
-        if !task.dependencies.contains(&dep_id) {
-            bail!("dependency not found");
-        }
-
-        task.dependencies.retain(|&d| d != dep_id);
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let task = task.remove_dependency(dep_id, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }
 
     async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let mut task = self.get_task(project_id, task_id).await?;
+        let task = self.get_task(project_id, task_id).await?;
 
         for &dep_id in dep_ids {
             let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
         }
 
-        task.dependencies = dep_ids.to_vec();
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let task = task.set_dependencies(dep_ids, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }
 
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let task = self.get_task(project_id, task_id).await?;
-        self.batch_get_tasks(&task.dependencies).await
+        self.batch_get_tasks(task.dependencies()).await
     }
 
     async fn save(&self, task: &Task) -> Result<()> {

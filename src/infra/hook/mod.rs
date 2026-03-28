@@ -253,8 +253,8 @@ pub async fn build_event(
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
-    let stats = backend.task_stats(task.project_id).await.unwrap_or_default();
-    let ready_count = backend.ready_count(task.project_id).await.unwrap_or(0);
+    let stats = backend.task_stats(task.project_id()).await.unwrap_or_default();
+    let ready_count = backend.ready_count(task.project_id()).await.unwrap_or(0);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
         event: event_name.into(),
@@ -486,13 +486,8 @@ pub async fn compute_unblocked(
     let curr_ready = backend.list_ready_tasks(project_id).await.unwrap_or_default();
     curr_ready
         .iter()
-        .filter(|t| !prev_ready_ids.contains(&t.id))
-        .map(|t| UnblockedTask {
-            id: t.id,
-            title: t.title.clone(),
-            priority: t.priority,
-            metadata: t.metadata.clone(),
-        })
+        .filter(|t| !prev_ready_ids.contains(&t.id()))
+        .map(|t| UnblockedTask::new(t.id(), t.title().to_string(), t.priority(), t.metadata().cloned()))
         .collect()
 }
 
@@ -563,32 +558,14 @@ command = "echo completed"
     #[tokio::test]
     async fn hook_event_serialization() {
         let (_dir, backend) = setup_db();
-        let task = Task {
-            id: 1,
-            project_id: 1,
-            title: "Test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P2,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
         let event = build_event("task_added", &task, &backend, None, None).await;
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"task_added\""));
@@ -604,32 +581,14 @@ command = "echo completed"
     #[tokio::test]
     async fn event_has_valid_uuid_and_timestamp() {
         let (_dir, backend) = setup_db();
-        let task = Task {
-            id: 1,
-            project_id: 1,
-            title: "Test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P2,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(Uuid::parse_str(&event.event_id).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&event.timestamp).is_ok());
@@ -685,8 +644,8 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let mut task = backend.get_task(1, 1).await.unwrap();
-        task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let task = backend.get_task(1, 1).await.unwrap();
+        let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
@@ -717,9 +676,9 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let mut t1 = backend.get_task(1, 1).await.unwrap();
-        t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        t1.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let t1 = backend.get_task(1, 1).await.unwrap();
+        let (t1, _) = t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (t1, _) = t1.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
 
         backend.create_task(
@@ -741,24 +700,24 @@ command = "echo completed"
         )
         .await
         .unwrap();
-        let mut t2 = backend.get_task(1, 2).await.unwrap();
-        t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let t2 = backend.get_task(1, 2).await.unwrap();
+        let (t2, _) = t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
         backend.add_dependency(1, 2, 1).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            backend.list_ready_tasks(1).await.unwrap().iter().map(|t| t.id).collect();
+            backend.list_ready_tasks(1).await.unwrap().iter().map(|t| t.id()).collect();
 
         // Complete task 1
-        let mut t1 = backend.get_task(1, 1).await.unwrap();
-        t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let t1 = backend.get_task(1, 1).await.unwrap();
+        let (t1, _) = t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
 
         let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
         assert_eq!(unblocked.len(), 1);
-        assert_eq!(unblocked[0].id, 2);
-        assert_eq!(unblocked[0].title, "Blocked");
+        assert_eq!(unblocked[0].id(), 2);
+        assert_eq!(unblocked[0].title(), "Blocked");
     }
 
     #[tokio::test]
@@ -782,32 +741,14 @@ command = "echo completed"
         };
 
         let (_db_dir, backend) = setup_db();
-        let task = Task {
-            id: 1,
-            project_id: 1,
-            title: "Test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P2,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
         fire_hooks(&config, "task_added", &task, &backend, None, None).await;
 
         // Give child processes a moment to complete
@@ -821,32 +762,14 @@ command = "echo completed"
     async fn fire_hooks_noop_when_no_commands() {
         let (_db_dir, backend) = setup_db();
         let config = Config::default();
-        let task = Task {
-            id: 1,
-            project_id: 1,
-            title: "Test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P2,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
         // Should not panic
         fire_hooks(&config, "task_added", &task, &backend, None, None).await;
     }
@@ -919,32 +842,14 @@ command = "echo completed"
         };
 
         let (_db_dir, backend) = setup_db();
-        let task = Task {
-            id: 1,
-            project_id: 1,
-            title: "Test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P2,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
 
         // Call execute_hook directly with our log path
         let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
@@ -1054,32 +959,14 @@ on_task_added = "echo added"
         };
 
         let (_db_dir, backend) = setup_db();
-        let task = Task {
-            id: 42,
-            project_id: 1,
-            title: "Hook stdin test".into(),
-            background: None,
-            description: None,
-            plan: None,
-            priority: crate::domain::task::Priority::P1,
-            status: TaskStatus::Draft,
-            assignee_session_id: None,
-            assignee_user_id: None,
-            created_at: "2026-01-01T00:00:00Z".into(),
-            updated_at: "2026-01-01T00:00:00Z".into(),
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: None,
-            pr_url: None,
-            metadata: None,
-            definition_of_done: vec![],
-            in_scope: vec![],
-            out_of_scope: vec![],
-            tags: vec![],
-            dependencies: vec![],
-        };
+        let task = Task::new(
+            42, 1, "Hook stdin test".into(), None, None, None,
+            crate::domain::task::Priority::P1, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
         fire_hooks(&config, "task_added", &task, &backend, None, None).await;
 
         std::thread::sleep(std::time::Duration::from_millis(200));
