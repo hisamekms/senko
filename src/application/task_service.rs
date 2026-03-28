@@ -99,8 +99,8 @@ impl TaskService {
 
     pub async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let mut task = self.backend.get_task(project_id, id).await?;
-        task.ready()?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        task.ready(now)?;
         self.backend.save(&task).await?;
 
         self.hooks
@@ -126,8 +126,7 @@ impl TaskService {
         let mut task = self.backend.get_task(project_id, id).await?;
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.start(session_id, user_id, now.clone())?;
-        task.updated_at = now;
+        task.start(session_id, user_id, now)?;
         self.backend.save(&task).await?;
 
         self.hooks
@@ -161,8 +160,7 @@ impl TaskService {
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.start(session_id, user_id, now.clone())?;
-        task.updated_at = now;
+        task.start(session_id, user_id, now)?;
         self.backend.save(&task).await?;
 
         self.hooks
@@ -185,21 +183,6 @@ impl TaskService {
         skip_pr_check: bool,
     ) -> Result<Task> {
         let mut task = self.backend.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Completed)?;
-
-        // Validate all DoD items are checked
-        let unchecked: Vec<_> = task
-            .definition_of_done
-            .iter()
-            .filter(|d| !d.checked)
-            .collect();
-        if !unchecked.is_empty() {
-            bail!(
-                "cannot complete task #{}: {} unchecked DoD item(s)",
-                id,
-                unchecked.len()
-            );
-        }
 
         // PR workflow checks
         if !skip_pr_check
@@ -229,8 +212,7 @@ impl TaskService {
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.complete(now.clone())?;
-        task.updated_at = now;
+        task.complete(now)?;
         self.backend.save(&task).await?;
 
         // Compute unblocked tasks
@@ -263,8 +245,7 @@ impl TaskService {
         let mut task = self.backend.get_task(project_id, id).await?;
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        task.cancel(now.clone(), reason)?;
-        task.updated_at = now;
+        task.cancel(now, reason)?;
         self.backend.save(&task).await?;
 
         self.hooks
@@ -330,8 +311,8 @@ impl TaskService {
         index: usize,
     ) -> Result<Task> {
         let mut task = self.backend.get_task(project_id, task_id).await?;
-        task.check_dod(index)?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        task.check_dod(index, now)?;
         self.backend.save(&task).await?;
         Ok(task)
     }
@@ -343,8 +324,8 @@ impl TaskService {
         index: usize,
     ) -> Result<Task> {
         let mut task = self.backend.get_task(project_id, task_id).await?;
-        task.uncheck_dod(index)?;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        task.uncheck_dod(index, now)?;
         self.backend.save(&task).await?;
         Ok(task)
     }

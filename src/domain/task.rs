@@ -168,8 +168,9 @@ pub struct Task {
 
 impl Task {
     /// Transition: Draft -> Todo
-    pub fn ready(&mut self) -> anyhow::Result<()> {
+    pub fn ready(&mut self, now: String) -> anyhow::Result<()> {
         self.status = self.status.transition_to(TaskStatus::Todo)?;
+        self.updated_at = now;
         Ok(())
     }
 
@@ -178,13 +179,25 @@ impl Task {
         self.status = self.status.transition_to(TaskStatus::InProgress)?;
         self.assignee_session_id = assignee_session_id;
         self.assignee_user_id = assignee_user_id;
+        self.updated_at = started_at.clone();
         self.started_at = Some(started_at);
         Ok(())
     }
 
     /// Transition: InProgress -> Completed
+    ///
+    /// Validates that all DoD items are checked before allowing completion.
     pub fn complete(&mut self, completed_at: String) -> anyhow::Result<()> {
+        let unchecked_count = self.definition_of_done.iter().filter(|d| !d.checked).count();
+        if unchecked_count > 0 {
+            anyhow::bail!(
+                "cannot complete task #{}: {} unchecked DoD item(s)",
+                self.id,
+                unchecked_count
+            );
+        }
         self.status = self.status.transition_to(TaskStatus::Completed)?;
+        self.updated_at = completed_at.clone();
         self.completed_at = Some(completed_at);
         Ok(())
     }
@@ -192,6 +205,7 @@ impl Task {
     /// Transition: active -> Canceled
     pub fn cancel(&mut self, canceled_at: String, reason: Option<String>) -> anyhow::Result<()> {
         self.status = self.status.transition_to(TaskStatus::Canceled)?;
+        self.updated_at = canceled_at.clone();
         self.canceled_at = Some(canceled_at);
         self.cancel_reason = reason;
         Ok(())
@@ -230,7 +244,7 @@ impl Task {
     }
 
     /// Check a DoD item by 1-based index.
-    pub fn check_dod(&mut self, index: usize) -> anyhow::Result<()> {
+    pub fn check_dod(&mut self, index: usize, now: String) -> anyhow::Result<()> {
         if index == 0 || index > self.definition_of_done.len() {
             anyhow::bail!(
                 "DoD index {} out of range (task #{} has {} DoD item(s))",
@@ -238,11 +252,12 @@ impl Task {
             );
         }
         self.definition_of_done[index - 1].checked = true;
+        self.updated_at = now;
         Ok(())
     }
 
     /// Uncheck a DoD item by 1-based index.
-    pub fn uncheck_dod(&mut self, index: usize) -> anyhow::Result<()> {
+    pub fn uncheck_dod(&mut self, index: usize, now: String) -> anyhow::Result<()> {
         if index == 0 || index > self.definition_of_done.len() {
             anyhow::bail!(
                 "DoD index {} out of range (task #{} has {} DoD item(s))",
@@ -250,6 +265,7 @@ impl Task {
             );
         }
         self.definition_of_done[index - 1].checked = false;
+        self.updated_at = now;
         Ok(())
     }
 }
@@ -496,14 +512,15 @@ mod tests {
     #[test]
     fn task_ready_from_draft() {
         let mut task = make_task(TaskStatus::Draft);
-        assert!(task.ready().is_ok());
+        assert!(task.ready("2026-01-02T00:00:00Z".to_string()).is_ok());
         assert_eq!(task.status, TaskStatus::Todo);
+        assert_eq!(task.updated_at, "2026-01-02T00:00:00Z");
     }
 
     #[test]
     fn task_ready_from_todo_fails() {
         let mut task = make_task(TaskStatus::Todo);
-        assert!(task.ready().is_err());
+        assert!(task.ready("2026-01-02T00:00:00Z".to_string()).is_err());
     }
 
     #[test]
@@ -513,6 +530,7 @@ mod tests {
         assert_eq!(task.status, TaskStatus::InProgress);
         assert_eq!(task.assignee_session_id.as_deref(), Some("session-1"));
         assert_eq!(task.started_at.as_deref(), Some("2026-01-02T00:00:00Z"));
+        assert_eq!(task.updated_at, "2026-01-02T00:00:00Z");
     }
 
     #[test]
@@ -527,6 +545,7 @@ mod tests {
         assert!(task.complete("2026-01-03T00:00:00Z".to_string()).is_ok());
         assert_eq!(task.status, TaskStatus::Completed);
         assert_eq!(task.completed_at.as_deref(), Some("2026-01-03T00:00:00Z"));
+        assert_eq!(task.updated_at, "2026-01-03T00:00:00Z");
     }
 
     #[test]
@@ -536,12 +555,30 @@ mod tests {
     }
 
     #[test]
+    fn task_complete_with_unchecked_dod_fails() {
+        let mut task = make_task_with_dod();
+        let err = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap_err();
+        assert!(err.to_string().contains("unchecked DoD item(s)"));
+        assert_eq!(task.status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn task_complete_with_all_dod_checked() {
+        let mut task = make_task_with_dod();
+        task.check_dod(1, "2026-01-03T00:00:00Z".to_string()).unwrap();
+        task.check_dod(2, "2026-01-03T00:00:00Z".to_string()).unwrap();
+        assert!(task.complete("2026-01-03T00:00:00Z".to_string()).is_ok());
+        assert_eq!(task.status, TaskStatus::Completed);
+    }
+
+    #[test]
     fn task_cancel_from_draft() {
         let mut task = make_task(TaskStatus::Draft);
         assert!(task.cancel("2026-01-04T00:00:00Z".to_string(), Some("not needed".to_string())).is_ok());
         assert_eq!(task.status, TaskStatus::Canceled);
         assert_eq!(task.canceled_at.as_deref(), Some("2026-01-04T00:00:00Z"));
         assert_eq!(task.cancel_reason.as_deref(), Some("not needed"));
+        assert_eq!(task.updated_at, "2026-01-04T00:00:00Z");
     }
 
     #[test]
@@ -549,6 +586,7 @@ mod tests {
         let mut task = make_task(TaskStatus::InProgress);
         assert!(task.cancel("2026-01-04T00:00:00Z".to_string(), None).is_ok());
         assert_eq!(task.status, TaskStatus::Canceled);
+        assert_eq!(task.updated_at, "2026-01-04T00:00:00Z");
     }
 
     #[test]
@@ -622,34 +660,36 @@ mod tests {
     #[test]
     fn task_check_dod() {
         let mut task = make_task_with_dod();
-        assert!(task.check_dod(1).is_ok());
+        assert!(task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).is_ok());
         assert!(task.definition_of_done[0].checked);
         assert!(!task.definition_of_done[1].checked);
+        assert_eq!(task.updated_at, "2026-01-05T00:00:00Z");
     }
 
     #[test]
     fn task_uncheck_dod() {
         let mut task = make_task_with_dod();
         task.definition_of_done[0].checked = true;
-        assert!(task.uncheck_dod(1).is_ok());
+        assert!(task.uncheck_dod(1, "2026-01-05T00:00:00Z".to_string()).is_ok());
         assert!(!task.definition_of_done[0].checked);
+        assert_eq!(task.updated_at, "2026-01-05T00:00:00Z");
     }
 
     #[test]
     fn task_check_dod_index_zero() {
         let mut task = make_task_with_dod();
-        assert!(task.check_dod(0).is_err());
+        assert!(task.check_dod(0, "2026-01-05T00:00:00Z".to_string()).is_err());
     }
 
     #[test]
     fn task_check_dod_index_out_of_range() {
         let mut task = make_task_with_dod();
-        assert!(task.check_dod(3).is_err());
+        assert!(task.check_dod(3, "2026-01-05T00:00:00Z".to_string()).is_err());
     }
 
     #[test]
     fn task_check_dod_empty_list() {
         let mut task = make_task(TaskStatus::InProgress);
-        assert!(task.check_dod(1).is_err());
+        assert!(task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).is_err());
     }
 }

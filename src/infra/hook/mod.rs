@@ -686,8 +686,7 @@ command = "echo completed"
         .await
         .unwrap();
         let mut task = backend.get_task(1, 1).await.unwrap();
-        task.ready().unwrap();
-        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
@@ -719,9 +718,8 @@ command = "echo completed"
         .await
         .unwrap();
         let mut t1 = backend.get_task(1, 1).await.unwrap();
-        t1.ready().unwrap();
+        t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         t1.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
-        t1.updated_at = "2025-01-01T00:00:00Z".to_string();
         backend.save(&t1).await.unwrap();
 
         backend.create_task(
@@ -744,8 +742,7 @@ command = "echo completed"
         .await
         .unwrap();
         let mut t2 = backend.get_task(1, 2).await.unwrap();
-        t2.ready().unwrap();
-        t2.updated_at = "2025-01-01T00:00:00Z".to_string();
+        t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
         backend.add_dependency(1, 2, 1).await.unwrap();
 
@@ -756,7 +753,6 @@ command = "echo completed"
         // Complete task 1
         let mut t1 = backend.get_task(1, 1).await.unwrap();
         t1.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
-        t1.updated_at = "2025-01-01T00:00:00Z".to_string();
         backend.save(&t1).await.unwrap();
 
         let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
