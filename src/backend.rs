@@ -6,7 +6,7 @@ use crate::models::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
 };
 
-pub trait TaskBackend {
+pub trait TaskBackend: Send + Sync {
     fn create_task(&self, params: &CreateTaskParams) -> Result<Task>;
     fn get_task(&self, id: i64) -> Result<Task>;
     fn ready_task(&self, id: i64) -> Result<Task>;
