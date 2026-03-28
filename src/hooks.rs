@@ -21,6 +21,13 @@ pub struct Config {
     pub backend: BackendConfig,
     #[serde(default)]
     pub log: LogConfig,
+    #[serde(default)]
+    pub project: ProjectConfig,
+}
+
+#[derive(Debug, Serialize, Deserialize, Default)]
+pub struct ProjectConfig {
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default)]

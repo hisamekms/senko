@@ -79,6 +79,27 @@ fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
     }
 }
 
+/// Resolve the project ID from CLI flag, config, or default.
+///
+/// Priority: CLI flag / LOCALFLOW_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
+async fn resolve_project_id(
+    backend: &dyn TaskBackend,
+    cli_project: Option<&str>,
+    config: &hooks::Config,
+) -> Result<i64> {
+    let name = cli_project.or(config.project.name.as_deref());
+    match name {
+        Some(n) => {
+            let project = backend
+                .get_project_by_name(n)
+                .await
+                .with_context(|| format!("project not found: {n}"))?;
+            Ok(project.id)
+        }
+        None => Ok(DEFAULT_PROJECT_ID),
+    }
+}
+
 #[derive(Debug, Clone, ValueEnum)]
 enum OutputFormat {
     Json,
@@ -107,6 +128,10 @@ struct Cli {
     /// Override log output directory
     #[arg(long)]
     log_dir: Option<PathBuf>,
+
+    /// Project name to operate on (overrides config; env: LOCALFLOW_PROJECT)
+    #[arg(long, env = "LOCALFLOW_PROJECT")]
+    project: Option<String>,
 
     #[command(subcommand)]
     command: Command,
@@ -491,99 +516,91 @@ async fn run(cli: Cli) -> Result<()> {
             from_json_file.clone(),
         ).await,
         Command::List {
-            status,
-            tag,
-            depends_on,
+            ref status,
+            ref tag,
+            ref depends_on,
             ready,
-        } => cmd_list(
-            &cli.output,
-            cli.project_root.as_deref(),
-            cli.config.as_deref(),
-            status,
-            tag,
-            depends_on,
-            ready,
-        ).await,
-        Command::Get { task_id } => {
-            cmd_get(&cli.output, cli.project_root.as_deref(), cli.config.as_deref(), task_id).await
-        }
+        } => cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready).await,
+        Command::Get { task_id } => cmd_get(&cli, task_id).await,
         Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()).await,
         Command::Ready { id } => cmd_ready(&cli, id).await,
         Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()).await,
         Command::Edit {
             id,
-            title,
-            background,
+            ref title,
+            ref background,
             clear_background,
-            description,
+            ref description,
             clear_description,
-            plan,
+            ref plan,
             clear_plan,
-            priority,
-            branch,
+            ref priority,
+            ref branch,
             clear_branch,
-            pr_url,
+            ref pr_url,
             clear_pr_url,
-            metadata,
+            ref metadata,
             clear_metadata,
-            set_tags,
-            set_definition_of_done,
-            set_in_scope,
-            set_out_of_scope,
-            add_tag,
-            add_definition_of_done,
-            add_in_scope,
-            add_out_of_scope,
-            remove_tag,
-            remove_definition_of_done,
-            remove_in_scope,
-            remove_out_of_scope,
+            ref set_tags,
+            ref set_definition_of_done,
+            ref set_in_scope,
+            ref set_out_of_scope,
+            ref add_tag,
+            ref add_definition_of_done,
+            ref add_in_scope,
+            ref add_out_of_scope,
+            ref remove_tag,
+            ref remove_definition_of_done,
+            ref remove_in_scope,
+            ref remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
             let (backend, _) = create_backend(&project_root, cli.config.as_deref())?;
+            let config = load_config_with_cli(&project_root, &cli)?;
+            let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
             // Verify task exists (even in dry-run)
-            let _task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+            let _task = backend.get_task(project_id, id).await?;
 
             if dry_run {
                 let mut operations = Vec::new();
-                if let Some(ref t) = title {
+                if let Some(t) = title {
                     operations.push(format!("Update task #{}: set title to \"{}\"", id, t));
                 }
                 if clear_background {
                     operations.push(format!("Update task #{}: clear background", id));
-                } else if let Some(ref bg) = background {
+                } else if let Some(bg) = background {
                     operations.push(format!("Update task #{}: set background to \"{}\"", id, bg));
                 }
                 if clear_description {
                     operations.push(format!("Update task #{}: clear description", id));
-                } else if let Some(ref desc) = description {
+                } else if let Some(desc) = description {
                     operations.push(format!("Update task #{}: set description to \"{}\"", id, desc));
                 }
                 if clear_plan {
                     operations.push(format!("Update task #{}: clear plan", id));
-                } else if let Some(ref p) = plan {
+                } else if let Some(p) = plan {
                     operations.push(format!("Update task #{}: set plan to \"{}\"", id, p));
                 }
-                if let Some(ref p) = priority {
+                if let Some(p) = priority {
                     operations.push(format!("Update task #{}: set priority to {}", id, p));
                 }
                 if clear_branch {
                     operations.push(format!("Update task #{}: clear branch", id));
-                } else if let Some(ref b) = branch {
+                } else if let Some(b) = branch {
                     operations.push(format!("Update task #{}: set branch to \"{}\"", id, b));
                 }
                 if clear_pr_url {
                     operations.push(format!("Update task #{}: clear pr_url", id));
-                } else if let Some(ref url) = pr_url {
+                } else if let Some(url) = pr_url {
                     operations.push(format!("Update task #{}: set pr_url to \"{}\"", id, url));
                 }
                 if clear_metadata {
                     operations.push(format!("Update task #{}: clear metadata", id));
-                } else if let Some(ref m) = metadata {
+                } else if let Some(m) = metadata {
                     operations.push(format!("Update task #{}: set metadata to {}", id, m));
                 }
-                if let Some(ref tags) = set_tags {
+                if let Some(tags) = set_tags {
                     operations.push(format!("Update task #{}: set tags to [{}]", id, tags.join(", ")));
                 }
                 if !add_tag.is_empty() {
@@ -601,27 +618,27 @@ async fn run(cli: Cli) -> Result<()> {
             let branch_value = if clear_branch {
                 Some(None)
             } else {
-                branch.map(|b| Some(expand_branch_template(&b, id)))
+                branch.as_ref().map(|b| Some(expand_branch_template(b, id)))
             };
 
             let scalar_params = UpdateTaskParams {
-                title,
+                title: title.clone(),
                 background: if clear_background {
                     Some(None)
                 } else {
-                    background.map(Some)
+                    background.clone().map(Some)
                 },
                 description: if clear_description {
                     Some(None)
                 } else {
-                    description.map(Some)
+                    description.clone().map(Some)
                 },
                 plan: if clear_plan {
                     Some(None)
                 } else {
-                    plan.map(Some)
+                    plan.clone().map(Some)
                 },
-                priority,
+                priority: priority.clone(),
                 assignee_session_id: None,
                 started_at: None,
                 completed_at: None,
@@ -631,14 +648,14 @@ async fn run(cli: Cli) -> Result<()> {
                 pr_url: if clear_pr_url {
                     Some(None)
                 } else {
-                    pr_url.map(Some)
+                    pr_url.clone().map(Some)
                 },
                 metadata: if clear_metadata {
                     Some(None)
                 } else {
                     match metadata {
                         Some(m) => {
-                            let val: serde_json::Value = serde_json::from_str(&m)
+                            let val: serde_json::Value = serde_json::from_str(m)
                                 .context("invalid JSON for --metadata")?;
                             Some(Some(val))
                         }
@@ -648,23 +665,23 @@ async fn run(cli: Cli) -> Result<()> {
             };
 
             let array_params = UpdateTaskArrayParams {
-                set_tags,
-                add_tags: add_tag,
-                remove_tags: remove_tag,
-                set_definition_of_done,
-                add_definition_of_done,
-                remove_definition_of_done,
-                set_in_scope,
-                add_in_scope,
-                remove_in_scope,
-                set_out_of_scope,
-                add_out_of_scope,
-                remove_out_of_scope,
+                set_tags: set_tags.clone(),
+                add_tags: add_tag.clone(),
+                remove_tags: remove_tag.clone(),
+                set_definition_of_done: set_definition_of_done.clone(),
+                add_definition_of_done: add_definition_of_done.clone(),
+                remove_definition_of_done: remove_definition_of_done.clone(),
+                set_in_scope: set_in_scope.clone(),
+                add_in_scope: add_in_scope.clone(),
+                remove_in_scope: remove_in_scope.clone(),
+                set_out_of_scope: set_out_of_scope.clone(),
+                add_out_of_scope: add_out_of_scope.clone(),
+                remove_out_of_scope: remove_out_of_scope.clone(),
             };
 
-            backend.update_task(DEFAULT_PROJECT_ID, id, &scalar_params).await?;
-            backend.update_task_arrays(DEFAULT_PROJECT_ID, id, &array_params).await?;
-            let task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+            backend.update_task(project_id, id, &scalar_params).await?;
+            backend.update_task_arrays(project_id, id, &array_params).await?;
+            let task = backend.get_task(project_id, id).await?;
 
             match cli.output {
                 OutputFormat::Json => {
@@ -750,6 +767,8 @@ async fn cmd_add(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -839,10 +858,10 @@ async fn cmd_add(
         let branch_template = params.branch.clone();
         let mut params_without_branch = params;
         params_without_branch.branch = None;
-        let created = backend.create_task(DEFAULT_PROJECT_ID, &params_without_branch).await?;
+        let created = backend.create_task(project_id, &params_without_branch).await?;
         let expanded = expand_branch_template(branch_template.as_deref().unwrap(), created.id);
         backend.update_task(
-            DEFAULT_PROJECT_ID,
+            project_id,
             created.id,
             &UpdateTaskParams {
                 title: None,
@@ -861,11 +880,10 @@ async fn cmd_add(
             },
         ).await?
     } else {
-        backend.create_task(DEFAULT_PROJECT_ID, &params).await?
+        backend.create_task(project_id, &params).await?
     };
 
     // Fire hooks
-    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None).await;
     }
@@ -887,16 +905,16 @@ fn expand_branch_template(branch: &str, task_id: i64) -> String {
 }
 
 async fn cmd_list(
-    output: &OutputFormat,
-    project_root: Option<&std::path::Path>,
-    config_path: Option<&std::path::Path>,
+    cli: &Cli,
     status: Vec<String>,
     tag: Vec<String>,
     depends_on: Option<i64>,
     ready: bool,
 ) -> Result<()> {
-    let root = resolve_project_root(project_root)?;
-    let (backend, _) = create_backend(&root, config_path)?;
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
     let statuses = status
         .into_iter()
@@ -911,9 +929,9 @@ async fn cmd_list(
         ready,
     };
 
-    let tasks = backend.list_tasks(DEFAULT_PROJECT_ID, &filter).await?;
+    let tasks = backend.list_tasks(project_id, &filter).await?;
 
-    match output {
+    match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&tasks)?);
         }
@@ -929,17 +947,14 @@ async fn cmd_list(
     Ok(())
 }
 
-async fn cmd_get(
-    output: &OutputFormat,
-    project_root: Option<&std::path::Path>,
-    config_path: Option<&std::path::Path>,
-    task_id: i64,
-) -> Result<()> {
-    let root = resolve_project_root(project_root)?;
-    let (backend, _) = create_backend(&root, config_path)?;
-    let task = backend.get_task(DEFAULT_PROJECT_ID, task_id).await?;
+async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let task = backend.get_task(project_id, task_id).await?;
 
-    match output {
+    match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&task)?);
         }
@@ -1017,8 +1032,10 @@ async fn cmd_get(
 async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+    let task = backend.get_task(project_id, id).await?;
 
     if cli.dry_run {
         let operations = vec![
@@ -1027,10 +1044,9 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let updated = backend.ready_task(DEFAULT_PROJECT_ID, id).await?;
+    let updated = backend.ready_task(project_id, id).await?;
 
     // Fire hooks
-    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_ready", &updated, &*backend,
@@ -1053,8 +1069,10 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+    let task = backend.get_task(project_id, id).await?;
 
     if cli.dry_run {
         let mut operations = vec![
@@ -1068,10 +1086,9 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()>
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.start_task(DEFAULT_PROJECT_ID, id, session_id, &now).await?;
+    let updated = backend.start_task(project_id, id, session_id, &now).await?;
 
     // Fire hooks
-    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1094,13 +1111,14 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()>
 async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = match backend.next_task(DEFAULT_PROJECT_ID).await? {
+    let task = match backend.next_task(project_id).await? {
         Some(t) => t,
         None => {
-            let config = load_config_with_cli(&root, cli)?;
             if should_fire_client_hooks(&config, using_http) {
-                hooks::fire_no_eligible_task_hooks(&config, &*backend, DEFAULT_PROJECT_ID).await;
+                hooks::fire_no_eligible_task_hooks(&config, &*backend, project_id).await;
             }
             anyhow::bail!("no eligible task found");
         }
@@ -1124,11 +1142,10 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         task
     } else {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        backend.start_task(DEFAULT_PROJECT_ID, task.id, session_id, &now).await?
+        backend.start_task(project_id, task.id, session_id, &now).await?
     };
 
     // Fire hooks
-    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
@@ -1152,8 +1169,9 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+    let task = backend.get_task(project_id, id).await?;
     task.status.transition_to(TaskStatus::Completed)?;
 
     let unchecked: Vec<_> = task
@@ -1194,15 +1212,15 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
     // Capture ready tasks before completion for unblocked detection
     let prev_ready_ids: std::collections::HashSet<i64> =
-        backend.list_ready_tasks(DEFAULT_PROJECT_ID).await?.iter().map(|t| t.id).collect();
+        backend.list_ready_tasks(project_id).await?.iter().map(|t| t.id).collect();
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.complete_task(DEFAULT_PROJECT_ID, id, &now).await?;
+    let updated = backend.complete_task(project_id, id, &now).await?;
 
     // Fire hooks with unblocked tasks
     if should_fire_client_hooks(&config, using_http) {
-        let unblocked = hooks::compute_unblocked(&*backend, DEFAULT_PROJECT_ID, &prev_ready_ids).await;
+        let unblocked = hooks::compute_unblocked(&*backend, project_id, &prev_ready_ids).await;
         let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
         hooks::fire_hooks(
             &config, "task_completed", &updated, &*backend,
@@ -1274,8 +1292,10 @@ fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
 async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
-    let task = backend.get_task(DEFAULT_PROJECT_ID, id).await?;
+    let task = backend.get_task(project_id, id).await?;
     task.status.transition_to(TaskStatus::Canceled)?;
 
     if cli.dry_run {
@@ -1290,10 +1310,9 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.cancel_task(DEFAULT_PROJECT_ID, id, &now, reason).await?;
+    let updated = backend.cancel_task(project_id, id, &now, reason).await?;
 
     // Fire hooks
-    let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
         hooks::fire_hooks(
             &config, "task_canceled", &updated, &*backend,
@@ -1337,6 +1356,9 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 
 [log]
 # dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/localflow)
+
+[project]
+# name = "default"  # project name to operate on (overrides with --project flag or LOCALFLOW_PROJECT env)
 "#;
 
 async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
@@ -1408,13 +1430,14 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             }
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = hooks::load_config(&root, cli.config.as_deref())?;
+            let config = load_config_with_cli(&root, cli)?;
             let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+            let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
-                let stats = backend.task_stats(DEFAULT_PROJECT_ID).await.unwrap_or_default();
-                let ready_count = backend.ready_count(DEFAULT_PROJECT_ID).await.unwrap_or(0);
+                let stats = backend.task_stats(project_id).await.unwrap_or_default();
+                let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
                 let event = hooks::NoEligibleTaskEvent {
                     event_id: uuid::Uuid::new_v4().to_string(),
                     event: "no_eligible_task".into(),
@@ -1456,12 +1479,12 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {
-                backend.get_task(DEFAULT_PROJECT_ID, *id).await?
+                backend.get_task(project_id, *id).await?
             } else {
                 use localflow::models::{Priority, TaskStatus};
                 Task {
                     id: 0,
-                    project_id: DEFAULT_PROJECT_ID,
+                    project_id,
                     title: "Sample task".into(),
                     background: None,
                     description: Some("This is a sample task for hook testing".into()),
@@ -1646,6 +1669,11 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
                 None => println!("    api_url: (none, using SQLite)"),
             }
             println!("    hook_mode: {:?}", config.backend.hook_mode);
+            println!("  [project]");
+            match config.project.name {
+                Some(ref name) => println!("    name: {name}"),
+                None => println!("    name: (none, using default)"),
+            }
         }
     }
 
@@ -1655,6 +1683,8 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1670,7 +1700,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.check_dod(DEFAULT_PROJECT_ID, task_id, index).await?;
+            let task = backend.check_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1692,7 +1722,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.uncheck_dod(DEFAULT_PROJECT_ID, task_id, index).await?;
+            let task = backend.uncheck_dod(project_id, task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1715,6 +1745,8 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
 async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
     match command {
         DepsCommand::Add { task_id, on } => {
@@ -1723,7 +1755,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
             }
-            let task = backend.add_dependency(DEFAULT_PROJECT_ID, task_id, on).await?;
+            let task = backend.add_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
@@ -1735,7 +1767,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
             }
-            let task = backend.remove_dependency(DEFAULT_PROJECT_ID, task_id, on).await?;
+            let task = backend.remove_dependency(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
@@ -1748,7 +1780,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
             }
-            let task = backend.set_dependencies(DEFAULT_PROJECT_ID, task_id, on).await?;
+            let task = backend.set_dependencies(project_id, task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1763,7 +1795,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
-            let deps = backend.list_dependencies(DEFAULT_PROJECT_ID, *task_id).await?;
+            let deps = backend.list_dependencies(project_id, *task_id).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
@@ -2082,6 +2114,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2141,6 +2174,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2191,6 +2225,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2239,6 +2274,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2287,6 +2323,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -2608,6 +2645,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
                 yes: false,
@@ -2631,6 +2669,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2670,6 +2709,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: false,
@@ -2705,6 +2745,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2755,6 +2796,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -2779,6 +2821,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            project: None,
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,
