@@ -9,7 +9,8 @@ use super::{
 };
 use crate::bootstrap::{
     create_backend, create_hook_executor, create_project_service, create_task_service,
-    create_user_service, load_config_with_overrides, resolve_project_id, DEFAULT_PROJECT_ID,
+    create_user_service, load_config_with_overrides, resolve_project_id, resolve_user_id,
+    DEFAULT_PROJECT_ID,
 };
 use crate::hooks;
 use crate::models::{
@@ -300,6 +301,10 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let user_id = match user_id {
+        Some(id) => Some(id),
+        None => Some(resolve_user_id(&*backend, cli.user.as_deref(), &config).await?),
+    };
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -336,6 +341,10 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let user_id = match user_id {
+        Some(id) => Some(id),
+        None => Some(resolve_user_id(&*backend, cli.user.as_deref(), &config).await?),
+    };
 
     if cli.dry_run {
         let hook_executor = create_hook_executor(config, using_http);
@@ -1316,6 +1325,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1376,6 +1386,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1427,6 +1438,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1476,6 +1488,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: Command::Add {
                 title: None,
                 background: None,
@@ -1525,6 +1538,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: Command::Add {
                 title: None,
                 background: None,

@@ -45,6 +45,10 @@ pub struct Cli {
     #[arg(long, env = "LOCALFLOW_PROJECT")]
     pub project: Option<String>,
 
+    /// User name to operate as (overrides config; env: LOCALFLOW_USER)
+    #[arg(long, env = "LOCALFLOW_USER")]
+    pub user: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -444,6 +448,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 
 [project]
 # name = "default"  # project name to operate on (overrides with --project flag or LOCALFLOW_PROJECT env)
+
+[user]
+# name = "default"  # user name to operate as (overrides with --user flag or LOCALFLOW_USER env)
 "#;
 
 pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {

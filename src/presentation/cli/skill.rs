@@ -146,6 +146,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
                 yes: false,
@@ -170,6 +171,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -210,6 +212,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: None,
                 yes: false,
@@ -246,6 +249,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -297,6 +301,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: None,
                 yes: true,
@@ -322,6 +327,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             project: None,
+            user: None,
             command: super::super::Command::SkillInstall {
                 output_dir: None,
                 yes: true,
