@@ -12,8 +12,14 @@ name = "localflow-dynamodb"
 path = "src/main.rs"
 required-features = ["dynamodb"]
 
+[[bin]]
+name = "localflow-postgres"
+path = "src/main.rs"
+required-features = ["postgres"]
+
 [features]
 dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config"]
+postgres = ["dep:sqlx"]
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive", "env"] }
@@ -37,6 +43,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 sha2 = "0.10"
 aws-sdk-dynamodb = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
+sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres"] }
 
 [dev-dependencies]
 tempfile = "3"

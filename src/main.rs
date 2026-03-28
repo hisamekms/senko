@@ -83,7 +83,27 @@ fn create_backend(
         }
     }
 
-    // 4. Default: SqliteBackend
+    // 4. PostgreSQL backend (via env var or config)
+    #[cfg(feature = "postgres")]
+    {
+        use localflow::infra::postgres::PostgresBackend;
+
+        let url_from_env = std::env::var("LOCALFLOW_POSTGRES_URL")
+            .ok()
+            .filter(|s| !s.is_empty());
+
+        let url = match (&url_from_env, &config.backend.postgres) {
+            (Some(u), _) => Some(u.clone()),
+            (None, Some(pg_config)) => pg_config.url.clone(),
+            _ => None,
+        };
+
+        if let Some(database_url) = url {
+            return Ok((Arc::new(PostgresBackend::new(database_url)), false));
+        }
+    }
+
+    // 5. Default: SqliteBackend
     Ok((Arc::new(db::SqliteBackend::new(project_root, db_path, config.storage.db_path.as_deref())?), false))
 }
 
