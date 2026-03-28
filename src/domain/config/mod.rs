@@ -18,6 +18,8 @@ pub struct Config {
     pub user: UserConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -62,6 +64,11 @@ fn default_log_level() -> String {
 pub struct DynamoDbConfig {
     pub table_name: Option<String>,
     pub region: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageConfig {
+    pub db_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -189,6 +196,8 @@ pub struct RawConfig {
     pub user: UserConfig,
     #[serde(default)]
     pub auth: RawAuthConfig,
+    #[serde(default)]
+    pub storage: StorageConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -248,6 +257,9 @@ impl RawConfig {
             auth: RawAuthConfig {
                 enabled: overlay.auth.enabled.or(self.auth.enabled),
             },
+            storage: StorageConfig {
+                db_path: overlay.storage.db_path.or(self.storage.db_path),
+            },
         }
     }
 
@@ -276,6 +288,7 @@ impl RawConfig {
             auth: AuthConfig {
                 enabled: self.auth.enabled.unwrap_or(false),
             },
+            storage: self.storage,
         }
     }
 }

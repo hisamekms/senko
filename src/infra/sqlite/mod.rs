@@ -240,17 +240,100 @@ pub fn current_schema_version(conn: &Connection) -> Result<i64> {
     Ok(version.unwrap_or(0))
 }
 
-fn open_db(project_root: &Path) -> Result<Connection> {
-    let localflow_dir = project_root.join(".localflow");
-    std::fs::create_dir_all(&localflow_dir)?;
+/// Resolve the XDG data directory path for the database.
+/// Returns `$XDG_DATA_HOME/localflow/data.db` or `~/.local/share/localflow/data.db`.
+fn xdg_data_db_path() -> Option<std::path::PathBuf> {
+    let data_dir = std::env::var("XDG_DATA_HOME")
+        .map(std::path::PathBuf::from)
+        .ok()
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| std::path::PathBuf::from(h).join(".local").join("share"))
+        })?;
+    Some(data_dir.join("localflow").join("data.db"))
+}
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&localflow_dir, std::fs::Permissions::from_mode(0o700))?;
+/// Resolve the database path with the following priority (high → low):
+/// 1. `explicit_db_path` (CLI --db-path or LOCALFLOW_DB_PATH env)
+/// 2. `config_db_path` (config.toml [storage] db_path)
+/// 3. Legacy migration: `.localflow/data.db` exists → copy to XDG path
+/// 4. XDG default: `$XDG_DATA_HOME/localflow/data.db`
+fn resolve_db_path(
+    project_root: &Path,
+    explicit_db_path: Option<&Path>,
+    config_db_path: Option<&str>,
+) -> Result<std::path::PathBuf> {
+    // 1. CLI / env var
+    if let Some(p) = explicit_db_path {
+        return Ok(p.to_path_buf());
     }
 
-    let db_path = localflow_dir.join("data.db");
+    // 2. config.toml [storage] db_path
+    if let Some(p) = config_db_path {
+        return Ok(std::path::PathBuf::from(p));
+    }
+
+    // 3 & 4. Legacy migration or XDG default
+    let legacy_path = project_root.join(".localflow").join("data.db");
+    let xdg_path = xdg_data_db_path()
+        .ok_or_else(|| anyhow::anyhow!("cannot determine XDG_DATA_HOME or HOME directory"))?;
+
+    if xdg_path.exists() {
+        // Already migrated
+        return Ok(xdg_path);
+    }
+
+    if legacy_path.exists() {
+        // Migrate: copy legacy → XDG
+        if let Some(parent) = xdg_path.parent() {
+            std::fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+            }
+        }
+        std::fs::copy(&legacy_path, &xdg_path)?;
+        // Also copy WAL and SHM files if they exist
+        let legacy_wal = legacy_path.with_extension("db-wal");
+        let legacy_shm = legacy_path.with_extension("db-shm");
+        if legacy_wal.exists() {
+            std::fs::copy(&legacy_wal, xdg_path.with_extension("db-wal"))?;
+        }
+        if legacy_shm.exists() {
+            std::fs::copy(&legacy_shm, xdg_path.with_extension("db-shm"))?;
+        }
+        eprintln!(
+            "warning: migrated database from {} to {}. \
+             The original file has been kept. You can remove it after verifying the migration.",
+            legacy_path.display(),
+            xdg_path.display()
+        );
+        return Ok(xdg_path);
+    }
+
+    // New installation: use XDG default
+    Ok(xdg_path)
+}
+
+fn open_db(
+    project_root: &Path,
+    explicit_db_path: Option<&Path>,
+    config_db_path: Option<&str>,
+) -> Result<Connection> {
+    let db_path = resolve_db_path(project_root, explicit_db_path, config_db_path)?;
+
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
     let conn = Connection::open(&db_path)?;
 
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -1325,8 +1408,12 @@ pub struct SqliteBackend {
 }
 
 impl SqliteBackend {
-    pub fn new(project_root: &Path) -> Result<Self> {
-        let conn = open_db(project_root)?;
+    pub fn new(
+        project_root: &Path,
+        explicit_db_path: Option<&Path>,
+        config_db_path: Option<&str>,
+    ) -> Result<Self> {
+        let conn = open_db(project_root, explicit_db_path, config_db_path)?;
         Ok(Self {
             conn: Arc::new(std::sync::Mutex::new(conn)),
         })
@@ -1545,7 +1632,8 @@ mod tests {
 
     fn setup() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
-        let conn = open_db(tmp.path()).unwrap();
+        let db_path = tmp.path().join("data.db");
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
         (tmp, conn)
     }
 
@@ -1598,10 +1686,11 @@ mod tests {
     }
 
     #[test]
-    fn creates_db_and_directory() {
+    fn creates_db_at_explicit_path() {
         let tmp = tempfile::tempdir().unwrap();
-        let conn = open_db(tmp.path()).unwrap();
-        assert!(tmp.path().join(".localflow/data.db").exists());
+        let db_path = tmp.path().join("custom.db");
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
+        assert!(db_path.exists());
         drop(conn);
     }
 
@@ -1657,9 +1746,10 @@ mod tests {
     #[test]
     fn idempotent_open() {
         let tmp = tempfile::tempdir().unwrap();
-        let _conn1 = open_db(tmp.path()).unwrap();
+        let db_path = tmp.path().join("data.db");
+        let _conn1 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
         drop(_conn1);
-        let _conn2 = open_db(tmp.path()).unwrap();
+        let _conn2 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
     }
 
     #[test]
@@ -2663,8 +2753,8 @@ mod tests {
 
         drop(conn);
 
-        // Open via open_db which runs migrations
-        let conn = open_db(tmp.path()).unwrap();
+        // Open via open_db which runs migrations (using explicit path to the legacy location)
+        let conn = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
@@ -2698,11 +2788,12 @@ mod tests {
     #[test]
     fn migration_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
-        let conn1 = open_db(tmp.path()).unwrap();
+        let db_path = tmp.path().join("data.db");
+        let conn1 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
         let v1 = current_schema_version(&conn1).unwrap();
         drop(conn1);
 
-        let conn2 = open_db(tmp.path()).unwrap();
+        let conn2 = open_db(tmp.path(), Some(db_path.as_path()), None).unwrap();
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 

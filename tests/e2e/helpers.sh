@@ -33,8 +33,9 @@ cleanup_test_env() {
 }
 
 # Run localflow with --project-root pointed at test directory
+# Also sets --db-path to keep the database inside the test directory
 run_lf() {
-  "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" "$@"
+  "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" "$@"
 }
 
 # --- Assertion functions ---

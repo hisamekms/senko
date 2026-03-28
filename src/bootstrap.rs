@@ -21,6 +21,7 @@ pub const DEFAULT_USER_ID: i64 = 1;
 pub fn create_backend(
     project_root: &Path,
     config_path: Option<&Path>,
+    db_path: Option<&Path>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
@@ -75,7 +76,7 @@ pub fn create_backend(
     }
 
     // 4. Default: SqliteBackend
-    Ok((Arc::new(crate::infra::sqlite::SqliteBackend::new(project_root)?), false))
+    Ok((Arc::new(crate::infra::sqlite::SqliteBackend::new(project_root, db_path, config.storage.db_path.as_deref())?), false))
 }
 
 pub fn load_config_with_overrides(

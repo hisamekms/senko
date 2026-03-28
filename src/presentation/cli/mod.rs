@@ -42,6 +42,10 @@ pub struct Cli {
     #[arg(long)]
     pub log_dir: Option<PathBuf>,
 
+    /// Path to SQLite database file (env: LOCALFLOW_DB_PATH)
+    #[arg(long, env = "LOCALFLOW_DB_PATH")]
+    pub db_path: Option<PathBuf>,
+
     /// Project name to operate on (overrides config; env: LOCALFLOW_PROJECT)
     #[arg(long, env = "LOCALFLOW_PROJECT")]
     pub project: Option<String>,
@@ -455,6 +459,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # api_url = "http://127.0.0.1:3142"  # uncomment to use HTTP backend
 # hook_mode = "server"  # "server" (default), "client", or "both"
 
+[storage]
+# db_path = "/custom/path/to/data.db"  # override SQLite database path (default: $XDG_DATA_HOME/localflow/data.db)
+
 [log]
 # dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/localflow)
 
@@ -586,7 +593,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
+            let config = crate::infra::hook::load_config(&root, cli.config.as_deref())?;
+            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
             crate::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
@@ -595,7 +603,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
+            let config = crate::infra::hook::load_config(&root, cli.config.as_deref())?;
+            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
             crate::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }

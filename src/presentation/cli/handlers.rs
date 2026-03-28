@@ -44,7 +44,7 @@ pub async fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -149,7 +149,7 @@ pub async fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -186,7 +186,7 @@ pub async fn cmd_list(
 
 pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task = backend.get_task(project_id, task_id).await?;
@@ -271,7 +271,7 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 
 pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -301,7 +301,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let user_id = match user_id {
@@ -341,7 +341,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
 
 pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let user_id = match user_id {
@@ -410,7 +410,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
 
 pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -440,7 +440,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
 
 pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -618,7 +618,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+            let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
             let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
             // no_eligible_task uses a different event structure (no task object)
@@ -803,7 +803,7 @@ pub async fn cmd_edit(
     remove_out_of_scope: &[String],
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&project_root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&project_root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &project_root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -969,7 +969,7 @@ pub async fn cmd_edit(
 
 pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
@@ -1032,7 +1032,7 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
 
 pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let config = load_config(cli, &root)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
@@ -1100,7 +1100,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 
 pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -1156,7 +1156,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 
 pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let user_service = create_user_service(backend);
 
     match action {
@@ -1214,7 +1214,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -1305,6 +1305,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: Some(tmp.path().join("data.db")),
             project: None,
             user: None,
             command: Command::Add {
@@ -1342,7 +1343,7 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
@@ -1366,6 +1367,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: Some(tmp.path().join("data.db")),
             project: None,
             user: None,
             command: Command::Add {
@@ -1403,7 +1405,7 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "file task");
         assert_eq!(task.priority, crate::domain::task::Priority::P0);
@@ -1418,6 +1420,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: Some(tmp.path().join("data.db")),
             project: None,
             user: None,
             command: Command::Add {
@@ -1468,6 +1471,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: Some(tmp.path().join("data.db")),
             project: None,
             user: None,
             command: Command::Add {
@@ -1504,7 +1508,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "my task");
     }
@@ -1518,6 +1522,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: Some(tmp.path().join("data.db")),
             project: None,
             user: None,
             command: Command::Add {
@@ -1554,7 +1559,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "json out");
     }

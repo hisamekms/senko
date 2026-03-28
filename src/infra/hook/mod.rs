@@ -509,7 +509,7 @@ mod tests {
 
     fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
         let dir = tempfile::tempdir().unwrap();
-        let backend = SqliteBackend::new(dir.path()).unwrap();
+        let backend = SqliteBackend::new(dir.path(), Some(&dir.path().join("data.db")), None).unwrap();
         (dir, backend)
     }
 

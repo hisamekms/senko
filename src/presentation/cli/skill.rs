@@ -145,6 +145,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -170,6 +171,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -211,6 +213,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -248,6 +251,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -300,6 +304,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -326,6 +331,7 @@ mod tests {
             config: None,
             dry_run: false,
             log_dir: None,
+            db_path: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
