@@ -11,12 +11,13 @@ use axum::Router;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::db;
+use crate::backend::TaskBackend;
 use crate::models::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
 struct AppState {
     project_root: Arc<PathBuf>,
+    backend: Arc<dyn TaskBackend>,
 }
 
 #[derive(serde::Deserialize)]
@@ -27,9 +28,10 @@ struct ListQuery {
     tag: Vec<String>,
 }
 
-pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>) -> Result<()> {
+pub async fn serve(project_root: PathBuf, port: u16, host: Option<String>, backend: Arc<dyn TaskBackend>) -> Result<()> {
     let state = AppState {
         project_root: Arc::new(project_root),
+        backend,
     };
 
     let app = Router::new()
@@ -71,12 +73,11 @@ async fn index_handler(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     let status_filter = query.status.clone();
     let tag_filter = query.tag.clone();
 
     let tasks = tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let statuses = status_filter
             .iter()
             .filter(|s| !s.is_empty())
@@ -89,16 +90,15 @@ async fn index_handler(
             tags,
             ..Default::default()
         };
-        db::list_tasks(&conn, &filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
+        backend.list_tasks(&filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
 
     // Collect all tags from all tasks (unfiltered) for the filter UI
-    let root2 = state.project_root.clone();
+    let backend2 = state.backend.clone();
     let all_tags = tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root2).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let all_tasks = db::list_tasks(&conn, &crate::models::ListTasksFilter::default())
+        let all_tasks = backend2.list_tasks(&crate::models::ListTasksFilter::default())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         let mut tags: Vec<String> = all_tasks
             .iter()
@@ -120,11 +120,10 @@ async fn task_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, StatusCode> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
 
     let task = tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        db::get_task(&conn, id).map_err(|_| StatusCode::NOT_FOUND)
+        backend.get_task(id).map_err(|_| StatusCode::NOT_FOUND)
     })
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
@@ -137,11 +136,10 @@ async fn task_handler(
 async fn graph_handler(
     State(state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
 
     let tasks = tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        db::list_tasks(&conn, &crate::models::ListTasksFilter::default())
+        backend.list_tasks(&crate::models::ListTasksFilter::default())
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
     })
     .await

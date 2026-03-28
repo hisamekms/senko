@@ -660,9 +660,9 @@ fn run(cli: Cli) -> Result<()> {
                 .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let _ = db::SqliteBackend::new(&root)?; // web always uses SQLite directly
+            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::web::serve(root, effective_port, host))?;
+            rt.block_on(localflow::web::serve(root, effective_port, host, backend))?;
             Ok(())
         }
         Command::Serve { port, host } => {
