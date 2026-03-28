@@ -146,6 +146,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -172,6 +173,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -214,6 +216,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -252,6 +255,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -305,6 +309,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {
@@ -332,6 +337,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             user: None,
             command: super::super::Command::SkillInstall {

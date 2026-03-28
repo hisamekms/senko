@@ -30,6 +30,8 @@ fn create_backend(
     project_root: &std::path::Path,
     config_path: Option<&std::path::Path>,
     db_path: Option<&std::path::Path>,
+    #[cfg_attr(not(feature = "postgres"), allow(unused_variables))]
+    postgres_url: Option<&str>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
@@ -83,20 +85,22 @@ fn create_backend(
         }
     }
 
-    // 4. PostgreSQL backend (via env var or config)
+    // 4. PostgreSQL backend (via CLI arg, env var, or config)
     #[cfg(feature = "postgres")]
     {
         use localflow::infra::postgres::PostgresBackend;
 
-        let url_from_env = std::env::var("LOCALFLOW_POSTGRES_URL")
-            .ok()
-            .filter(|s| !s.is_empty());
-
-        let url = match (&url_from_env, &config.backend.postgres) {
-            (Some(u), _) => Some(u.clone()),
-            (None, Some(pg_config)) => pg_config.url.clone(),
-            _ => None,
-        };
+        // Priority: CLI --postgres-url > LOCALFLOW_POSTGRES_URL env > config.toml
+        let url = postgres_url
+            .map(|s| s.to_string())
+            .or_else(|| {
+                std::env::var("LOCALFLOW_POSTGRES_URL")
+                    .ok()
+                    .filter(|s| !s.is_empty())
+            })
+            .or_else(|| {
+                config.backend.postgres.as_ref().and_then(|pg| pg.url.clone())
+            });
 
         if let Some(database_url) = url {
             return Ok((Arc::new(PostgresBackend::new(database_url)), false));
@@ -198,6 +202,10 @@ struct Cli {
     /// Path to SQLite database file (env: LOCALFLOW_DB_PATH)
     #[arg(long, env = "LOCALFLOW_DB_PATH")]
     db_path: Option<PathBuf>,
+
+    /// PostgreSQL connection URL (env: LOCALFLOW_POSTGRES_URL)
+    #[arg(long, env = "LOCALFLOW_POSTGRES_URL")]
+    postgres_url: Option<String>,
 
     /// Project name to operate on (overrides config; env: LOCALFLOW_PROJECT)
     #[arg(long, env = "LOCALFLOW_PROJECT")]
@@ -684,7 +692,7 @@ async fn run(cli: Cli) -> Result<()> {
             ref remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            let (backend, _) = create_backend(&project_root, cli.config.as_deref(), cli.db_path.as_deref())?;
+            let (backend, _) = create_backend(&project_root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
             let config = load_config_with_cli(&project_root, &cli)?;
             let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -900,7 +908,7 @@ async fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1005,7 +1013,7 @@ async fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1042,7 +1050,7 @@ async fn cmd_list(
 
 async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task = backend.get_task(project_id, task_id).await?;
@@ -1127,7 +1135,7 @@ async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 
 async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1157,7 +1165,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1193,7 +1201,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
 
 async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1258,7 +1266,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
 
 async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1288,7 +1296,7 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
 async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
@@ -1429,7 +1437,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config_with_cli(&root, cli)?;
-            let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+            let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
             let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
 
             // no_eligible_task uses a different event structure (no task object)
@@ -1659,7 +1667,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
@@ -1722,7 +1730,7 @@ fn print_dod_items(items: &[localflow::domain::task::DodItem]) {
 
 async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
     let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
@@ -1915,7 +1923,7 @@ fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()
 
 async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -1971,7 +1979,7 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 
 async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let user_service = create_user_service(backend);
 
     match action {
@@ -2029,7 +2037,7 @@ async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 
 async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref())?;
+    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -2229,6 +2237,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::Add {
                 title: None,
@@ -2290,6 +2299,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::Add {
                 title: None,
@@ -2342,6 +2352,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::Add {
                 title: None,
@@ -2392,6 +2403,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::Add {
                 title: None,
@@ -2442,6 +2454,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::Add {
                 title: None,
@@ -2765,6 +2778,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: Some(dir.path().to_path_buf()),
@@ -2790,6 +2804,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2831,6 +2846,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2868,6 +2884,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2920,6 +2937,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: None,
@@ -2946,6 +2964,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            postgres_url: None,
             project: None,
             command: Command::SkillInstall {
                 output_dir: None,
