@@ -6,14 +6,15 @@ use serde_json::json;
 
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 use crate::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
-    ListTasksFilter, Project, ProjectMember, Role, Task, UpdateTaskArrayParams, UpdateTaskParams,
-    User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
+    CreateUserParams, ListTasksFilter, Project, ProjectMember, Role, Task, UpdateTaskArrayParams,
+    UpdateTaskParams, User,
 };
 
 pub struct HttpBackend {
     base_url: String,
     client: reqwest::Client,
+    api_key: Option<String>,
 }
 
 impl HttpBackend {
@@ -25,7 +26,14 @@ impl HttpBackend {
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
+            api_key: None,
         }
+    }
+
+    pub fn with_api_key(base_url: &str, api_key: String) -> Self {
+        let mut backend = Self::new(base_url);
+        backend.api_key = Some(api_key);
+        backend
     }
 
     fn url(&self, path: &str) -> String {
@@ -34,6 +42,13 @@ impl HttpBackend {
 
     fn project_url(&self, project_id: i64, path: &str) -> String {
         format!("{}/api/v1/projects/{project_id}{path}", self.base_url)
+    }
+
+    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        match &self.api_key {
+            Some(key) => builder.bearer_auth(key),
+            None => builder,
+        }
     }
 }
 
@@ -149,19 +164,19 @@ fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
 #[async_trait]
 impl ProjectRepository for HttpBackend {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.url("/api/v1/projects"))
-            .json(params)
+            .json(params))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn get_project(&self, id: i64) -> Result<Project> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.url(&format!("/api/v1/projects/{id}")))
+            .get(self.url(&format!("/api/v1/projects/{id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -169,9 +184,9 @@ impl ProjectRepository for HttpBackend {
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         let projects: Vec<Project> = {
-            let resp = self
+            let resp = self.auth(self
                 .client
-                .get(self.url("/api/v1/projects"))
+                .get(self.url("/api/v1/projects")))
                 .send()
                 .await?;
             read_json_or_error(resp).await?
@@ -183,18 +198,18 @@ impl ProjectRepository for HttpBackend {
     }
 
     async fn list_projects(&self) -> Result<Vec<Project>> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.url("/api/v1/projects"))
+            .get(self.url("/api/v1/projects")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn delete_project(&self, id: i64) -> Result<()> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .delete(self.url(&format!("/api/v1/projects/{id}")))
+            .delete(self.url(&format!("/api/v1/projects/{id}"))))
             .send()
             .await?;
         check_success(resp).await
@@ -203,19 +218,19 @@ impl ProjectRepository for HttpBackend {
     // User management
 
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.url("/api/v1/users"))
-            .json(params)
+            .json(params))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn get_user(&self, id: i64) -> Result<User> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.url(&format!("/api/v1/users/{id}")))
+            .get(self.url(&format!("/api/v1/users/{id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -223,9 +238,9 @@ impl ProjectRepository for HttpBackend {
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         let users: Vec<User> = {
-            let resp = self
+            let resp = self.auth(self
                 .client
-                .get(self.url("/api/v1/users"))
+                .get(self.url("/api/v1/users")))
                 .send()
                 .await?;
             read_json_or_error(resp).await?
@@ -237,18 +252,18 @@ impl ProjectRepository for HttpBackend {
     }
 
     async fn list_users(&self) -> Result<Vec<User>> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.url("/api/v1/users"))
+            .get(self.url("/api/v1/users")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn delete_user(&self, id: i64) -> Result<()> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .delete(self.url(&format!("/api/v1/users/{id}")))
+            .delete(self.url(&format!("/api/v1/users/{id}"))))
             .send()
             .await?;
         check_success(resp).await
@@ -261,40 +276,35 @@ impl ProjectRepository for HttpBackend {
         project_id: i64,
         params: &AddProjectMemberParams,
     ) -> Result<ProjectMember> {
-        let resp = self
-            .client
-            .post(self.project_url(project_id, "/members"))
-            .json(&json!({
-                "user_id": params.user_id,
-                "role": params.role,
-            }))
-            .send()
-            .await?;
+        let resp = self.auth(
+            self.client.post(self.project_url(project_id, "/members"))
+                .json(&json!({ "user_id": params.user_id, "role": params.role }))
+        ).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .delete(self.project_url(project_id, &format!("/members/{user_id}")))
+            .delete(self.project_url(project_id, &format!("/members/{user_id}"))))
             .send()
             .await?;
         check_success(resp).await
     }
 
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.project_url(project_id, "/members"))
+            .get(self.project_url(project_id, "/members")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.project_url(project_id, &format!("/members/{user_id}")))
+            .get(self.project_url(project_id, &format!("/members/{user_id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -306,41 +316,67 @@ impl ProjectRepository for HttpBackend {
         user_id: i64,
         role: Role,
     ) -> Result<ProjectMember> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .put(self.project_url(project_id, &format!("/members/{user_id}")))
-            .json(&json!({ "role": role }))
+            .json(&json!({ "role": role })))
             .send()
             .await?;
         read_json_or_error(resp).await
+    }
+
+    // API key management
+
+    async fn create_api_key(&self, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+        let resp = self.auth(
+            self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
+                .json(&json!({ "name": name }))
+        ).send().await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_user_by_api_key(&self, _key: &str) -> Result<User> {
+        bail!("get_user_by_api_key is not supported via HTTP backend")
+    }
+
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+        let resp = self.auth(self.client.get(self.url(&format!("/api/v1/users/{user_id}/api-keys"))))
+            .send().await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
+        let resp = self.auth(self.client.delete(self.url(&format!("/api/v1/users/0/api-keys/{key_id}"))))
+            .send().await?;
+        check_success(resp).await
     }
 }
 
 #[async_trait]
 impl TaskRepository for HttpBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.project_url(project_id, "/tasks"))
-            .json(params)
+            .json(params))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.project_url(project_id, &format!("/tasks/{id}")))
+            .get(self.project_url(project_id, &format!("/tasks/{id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .post(self.project_url(project_id, &format!("/tasks/{id}/ready")))
+            .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -354,33 +390,28 @@ impl TaskRepository for HttpBackend {
         assignee_user_id: Option<i64>,
         _started_at: &str,
     ) -> Result<Task> {
-        let resp = self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
-            .json(&json!({
-                "session_id": assignee_session_id,
-                "user_id": assignee_user_id,
-            }))
-            .send()
-            .await?;
+        let resp = self.auth(
+            self.client.post(self.project_url(project_id, &format!("/tasks/{id}/start")))
+                .json(&json!({ "session_id": assignee_session_id, "user_id": assignee_user_id }))
+        ).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn complete_task(&self, project_id: i64, id: i64, _completed_at: &str) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
-            .json(&json!({}))
+            .json(&json!({})))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn cancel_task(&self, project_id: i64, id: i64, _canceled_at: &str, reason: Option<String>) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
-            .json(&json!({ "reason": reason }))
+            .json(&json!({ "reason": reason })))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -388,10 +419,10 @@ impl TaskRepository for HttpBackend {
 
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let body = update_params_to_json(params);
-        let resp = self
+        let resp = self.auth(self
             .client
             .put(self.project_url(project_id, &format!("/tasks/{id}")))
-            .json(&body)
+            .json(&body))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -399,10 +430,10 @@ impl TaskRepository for HttpBackend {
 
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
         let body = array_params_to_json(params);
-        let resp = self
+        let resp = self.auth(self
             .client
             .put(self.project_url(project_id, &format!("/tasks/{id}")))
-            .json(&body)
+            .json(&body))
             .send()
             .await?;
         read_json_or_error::<Task>(resp).await?;
@@ -410,9 +441,9 @@ impl TaskRepository for HttpBackend {
     }
 
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .delete(self.project_url(project_id, &format!("/tasks/{id}")))
+            .delete(self.project_url(project_id, &format!("/tasks/{id}"))))
             .send()
             .await?;
         check_success(resp).await
@@ -439,15 +470,15 @@ impl TaskRepository for HttpBackend {
             url = format!("{url}?{}", params.join("&"));
         }
 
-        let resp = self.client.get(&url).send().await?;
+        let resp = self.auth(self.client.get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.project_url(project_id, "/tasks/next"))
-            .json(&json!({}))
+            .json(&json!({})))
             .send()
             .await?;
         if resp.status() == reqwest::StatusCode::NOT_FOUND {
@@ -461,9 +492,9 @@ impl TaskRepository for HttpBackend {
     }
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.project_url(project_id, "/stats"))
+            .get(self.project_url(project_id, "/stats")))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -485,19 +516,19 @@ impl TaskRepository for HttpBackend {
     }
 
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
             .post(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
-            .json(&json!({ "dep_id": dep_id }))
+            .json(&json!({ "dep_id": dep_id })))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .delete(self.project_url(project_id, &format!("/tasks/{task_id}/deps/{dep_id}")))
+            .delete(self.project_url(project_id, &format!("/tasks/{task_id}/deps/{dep_id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -520,27 +551,27 @@ impl TaskRepository for HttpBackend {
     }
 
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
+            .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps"))))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check")))
+            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check"))))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
     async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        let resp = self
+        let resp = self.auth(self
             .client
-            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck")))
+            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck"))))
             .send()
             .await?;
         read_json_or_error(resp).await

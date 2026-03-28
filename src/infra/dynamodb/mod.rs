@@ -9,9 +9,9 @@ use tokio::sync::OnceCell;
 
 use crate::backend::TaskBackend;
 use crate::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams, DodItem,
-    ListTasksFilter, Priority, Project, ProjectMember, Role, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
+    CreateUserParams, DodItem, ListTasksFilter, Priority, Project, ProjectMember, Role, Task,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, User,
 };
 
 pub struct DynamoDbBackend {
@@ -803,6 +803,24 @@ impl TaskBackend for DynamoDbBackend {
         member.role = role;
         self.put_item(member_to_item(&member)).await?;
         Ok(member)
+    }
+
+    // API key management (not yet implemented for DynamoDB)
+
+    async fn create_api_key(&self, _user_id: i64, _name: &str) -> Result<ApiKeyWithSecret> {
+        bail!("API key management is not yet supported for DynamoDB backend")
+    }
+
+    async fn get_user_by_api_key(&self, _key: &str) -> Result<User> {
+        bail!("API key authentication is not yet supported for DynamoDB backend")
+    }
+
+    async fn list_api_keys(&self, _user_id: i64) -> Result<Vec<ApiKey>> {
+        bail!("API key management is not yet supported for DynamoDB backend")
+    }
+
+    async fn delete_api_key(&self, _key_id: i64) -> Result<()> {
+        bail!("API key management is not yet supported for DynamoDB backend")
     }
 
     // Task CRUD

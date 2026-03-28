@@ -3,11 +3,13 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
+use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams, DodItem,
-    ListTasksFilter, Priority, Project, ProjectMember, Role, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams, User,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
+    CreateUserParams, DodItem, ListTasksFilter, Priority, Project, ProjectMember, Role, Task,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, User,
 };
 
 struct Migration {
@@ -126,6 +128,25 @@ const MIGRATIONS: &[Migration] = &[
             CREATE INDEX idx_project_members_user_id ON project_members(user_id);
 
             ALTER TABLE tasks ADD COLUMN assignee_user_id INTEGER REFERENCES users(id);
+        ",
+    },
+    Migration {
+        version: 4,
+        name: "add_api_keys",
+        sql: "
+            CREATE TABLE api_keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                key_prefix TEXT NOT NULL,
+                name TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now')),
+                last_used_at TEXT,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX idx_api_keys_key_hash ON api_keys(key_hash);
+            CREATE INDEX idx_api_keys_user_id ON api_keys(user_id);
         ",
     },
 ];
@@ -445,6 +466,88 @@ fn delete_user(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM users WHERE id = ?1", rusqlite::params![id])?;
     if affected == 0 {
         anyhow::bail!("user not found: {id}");
+    }
+    Ok(())
+}
+
+// --- API Key CRUD ---
+
+fn hash_api_key(key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn create_api_key(conn: &Connection, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+    get_user(conn, user_id)?;
+
+    let raw_key = format!("lf_{}", Uuid::new_v4().simple());
+    let key_hash = hash_api_key(&raw_key);
+    let key_prefix = raw_key[..11].to_string();
+
+    conn.execute(
+        "INSERT INTO api_keys (user_id, key_hash, key_prefix, name) VALUES (?1, ?2, ?3, ?4)",
+        params![user_id, key_hash, key_prefix, name],
+    )?;
+    let id = conn.last_insert_rowid();
+    let created_at: String = conn.query_row(
+        "SELECT created_at FROM api_keys WHERE id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+
+    Ok(ApiKeyWithSecret {
+        id,
+        user_id,
+        key: raw_key,
+        key_prefix: key_prefix.clone(),
+        name: name.to_string(),
+        created_at,
+    })
+}
+
+fn get_user_by_api_key(conn: &Connection, key: &str) -> Result<User> {
+    let key_hash = hash_api_key(key);
+
+    conn.execute(
+        "UPDATE api_keys SET last_used_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE key_hash = ?1",
+        params![key_hash],
+    )?;
+
+    let (user_id,): (i64,) = conn
+        .query_row(
+            "SELECT user_id FROM api_keys WHERE key_hash = ?1",
+            params![key_hash],
+            |row| Ok((row.get(0)?,)),
+        )
+        .context("invalid api key")?;
+
+    get_user(conn, user_id)
+}
+
+fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, user_id, key_prefix, name, created_at, last_used_at FROM api_keys WHERE user_id = ?1 ORDER BY id",
+    )?;
+    let keys = stmt
+        .query_map(params![user_id], |row| {
+            Ok(ApiKey {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                key_prefix: row.get(2)?,
+                name: row.get(3)?,
+                created_at: row.get(4)?,
+                last_used_at: row.get(5)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(keys)
+}
+
+fn delete_api_key(conn: &Connection, key_id: i64) -> Result<()> {
+    let affected = conn.execute("DELETE FROM api_keys WHERE id = ?1", params![key_id])?;
+    if affected == 0 {
+        anyhow::bail!("api key not found: {key_id}");
     }
     Ok(())
 }
@@ -1419,6 +1522,26 @@ impl ProjectRepository for SqliteBackend {
 
     async fn update_member_role(&self, project_id: i64, user_id: i64, role: Role) -> Result<ProjectMember> {
         blocking!(self, |conn: &Connection| update_member_role(conn, project_id, user_id, role))
+    }
+
+    // API key management
+
+    async fn create_api_key(&self, user_id: i64, name: &str) -> Result<ApiKeyWithSecret> {
+        let name = name.to_owned();
+        blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name))
+    }
+
+    async fn get_user_by_api_key(&self, key: &str) -> Result<User> {
+        let key = key.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key))
+    }
+
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+        blocking!(self, |conn: &Connection| list_api_keys(conn, user_id))
+    }
+
+    async fn delete_api_key(&self, key_id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_api_key(conn, key_id))
     }
 }
 
@@ -2588,7 +2711,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     #[test]
@@ -2683,7 +2806,7 @@ mod tests {
 
         // Version should be 2 (legacy v1 + add_projects v2)
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2727,7 +2850,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
     }
 
     #[test]
@@ -2871,7 +2994,6 @@ mod tests {
         assert_eq!(by_name.id, proj.id);
 
         let list = backend.list_projects().await.unwrap();
-        // default project + our new one
         assert!(list.len() >= 1);
 
         backend.delete_project(proj.id).await.unwrap();
@@ -2958,7 +3080,6 @@ mod tests {
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id, t1.id);
 
-        // t2 is blocked, should not appear in next
         let next = backend.next_task(1).await.unwrap();
         assert!(next.is_none() || next.unwrap().id == t1.id);
 
