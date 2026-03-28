@@ -102,10 +102,6 @@ fn classify_error(e: anyhow::Error) -> ApiError {
     }
 }
 
-fn join_error(e: tokio::task::JoinError) -> ApiError {
-    ApiError::Internal(format!("task join error: {e}"))
-}
-
 // --- Request types ---
 
 #[derive(Deserialize)]
@@ -305,25 +301,20 @@ async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<ListTasksQuery>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let statuses: Vec<TaskStatus> = query
-            .status
-            .iter()
-            .map(|s| s.parse::<TaskStatus>())
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(classify_error)?;
-        let filter = ListTasksFilter {
-            statuses,
-            tags: query.tag,
-            depends_on: query.depends_on,
-            ready: query.ready.unwrap_or(false),
-        };
-        let tasks = backend.list_tasks(&filter).map_err(classify_error)?;
-        Ok(Json(tasks))
-    })
-    .await
-    .map_err(join_error)?
+    let statuses: Vec<TaskStatus> = query
+        .status
+        .iter()
+        .map(|s| s.parse::<TaskStatus>())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(classify_error)?;
+    let filter = ListTasksFilter {
+        statuses,
+        tags: query.tag,
+        depends_on: query.depends_on,
+        ready: query.ready.unwrap_or(false),
+    };
+    let tasks = state.backend.list_tasks(&filter).await.map_err(classify_error)?;
+    Ok(Json(tasks))
 }
 
 // POST /api/v1/tasks
@@ -331,55 +322,49 @@ async fn create_task(
     State(state): State<AppState>,
     Json(params): Json<CreateTaskParams>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
-    tokio::task::spawn_blocking(move || {
-        // Handle branch template expansion
-        let needs_template = params
-            .branch
-            .as_ref()
-            .is_some_and(|b| b.contains("${task_id}"));
+    // Handle branch template expansion
+    let needs_template = params
+        .branch
+        .as_ref()
+        .is_some_and(|b| b.contains("${task_id}"));
 
-        let task = if needs_template {
-            let branch_template = params.branch.clone();
-            let mut params_without_branch = params;
-            params_without_branch.branch = None;
-            let created =
-                backend.create_task(&params_without_branch).map_err(classify_error)?;
-            let expanded =
-                branch_template.as_deref().unwrap().replace("${task_id}", &created.id.to_string());
-            backend.update_task(
-                created.id,
-                &UpdateTaskParams {
-                    title: None,
-                    background: None,
-                    description: None,
-                    plan: None,
-                    priority: None,
-                    assignee_session_id: None,
-                    started_at: None,
-                    completed_at: None,
-                    canceled_at: None,
-                    cancel_reason: None,
-                    branch: Some(Some(expanded)),
-                    pr_url: None,
-                    metadata: None,
-                },
-            )
-            .map_err(classify_error)?
-        } else {
-            backend.create_task(&params).map_err(classify_error)?
-        };
+    let task = if needs_template {
+        let branch_template = params.branch.clone();
+        let mut params_without_branch = params;
+        params_without_branch.branch = None;
+        let created =
+            state.backend.create_task(&params_without_branch).await.map_err(classify_error)?;
+        let expanded =
+            branch_template.as_deref().unwrap().replace("${task_id}", &created.id.to_string());
+        state.backend.update_task(
+            created.id,
+            &UpdateTaskParams {
+                title: None,
+                background: None,
+                description: None,
+                plan: None,
+                priority: None,
+                assignee_session_id: None,
+                started_at: None,
+                completed_at: None,
+                canceled_at: None,
+                cancel_reason: None,
+                branch: Some(Some(expanded)),
+                pr_url: None,
+                metadata: None,
+            },
+        )
+        .await
+        .map_err(classify_error)?
+    } else {
+        state.backend.create_task(&params).await.map_err(classify_error)?
+    };
 
-        // Fire hooks
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(&config, "task_added", &task, backend.as_ref(), None, None);
+    // Fire hooks
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    hooks::fire_hooks(&config, "task_added", &task, state.backend.as_ref(), None, None).await;
 
-        Ok((StatusCode::CREATED, Json(task)))
-    })
-    .await
-    .map_err(join_error)?
+    Ok((StatusCode::CREATED, Json(task)))
 }
 
 // GET /api/v1/tasks/{id}
@@ -387,13 +372,8 @@ async fn get_task(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.get_task(id).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // PUT /api/v1/tasks/{id}
@@ -402,73 +382,68 @@ async fn edit_task(
     Path(id): Path<i64>,
     Json(body): Json<EditTaskBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let branch_value = if body.clear_branch {
+    let branch_value = if body.clear_branch {
+        Some(None)
+    } else {
+        body.branch
+            .map(|b| Some(b.replace("${task_id}", &id.to_string())))
+    };
+
+    let scalar_params = UpdateTaskParams {
+        title: body.title,
+        background: if body.clear_background {
             Some(None)
         } else {
-            body.branch
-                .map(|b| Some(b.replace("${task_id}", &id.to_string())))
-        };
+            body.background.map(Some)
+        },
+        description: if body.clear_description {
+            Some(None)
+        } else {
+            body.description.map(Some)
+        },
+        plan: if body.clear_plan {
+            Some(None)
+        } else {
+            body.plan.map(Some)
+        },
+        priority: body.priority,
+        assignee_session_id: None,
+        started_at: None,
+        completed_at: None,
+        canceled_at: None,
+        cancel_reason: None,
+        branch: branch_value,
+        pr_url: if body.clear_pr_url {
+            Some(None)
+        } else {
+            body.pr_url.map(Some)
+        },
+        metadata: if body.clear_metadata {
+            Some(None)
+        } else {
+            body.metadata.map(Some)
+        },
+    };
 
-        let scalar_params = UpdateTaskParams {
-            title: body.title,
-            background: if body.clear_background {
-                Some(None)
-            } else {
-                body.background.map(Some)
-            },
-            description: if body.clear_description {
-                Some(None)
-            } else {
-                body.description.map(Some)
-            },
-            plan: if body.clear_plan {
-                Some(None)
-            } else {
-                body.plan.map(Some)
-            },
-            priority: body.priority,
-            assignee_session_id: None,
-            started_at: None,
-            completed_at: None,
-            canceled_at: None,
-            cancel_reason: None,
-            branch: branch_value,
-            pr_url: if body.clear_pr_url {
-                Some(None)
-            } else {
-                body.pr_url.map(Some)
-            },
-            metadata: if body.clear_metadata {
-                Some(None)
-            } else {
-                body.metadata.map(Some)
-            },
-        };
+    let array_params = UpdateTaskArrayParams {
+        set_tags: body.set_tags,
+        add_tags: body.add_tags,
+        remove_tags: body.remove_tags,
+        set_definition_of_done: body.set_definition_of_done,
+        add_definition_of_done: body.add_definition_of_done,
+        remove_definition_of_done: body.remove_definition_of_done,
+        set_in_scope: body.set_in_scope,
+        add_in_scope: body.add_in_scope,
+        remove_in_scope: body.remove_in_scope,
+        set_out_of_scope: body.set_out_of_scope,
+        add_out_of_scope: body.add_out_of_scope,
+        remove_out_of_scope: body.remove_out_of_scope,
+    };
 
-        let array_params = UpdateTaskArrayParams {
-            set_tags: body.set_tags,
-            add_tags: body.add_tags,
-            remove_tags: body.remove_tags,
-            set_definition_of_done: body.set_definition_of_done,
-            add_definition_of_done: body.add_definition_of_done,
-            remove_definition_of_done: body.remove_definition_of_done,
-            set_in_scope: body.set_in_scope,
-            add_in_scope: body.add_in_scope,
-            remove_in_scope: body.remove_in_scope,
-            set_out_of_scope: body.set_out_of_scope,
-            add_out_of_scope: body.add_out_of_scope,
-            remove_out_of_scope: body.remove_out_of_scope,
-        };
-
-        backend.update_task(id, &scalar_params).map_err(classify_error)?;
-        backend.update_task_arrays(id, &array_params).map_err(classify_error)?;
-        let task = backend.get_task(id).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    state.backend.update_task(id, &scalar_params).await.map_err(classify_error)?;
+    state.backend.update_task_arrays(id, &array_params).await.map_err(classify_error)?;
+    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // DELETE /api/v1/tasks/{id}
@@ -476,13 +451,8 @@ async fn delete_task(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        backend.delete_task(id).map_err(classify_error)?;
-        Ok(StatusCode::NO_CONTENT)
-    })
-    .await
-    .map_err(join_error)?
+    state.backend.delete_task(id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // POST /api/v1/tasks/{id}/ready
@@ -490,26 +460,19 @@ async fn ready_task(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
-    tokio::task::spawn_blocking(move || {
-        let updated = backend.ready_task(id).map_err(classify_error)?;
+    let updated = state.backend.ready_task(id).await.map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(
-            &config,
-            "task_ready",
-            &updated,
-            backend.as_ref(),
-            Some(TaskStatus::Draft),
-            None,
-        );
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    hooks::fire_hooks(
+        &config,
+        "task_ready",
+        &updated,
+        state.backend.as_ref(),
+        Some(TaskStatus::Draft),
+        None,
+    ).await;
 
-        Ok(Json(updated))
-    })
-    .await
-    .map_err(join_error)?
+    Ok(Json(updated))
 }
 
 // POST /api/v1/tasks/{id}/start
@@ -518,30 +481,23 @@ async fn start_task(
     Path(id): Path<i64>,
     Json(body): Json<StartBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.get_task(id).map_err(classify_error)?;
-        let prev_status = task.status;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated =
-            backend.start_task(id, body.session_id, &now).map_err(classify_error)?;
+    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    let prev_status = task.status;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated =
+        state.backend.start_task(id, body.session_id, &now).await.map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(
-            &config,
-            "task_started",
-            &updated,
-            backend.as_ref(),
-            Some(prev_status),
-            None,
-        );
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    hooks::fire_hooks(
+        &config,
+        "task_started",
+        &updated,
+        state.backend.as_ref(),
+        Some(prev_status),
+        None,
+    ).await;
 
-        Ok(Json(updated))
-    })
-    .await
-    .map_err(join_error)?
+    Ok(Json(updated))
 }
 
 // POST /api/v1/tasks/{id}/complete
@@ -550,74 +506,68 @@ async fn complete_task(
     Path(id): Path<i64>,
     body: Option<Json<CompleteBody>>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
-    tokio::task::spawn_blocking(move || {
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
 
-        let task = backend.get_task(id).map_err(classify_error)?;
-        task.status
-            .transition_to(TaskStatus::Completed)
-            .map_err(classify_error)?;
+    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    task.status
+        .transition_to(TaskStatus::Completed)
+        .map_err(classify_error)?;
 
-        // Check DoD items
-        let unchecked: Vec<_> = task
-            .definition_of_done
-            .iter()
-            .filter(|d| !d.checked)
-            .collect();
-        if !unchecked.is_empty() {
-            return Err(ApiError::Conflict(format!(
-                "cannot complete task #{}: {} unchecked DoD item(s)",
-                id,
-                unchecked.len()
-            )));
-        }
+    // Check DoD items
+    let unchecked: Vec<_> = task
+        .definition_of_done
+        .iter()
+        .filter(|d| !d.checked)
+        .collect();
+    if !unchecked.is_empty() {
+        return Err(ApiError::Conflict(format!(
+            "cannot complete task #{}: {} unchecked DoD item(s)",
+            id,
+            unchecked.len()
+        )));
+    }
 
-        // PR workflow checks
-        if !skip_pr_check
-            && config.workflow.completion_mode == hooks::CompletionMode::PrThenComplete
-        {
-            let pr_url = task.pr_url.as_deref().ok_or_else(|| {
-                ApiError::Conflict(format!(
-                    "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set",
-                    id
-                ))
-            })?;
-            verify_pr_status(pr_url, config.workflow.auto_merge)?;
-        }
+    // PR workflow checks
+    if !skip_pr_check
+        && config.workflow.completion_mode == hooks::CompletionMode::PrThenComplete
+    {
+        let pr_url = task.pr_url.as_deref().ok_or_else(|| {
+            ApiError::Conflict(format!(
+                "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set",
+                id
+            ))
+        })?;
+        verify_pr_status(pr_url, config.workflow.auto_merge)?;
+    }
 
-        let prev_ready_ids: std::collections::HashSet<i64> = backend.list_ready_tasks()
-            .map_err(classify_error)?
-            .iter()
-            .map(|t| t.id)
-            .collect();
+    let prev_ready_ids: std::collections::HashSet<i64> = state.backend.list_ready_tasks()
+        .await
+        .map_err(classify_error)?
+        .iter()
+        .map(|t| t.id)
+        .collect();
 
-        let prev_status = task.status;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated = backend.complete_task(id, &now).map_err(classify_error)?;
+    let prev_status = task.status;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = state.backend.complete_task(id, &now).await.map_err(classify_error)?;
 
-        let unblocked = hooks::compute_unblocked(backend.as_ref(), &prev_ready_ids);
-        let unblocked_opt = if unblocked.is_empty() {
-            None
-        } else {
-            Some(unblocked)
-        };
-        hooks::fire_hooks(
-            &config,
-            "task_completed",
-            &updated,
-            backend.as_ref(),
-            Some(prev_status),
-            unblocked_opt,
-        );
+    let unblocked = hooks::compute_unblocked(state.backend.as_ref(), &prev_ready_ids).await;
+    let unblocked_opt = if unblocked.is_empty() {
+        None
+    } else {
+        Some(unblocked)
+    };
+    hooks::fire_hooks(
+        &config,
+        "task_completed",
+        &updated,
+        state.backend.as_ref(),
+        Some(prev_status),
+        unblocked_opt,
+    ).await;
 
-        Ok(Json(updated))
-    })
-    .await
-    .map_err(join_error)?
+    Ok(Json(updated))
 }
 
 // POST /api/v1/tasks/{id}/cancel
@@ -626,34 +576,27 @@ async fn cancel_task(
     Path(id): Path<i64>,
     body: Option<Json<CancelBody>>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
     let reason = body.and_then(|b| b.0.reason);
-    tokio::task::spawn_blocking(move || {
-        let task = backend.get_task(id).map_err(classify_error)?;
-        task.status
-            .transition_to(TaskStatus::Canceled)
-            .map_err(classify_error)?;
+    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    task.status
+        .transition_to(TaskStatus::Canceled)
+        .map_err(classify_error)?;
 
-        let prev_status = task.status;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated = backend.cancel_task(id, &now, reason).map_err(classify_error)?;
+    let prev_status = task.status;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated = state.backend.cancel_task(id, &now, reason).await.map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(
-            &config,
-            "task_canceled",
-            &updated,
-            backend.as_ref(),
-            Some(prev_status),
-            None,
-        );
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    hooks::fire_hooks(
+        &config,
+        "task_canceled",
+        &updated,
+        state.backend.as_ref(),
+        Some(prev_status),
+        None,
+    ).await;
 
-        Ok(Json(updated))
-    })
-    .await
-    .map_err(join_error)?
+    Ok(Json(updated))
 }
 
 // POST /api/v1/tasks/next
@@ -661,39 +604,32 @@ async fn next_task(
     State(state): State<AppState>,
     body: Option<Json<NextBody>>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
-    let backend = state.backend.clone();
-    let config_path = state.config_path.clone();
     let session_id = body.and_then(|b| b.0.session_id);
-    tokio::task::spawn_blocking(move || {
-        let task = match backend.next_task().map_err(classify_error)? {
-            Some(t) => t,
-            None => {
-                let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-                hooks::fire_no_eligible_task_hooks(&config, backend.as_ref());
-                return Err(ApiError::NotFound("no eligible task found".to_string()));
-            }
-        };
+    let task = match state.backend.next_task().await.map_err(classify_error)? {
+        Some(t) => t,
+        None => {
+            let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+            hooks::fire_no_eligible_task_hooks(&config, state.backend.as_ref()).await;
+            return Err(ApiError::NotFound("no eligible task found".to_string()));
+        }
+    };
 
-        let prev_status = task.status;
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let updated =
-            backend.start_task(task.id, session_id, &now).map_err(classify_error)?;
+    let prev_status = task.status;
+    let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let updated =
+        state.backend.start_task(task.id, session_id, &now).await.map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(
-            &config,
-            "task_started",
-            &updated,
-            backend.as_ref(),
-            Some(prev_status),
-            None,
-        );
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    hooks::fire_hooks(
+        &config,
+        "task_started",
+        &updated,
+        state.backend.as_ref(),
+        Some(prev_status),
+        None,
+    ).await;
 
-        Ok(Json(updated))
-    })
-    .await
-    .map_err(join_error)?
+    Ok(Json(updated))
 }
 
 // GET /api/v1/tasks/{id}/deps
@@ -701,13 +637,8 @@ async fn list_deps(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let deps = backend.list_dependencies(id).map_err(classify_error)?;
-        Ok(Json(deps))
-    })
-    .await
-    .map_err(join_error)?
+    let deps = state.backend.list_dependencies(id).await.map_err(classify_error)?;
+    Ok(Json(deps))
 }
 
 // POST /api/v1/tasks/{id}/deps
@@ -716,13 +647,8 @@ async fn add_dep(
     Path(id): Path<i64>,
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.add_dependency(id, body.dep_id).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    let task = state.backend.add_dependency(id, body.dep_id).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // DELETE /api/v1/tasks/{id}/deps/{dep_id}
@@ -730,13 +656,8 @@ async fn remove_dep(
     State(state): State<AppState>,
     Path((id, dep_id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.remove_dependency(id, dep_id).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    let task = state.backend.remove_dependency(id, dep_id).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // POST /api/v1/tasks/{id}/dod/{index}/check
@@ -744,13 +665,8 @@ async fn check_dod(
     State(state): State<AppState>,
     Path((id, index)): Path<(i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.check_dod(id, index).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    let task = state.backend.check_dod(id, index).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // POST /api/v1/tasks/{id}/dod/{index}/uncheck
@@ -758,39 +674,24 @@ async fn uncheck_dod(
     State(state): State<AppState>,
     Path((id, index)): Path<(i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let task = backend.uncheck_dod(id, index).map_err(classify_error)?;
-        Ok(Json(task))
-    })
-    .await
-    .map_err(join_error)?
+    let task = state.backend.uncheck_dod(id, index).await.map_err(classify_error)?;
+    Ok(Json(task))
 }
 
 // GET /api/v1/config
 async fn get_config(
     State(state): State<AppState>,
 ) -> Result<Json<hooks::Config>, ApiError> {
-    let root = state.project_root.clone();
-    tokio::task::spawn_blocking(move || {
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        Ok(Json(config))
-    })
-    .await
-    .map_err(join_error)?
+    let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+    Ok(Json(config))
 }
 
 // GET /api/v1/stats
 async fn get_stats(
     State(state): State<AppState>,
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
-    let backend = state.backend.clone();
-    tokio::task::spawn_blocking(move || {
-        let stats = backend.task_stats().map_err(classify_error)?;
-        Ok(Json(stats))
-    })
-    .await
-    .map_err(join_error)?
+    let stats = state.backend.task_stats().await.map_err(classify_error)?;
+    Ok(Json(stats))
 }
 
 // --- Helpers ---

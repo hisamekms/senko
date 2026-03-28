@@ -987,126 +987,193 @@ fn query_i64_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<i64>
 
 // --- SqliteBackend implementation ---
 
+use std::sync::Arc;
+
+use async_trait::async_trait;
+
 use crate::backend::TaskBackend;
 
 pub struct SqliteBackend {
-    conn: std::sync::Mutex<Connection>,
+    conn: Arc<std::sync::Mutex<Connection>>,
 }
 
 impl SqliteBackend {
     pub fn new(project_root: &Path) -> Result<Self> {
         let conn = open_db(project_root)?;
         Ok(Self {
-            conn: std::sync::Mutex::new(conn),
+            conn: Arc::new(std::sync::Mutex::new(conn)),
         })
-    }
-
-    fn conn(&self) -> Result<std::sync::MutexGuard<'_, Connection>> {
-        self.conn
-            .lock()
-            .map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))
     }
 }
 
+#[async_trait]
 impl TaskBackend for SqliteBackend {
-    fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
-        let conn = self.conn()?;
-        create_task(&conn, params)
+    async fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
+        let conn = self.conn.clone();
+        let params = params.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            create_task(&conn, &params)
+        }).await?
     }
 
-    fn get_task(&self, id: i64) -> Result<Task> {
-        let conn = self.conn()?;
-        get_task(&conn, id)
+    async fn get_task(&self, id: i64) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            get_task(&conn, id)
+        }).await?
     }
 
-    fn ready_task(&self, id: i64) -> Result<Task> {
-        let conn = self.conn()?;
-        ready_task(&conn, id)
+    async fn ready_task(&self, id: i64) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            ready_task(&conn, id)
+        }).await?
     }
 
-    fn start_task(&self, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
-        let conn = self.conn()?;
-        start_task(&conn, id, assignee_session_id, started_at)
+    async fn start_task(&self, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
+        let conn = self.conn.clone();
+        let started_at = started_at.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            start_task(&conn, id, assignee_session_id, &started_at)
+        }).await?
     }
 
-    fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task> {
-        let conn = self.conn()?;
-        complete_task(&conn, id, completed_at)
+    async fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task> {
+        let conn = self.conn.clone();
+        let completed_at = completed_at.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            complete_task(&conn, id, &completed_at)
+        }).await?
     }
 
-    fn cancel_task(&self, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
-        let conn = self.conn()?;
-        cancel_task(&conn, id, canceled_at, reason)
+    async fn cancel_task(&self, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
+        let conn = self.conn.clone();
+        let canceled_at = canceled_at.to_owned();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            cancel_task(&conn, id, &canceled_at, reason)
+        }).await?
     }
 
-    fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
-        let conn = self.conn()?;
-        update_task(&conn, id, params)
+    async fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+        let conn = self.conn.clone();
+        let params = params.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            update_task(&conn, id, &params)
+        }).await?
     }
 
-    fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
-        let conn = self.conn()?;
-        update_task_arrays(&conn, id, params)
+    async fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+        let conn = self.conn.clone();
+        let params = params.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            update_task_arrays(&conn, id, &params)
+        }).await?
     }
 
-    fn delete_task(&self, id: i64) -> Result<()> {
-        let conn = self.conn()?;
-        delete_task(&conn, id)
+    async fn delete_task(&self, id: i64) -> Result<()> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            delete_task(&conn, id)
+        }).await?
     }
 
-    fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
-        let conn = self.conn()?;
-        list_tasks(&conn, filter)
+    async fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+        let conn = self.conn.clone();
+        let filter = filter.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            list_tasks(&conn, &filter)
+        }).await?
     }
 
-    fn next_task(&self) -> Result<Option<Task>> {
-        let conn = self.conn()?;
-        next_task(&conn)
+    async fn next_task(&self) -> Result<Option<Task>> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            next_task(&conn)
+        }).await?
     }
 
-    fn task_stats(&self) -> Result<HashMap<String, i64>> {
-        let conn = self.conn()?;
-        task_stats(&conn)
+    async fn task_stats(&self) -> Result<HashMap<String, i64>> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            task_stats(&conn)
+        }).await?
     }
 
-    fn ready_count(&self) -> Result<i64> {
-        let conn = self.conn()?;
-        ready_count(&conn)
+    async fn ready_count(&self) -> Result<i64> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            ready_count(&conn)
+        }).await?
     }
 
-    fn list_ready_tasks(&self) -> Result<Vec<Task>> {
-        let conn = self.conn()?;
-        list_ready_tasks(&conn)
+    async fn list_ready_tasks(&self) -> Result<Vec<Task>> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            list_ready_tasks(&conn)
+        }).await?
     }
 
-    fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
-        let conn = self.conn()?;
-        add_dependency(&conn, task_id, dep_id)
+    async fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            add_dependency(&conn, task_id, dep_id)
+        }).await?
     }
 
-    fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
-        let conn = self.conn()?;
-        remove_dependency(&conn, task_id, dep_id)
+    async fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            remove_dependency(&conn, task_id, dep_id)
+        }).await?
     }
 
-    fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let conn = self.conn()?;
-        set_dependencies(&conn, task_id, dep_ids)
+    async fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+        let conn = self.conn.clone();
+        let dep_ids = dep_ids.to_vec();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            set_dependencies(&conn, task_id, &dep_ids)
+        }).await?
     }
 
-    fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
-        let conn = self.conn()?;
-        list_dependencies(&conn, task_id)
+    async fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            list_dependencies(&conn, task_id)
+        }).await?
     }
 
-    fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let conn = self.conn()?;
-        check_dod(&conn, task_id, index)
+    async fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            check_dod(&conn, task_id, index)
+        }).await?
     }
 
-    fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let conn = self.conn()?;
-        uncheck_dod(&conn, task_id, index)
+    async fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            uncheck_dod(&conn, task_id, index)
+        }).await?
     }
 }
 

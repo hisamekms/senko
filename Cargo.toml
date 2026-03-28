@@ -16,12 +16,13 @@ anyhow = "1.0.102"
 chrono = "0.4.44"
 axum = "0.8"
 axum-extra = { version = "0.10", features = ["query"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 toml = "0.8"
 uuid = { version = "1", features = ["v4"] }
 pulldown-cmark = "0.13"
 ammonia = "4"
-ureq = { version = "3", features = ["json"] }
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tower-http = { version = "0.6", features = ["trace"] }

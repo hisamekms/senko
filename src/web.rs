@@ -87,44 +87,31 @@ async fn index_handler(
     State(state): State<AppState>,
     Query(query): Query<ListQuery>,
 ) -> Result<Html<String>, StatusCode> {
-    let backend = state.backend.clone();
-    let status_filter = query.status.clone();
-    let tag_filter = query.tag.clone();
-
-    let tasks = tokio::task::spawn_blocking(move || {
-        let statuses = status_filter
-            .iter()
-            .filter(|s| !s.is_empty())
-            .map(|s| s.parse::<TaskStatus>())
-            .collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|_| StatusCode::BAD_REQUEST)?;
-        let tags: Vec<String> = tag_filter.into_iter().filter(|t| !t.is_empty()).collect();
-        let filter = crate::models::ListTasksFilter {
-            statuses,
-            tags,
-            ..Default::default()
-        };
-        backend.list_tasks(&filter).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    let statuses = query.status
+        .iter()
+        .filter(|s| !s.is_empty())
+        .map(|s| s.parse::<TaskStatus>())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| StatusCode::BAD_REQUEST)?;
+    let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
+    let filter = crate::models::ListTasksFilter {
+        statuses,
+        tags,
+        ..Default::default()
+    };
+    let tasks = state.backend.list_tasks(&filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Collect all tags from all tasks (unfiltered) for the filter UI
-    let backend2 = state.backend.clone();
-    let all_tags = tokio::task::spawn_blocking(move || {
-        let all_tasks = backend2.list_tasks(&crate::models::ListTasksFilter::default())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        let mut tags: Vec<String> = all_tasks
-            .iter()
-            .flat_map(|t| t.tags.iter().cloned())
-            .collect::<std::collections::BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        tags.sort();
-        Ok::<_, StatusCode>(tags)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    let all_tasks = state.backend.list_tasks(&crate::models::ListTasksFilter::default())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut all_tags: Vec<String> = all_tasks
+        .iter()
+        .flat_map(|t| t.tags.iter().cloned())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    all_tags.sort();
 
     let body = render_task_list(&tasks, &query, &all_tags);
     Ok(Html(layout("Tasks", &body)))
@@ -134,13 +121,7 @@ async fn task_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, StatusCode> {
-    let backend = state.backend.clone();
-
-    let task = tokio::task::spawn_blocking(move || {
-        backend.get_task(id).map_err(|_| StatusCode::NOT_FOUND)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    let task = state.backend.get_task(id).await.map_err(|_| StatusCode::NOT_FOUND)?;
 
     let body = render_task_detail(&task);
     let title = format!("#{} {}", task.id, escape_html(&task.title));
@@ -150,14 +131,9 @@ async fn task_handler(
 async fn graph_handler(
     State(state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
-    let backend = state.backend.clone();
-
-    let tasks = tokio::task::spawn_blocking(move || {
-        backend.list_tasks(&crate::models::ListTasksFilter::default())
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
-    })
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)??;
+    let tasks = state.backend.list_tasks(&crate::models::ListTasksFilter::default())
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     let body = render_graph_page(&tasks);
     Ok(Html(layout("Dependency Graph", &body)))

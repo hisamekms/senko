@@ -299,15 +299,15 @@ fn apply_env_overrides(mut config: Config) -> Config {
     config
 }
 
-pub fn build_event(
+pub async fn build_event(
     event_name: &str,
     task: &Task,
     backend: &dyn TaskBackend,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
-    let stats = backend.task_stats().unwrap_or_default();
-    let ready_count = backend.ready_count().unwrap_or(0);
+    let stats = backend.task_stats().await.unwrap_or_default();
+    let ready_count = backend.ready_count().await.unwrap_or(0);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
         event: event_name.into(),
@@ -424,7 +424,7 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
 /// Results are logged to `$XDG_STATE_HOME/localflow/hooks.log`.
-pub fn fire_hooks(
+pub async fn fire_hooks(
     config: &Config,
     event_name: &str,
     task: &Task,
@@ -447,7 +447,7 @@ pub fn fire_hooks(
 
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
-    let event = build_event(event_name, task, backend, from_status, unblocked);
+    let event = build_event(event_name, task, backend, from_status, unblocked).await;
     let json = match serde_json::to_string(&event) {
         Ok(j) => j,
         Err(e) => {
@@ -466,7 +466,7 @@ pub fn fire_hooks(
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
-pub fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend) {
+pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend) {
     let commands = &config.hooks.on_no_eligible_task;
     if commands.is_empty() {
         return;
@@ -474,8 +474,8 @@ pub fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend) {
 
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
-    let stats = backend.task_stats().unwrap_or_default();
-    let ready_count = backend.ready_count().unwrap_or(0);
+    let stats = backend.task_stats().await.unwrap_or_default();
+    let ready_count = backend.ready_count().await.unwrap_or(0);
     let event = NoEligibleTaskEvent {
         event_id: Uuid::new_v4().to_string(),
         event: "no_eligible_task".into(),
@@ -541,11 +541,11 @@ pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::Exit
 /// Compute newly unblocked tasks after a task completion.
 /// Call this after `db::complete_task` with the set of ready task IDs
 /// captured before the completion.
-pub fn compute_unblocked(
+pub async fn compute_unblocked(
     backend: &dyn TaskBackend,
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
-    let curr_ready = backend.list_ready_tasks().unwrap_or_default();
+    let curr_ready = backend.list_ready_tasks().await.unwrap_or_default();
     curr_ready
         .iter()
         .filter(|t| !prev_ready_ids.contains(&t.id))
@@ -617,8 +617,8 @@ on_task_completed = "echo completed"
         assert!(config.hooks.on_task_completed.is_empty());
     }
 
-    #[test]
-    fn hook_event_serialization() {
+    #[tokio::test]
+    async fn hook_event_serialization() {
         let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
@@ -644,7 +644,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &backend, None, None);
+        let event = build_event("task_added", &task, &backend, None, None).await;
         let json = serde_json::to_string(&event).unwrap();
         assert!(json.contains("\"event\":\"task_added\""));
         assert!(json.contains("\"id\":1"));
@@ -656,8 +656,8 @@ on_task_completed = "echo completed"
         assert!(!json.contains("\"unblocked_tasks\""));
     }
 
-    #[test]
-    fn event_has_valid_uuid_and_timestamp() {
+    #[tokio::test]
+    async fn event_has_valid_uuid_and_timestamp() {
         let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
@@ -683,13 +683,13 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        let event = build_event("task_added", &task, &backend, None, None);
+        let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(Uuid::parse_str(&event.event_id).is_ok());
         assert!(chrono::DateTime::parse_from_rfc3339(&event.timestamp).is_ok());
     }
 
-    #[test]
-    fn event_has_stats() {
+    #[tokio::test]
+    async fn event_has_stats() {
         let (_dir, backend) = setup_db();
         backend.create_task(
             &crate::models::CreateTaskParams {
@@ -707,15 +707,16 @@ on_task_completed = "echo completed"
                 dependencies: vec![],
             },
         )
+        .await
         .unwrap();
-        let task = backend.get_task(1).unwrap();
-        let event = build_event("task_added", &task, &backend, None, None);
+        let task = backend.get_task(1).await.unwrap();
+        let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(event.stats.contains_key("draft"));
         assert_eq!(*event.stats.get("draft").unwrap(), 1);
     }
 
-    #[test]
-    fn event_has_ready_count() {
+    #[tokio::test]
+    async fn event_has_ready_count() {
         let (_dir, backend) = setup_db();
         backend.create_task(
             &crate::models::CreateTaskParams {
@@ -733,15 +734,16 @@ on_task_completed = "echo completed"
                 dependencies: vec![],
             },
         )
+        .await
         .unwrap();
-        backend.ready_task(1).unwrap();
-        let task = backend.get_task(1).unwrap();
-        let event = build_event("task_added", &task, &backend, None, None);
+        backend.ready_task(1).await.unwrap();
+        let task = backend.get_task(1).await.unwrap();
+        let event = build_event("task_added", &task, &backend, None, None).await;
         assert_eq!(event.ready_count, 1);
     }
 
-    #[test]
-    fn compute_unblocked_finds_newly_ready() {
+    #[tokio::test]
+    async fn compute_unblocked_finds_newly_ready() {
         let (_dir, backend) = setup_db();
 
         // Create task 1 (will be completed) and task 2 (depends on task 1)
@@ -761,9 +763,10 @@ on_task_completed = "echo completed"
                 dependencies: vec![],
             },
         )
+        .await
         .unwrap();
-        backend.ready_task(1).unwrap();
-        backend.start_task(1, None, "2025-01-01T00:00:00Z").unwrap();
+        backend.ready_task(1).await.unwrap();
+        backend.start_task(1, None, "2025-01-01T00:00:00Z").await.unwrap();
 
         backend.create_task(
             &crate::models::CreateTaskParams {
@@ -781,25 +784,26 @@ on_task_completed = "echo completed"
                 dependencies: vec![],
             },
         )
+        .await
         .unwrap();
-        backend.ready_task(2).unwrap();
-        backend.add_dependency(2, 1).unwrap();
+        backend.ready_task(2).await.unwrap();
+        backend.add_dependency(2, 1).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            backend.list_ready_tasks().unwrap().iter().map(|t| t.id).collect();
+            backend.list_ready_tasks().await.unwrap().iter().map(|t| t.id).collect();
 
         // Complete task 1
-        backend.complete_task(1, "2025-01-01T00:00:00Z").unwrap();
+        backend.complete_task(1, "2025-01-01T00:00:00Z").await.unwrap();
 
-        let unblocked = compute_unblocked(&backend, &prev_ready);
+        let unblocked = compute_unblocked(&backend, &prev_ready).await;
         assert_eq!(unblocked.len(), 1);
         assert_eq!(unblocked[0].id, 2);
         assert_eq!(unblocked[0].title, "Blocked");
     }
 
-    #[test]
-    fn fire_hooks_executes_multiple_hooks() {
+    #[tokio::test]
+    async fn fire_hooks_executes_multiple_hooks() {
         let dir = tempfile::tempdir().unwrap();
         let marker1 = dir.path().join("hook1.txt");
         let marker2 = dir.path().join("hook2.txt");
@@ -840,7 +844,7 @@ on_task_completed = "echo completed"
             tags: vec![],
             dependencies: vec![],
         };
-        fire_hooks(&config, "task_added", &task, &backend, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
 
         // Give child processes a moment to complete
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -849,8 +853,8 @@ on_task_completed = "echo completed"
         assert!(marker2.exists(), "second hook should have run");
     }
 
-    #[test]
-    fn fire_hooks_noop_when_no_commands() {
+    #[tokio::test]
+    async fn fire_hooks_noop_when_no_commands() {
         let (_db_dir, backend) = setup_db();
         let config = Config::default();
         let task = Task {
@@ -878,7 +882,7 @@ on_task_completed = "echo completed"
             dependencies: vec![],
         };
         // Should not panic
-        fire_hooks(&config, "task_added", &task, &backend, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
     }
 
     #[test]
@@ -932,8 +936,8 @@ on_task_completed = "echo completed"
         assert!(content.contains("[WARN] second message"));
     }
 
-    #[test]
-    fn hook_failure_logged_to_file() {
+    #[tokio::test]
+    async fn hook_failure_logged_to_file() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("hooks.log");
 
@@ -973,7 +977,7 @@ on_task_completed = "echo completed"
         };
 
         // Call execute_hook directly with our log path
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None)).unwrap();
+        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
         execute_hook("exit 1", "task_added", &json, Some(&log_path));
 
         // Wait for the thread to finish logging
@@ -1019,8 +1023,8 @@ on_task_completed = ["notify", "log"]
         assert!(config.hooks.on_task_completed.is_empty());
     }
 
-    #[test]
-    fn hook_receives_json_on_stdin() {
+    #[tokio::test]
+    async fn hook_receives_json_on_stdin() {
         let dir = tempfile::tempdir().unwrap();
         let output_file = dir.path().join("stdin_capture.json");
         let cmd = format!("cat > {}", output_file.display());
@@ -1058,7 +1062,7 @@ on_task_completed = ["notify", "log"]
             tags: vec![],
             dependencies: vec![],
         };
-        fire_hooks(&config, "task_added", &task, &backend, None, None);
+        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
 
         std::thread::sleep(std::time::Duration::from_millis(200));
 

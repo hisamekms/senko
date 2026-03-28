@@ -155,7 +155,7 @@ pub struct Task {
     pub dependencies: Vec<i64>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,
@@ -177,6 +177,7 @@ pub struct CreateTaskParams {
     pub dependencies: Vec<i64>,
 }
 
+#[derive(Clone)]
 pub struct UpdateTaskParams {
     pub title: Option<String>,
     pub background: Option<Option<String>>,
@@ -193,6 +194,7 @@ pub struct UpdateTaskParams {
     pub metadata: Option<Option<serde_json::Value>>,
 }
 
+#[derive(Clone)]
 pub struct ListTasksFilter {
     pub statuses: Vec<TaskStatus>,
     pub tags: Vec<String>,
@@ -200,6 +202,7 @@ pub struct ListTasksFilter {
     pub ready: bool,
 }
 
+#[derive(Clone)]
 pub struct UpdateTaskArrayParams {
     pub set_tags: Option<Vec<String>>,
     pub add_tags: Vec<String>,

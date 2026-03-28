@@ -388,11 +388,12 @@ fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
     let output_format = cli.output.clone();
 
-    if let Err(e) = run(cli) {
+    if let Err(e) = run(cli).await {
         match output_format {
             OutputFormat::Json => {
                 println!("{}", serde_json::json!({"error": format!("{:#}", e)}));
@@ -406,7 +407,7 @@ fn main() {
     }
 }
 
-fn run(cli: Cli) -> Result<()> {
+async fn run(cli: Cli) -> Result<()> {
     let dry_run = cli.dry_run;
     let output_format = cli.output.clone();
 
@@ -440,7 +441,7 @@ fn run(cli: Cli) -> Result<()> {
             metadata.clone(),
             from_json,
             from_json_file.clone(),
-        ),
+        ).await,
         Command::List {
             status,
             tag,
@@ -454,13 +455,13 @@ fn run(cli: Cli) -> Result<()> {
             tag,
             depends_on,
             ready,
-        ),
+        ).await,
         Command::Get { task_id } => {
-            cmd_get(&cli.output, cli.project_root.as_deref(), cli.config.as_deref(), task_id)
+            cmd_get(&cli.output, cli.project_root.as_deref(), cli.config.as_deref(), task_id).await
         }
-        Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()),
-        Command::Ready { id } => cmd_ready(&cli, id),
-        Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()),
+        Command::Next { ref session_id } => cmd_next(&cli, session_id.clone()).await,
+        Command::Ready { id } => cmd_ready(&cli, id).await,
+        Command::Start { id, ref session_id } => cmd_start(&cli, id, session_id.clone()).await,
         Command::Edit {
             id,
             title,
@@ -494,7 +495,7 @@ fn run(cli: Cli) -> Result<()> {
             let (backend, _) = create_backend(&project_root, cli.config.as_deref())?;
 
             // Verify task exists (even in dry-run)
-            let _task = backend.get_task(id)?;
+            let _task = backend.get_task(id).await?;
 
             if dry_run {
                 let mut operations = Vec::new();
@@ -613,9 +614,9 @@ fn run(cli: Cli) -> Result<()> {
                 remove_out_of_scope,
             };
 
-            backend.update_task(id, &scalar_params)?;
-            backend.update_task_arrays(id, &array_params)?;
-            let task = backend.get_task(id)?;
+            backend.update_task(id, &scalar_params).await?;
+            backend.update_task_arrays(id, &array_params).await?;
+            let task = backend.get_task(id).await?;
 
             match cli.output {
                 OutputFormat::Json => {
@@ -651,18 +652,17 @@ fn run(cli: Cli) -> Result<()> {
             }
             Ok(())
         }
-        Command::Complete { id, skip_pr_check } => cmd_complete(&cli, id, skip_pr_check),
-        Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()),
-        Command::Dod { ref command } => cmd_dod(&cli, command),
-        Command::Deps { ref command } => cmd_deps(&cli, command),
+        Command::Complete { id, skip_pr_check } => cmd_complete(&cli, id, skip_pr_check).await,
+        Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()).await,
+        Command::Dod { ref command } => cmd_dod(&cli, command).await,
+        Command::Deps { ref command } => cmd_deps(&cli, command).await,
         Command::Web { port, host } => {
             let effective_port = port
                 .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::web::serve(root, effective_port, host, cli.config.clone(), backend))?;
+            localflow::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
@@ -671,20 +671,19 @@ fn run(cli: Cli) -> Result<()> {
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::api::serve(root, effective_port, host, cli.config.clone(), backend))?;
+            localflow::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
             skill_install(&cli, output_dir.clone(), yes)
         }
-        Command::Hooks { ref command } => cmd_hooks(&cli, command),
+        Command::Hooks { ref command } => cmd_hooks(&cli, command).await,
         Command::Config { init } => cmd_config(&cli, init),
     }
 }
 
 #[allow(clippy::too_many_arguments)]
-fn cmd_add(
+async fn cmd_add(
     cli: &Cli,
     title: Option<String>,
     background: Option<String>,
@@ -791,7 +790,7 @@ fn cmd_add(
         let branch_template = params.branch.clone();
         let mut params_without_branch = params;
         params_without_branch.branch = None;
-        let created = backend.create_task(&params_without_branch)?;
+        let created = backend.create_task(&params_without_branch).await?;
         let expanded = expand_branch_template(branch_template.as_deref().unwrap(), created.id);
         backend.update_task(
             created.id,
@@ -810,15 +809,15 @@ fn cmd_add(
                 pr_url: None,
                 metadata: None,
             },
-        )?
+        ).await?
     } else {
-        backend.create_task(&params)?
+        backend.create_task(&params).await?
     };
 
     // Fire hooks
     let config = load_config_with_cli(&root, cli)?;
     if should_fire_client_hooks(&config, using_http) {
-        hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None);
+        hooks::fire_hooks(&config, "task_added", &task, &*backend, None, None).await;
     }
 
     match cli.output {
@@ -837,7 +836,7 @@ fn expand_branch_template(branch: &str, task_id: i64) -> String {
     branch.replace("${task_id}", &task_id.to_string())
 }
 
-fn cmd_list(
+async fn cmd_list(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
     config_path: Option<&std::path::Path>,
@@ -862,7 +861,7 @@ fn cmd_list(
         ready,
     };
 
-    let tasks = backend.list_tasks(&filter)?;
+    let tasks = backend.list_tasks(&filter).await?;
 
     match output {
         OutputFormat::Json => {
@@ -880,7 +879,7 @@ fn cmd_list(
     Ok(())
 }
 
-fn cmd_get(
+async fn cmd_get(
     output: &OutputFormat,
     project_root: Option<&std::path::Path>,
     config_path: Option<&std::path::Path>,
@@ -888,7 +887,7 @@ fn cmd_get(
 ) -> Result<()> {
     let root = resolve_project_root(project_root)?;
     let (backend, _) = create_backend(&root, config_path)?;
-    let task = backend.get_task(task_id)?;
+    let task = backend.get_task(task_id).await?;
 
     match output {
         OutputFormat::Json => {
@@ -965,11 +964,11 @@ fn cmd_get(
     Ok(())
 }
 
-fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
+async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
-    let task = backend.get_task(id)?;
+    let task = backend.get_task(id).await?;
 
     if cli.dry_run {
         let operations = vec![
@@ -978,7 +977,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let updated = backend.ready_task(id)?;
+    let updated = backend.ready_task(id).await?;
 
     // Fire hooks
     let config = load_config_with_cli(&root, cli)?;
@@ -986,7 +985,7 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         hooks::fire_hooks(
             &config, "task_ready", &updated, &*backend,
             Some(TaskStatus::Draft), None,
-        );
+        ).await;
     }
 
     match cli.output {
@@ -1001,11 +1000,11 @@ fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     Ok(())
 }
 
-fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
+async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
-    let task = backend.get_task(id)?;
+    let task = backend.get_task(id).await?;
 
     if cli.dry_run {
         let mut operations = vec![
@@ -1019,7 +1018,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.start_task(id, session_id, &now)?;
+    let updated = backend.start_task(id, session_id, &now).await?;
 
     // Fire hooks
     let config = load_config_with_cli(&root, cli)?;
@@ -1027,7 +1026,7 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
             Some(prev_status), None,
-        );
+        ).await;
     }
 
     match cli.output {
@@ -1042,16 +1041,16 @@ fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
+async fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
-    let task = match backend.next_task()? {
+    let task = match backend.next_task().await? {
         Some(t) => t,
         None => {
             let config = load_config_with_cli(&root, cli)?;
             if should_fire_client_hooks(&config, using_http) {
-                hooks::fire_no_eligible_task_hooks(&config, &*backend);
+                hooks::fire_no_eligible_task_hooks(&config, &*backend).await;
             }
             anyhow::bail!("no eligible task found");
         }
@@ -1075,7 +1074,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         task
     } else {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        backend.start_task(task.id, session_id, &now)?
+        backend.start_task(task.id, session_id, &now).await?
     };
 
     // Fire hooks
@@ -1084,7 +1083,7 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
         hooks::fire_hooks(
             &config, "task_started", &updated, &*backend,
             Some(prev_status), None,
-        );
+        ).await;
     }
 
     match cli.output {
@@ -1099,12 +1098,12 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
+async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
 
-    let task = backend.get_task(id)?;
+    let task = backend.get_task(id).await?;
     task.status.transition_to(TaskStatus::Completed)?;
 
     let unchecked: Vec<_> = task
@@ -1145,20 +1144,20 @@ fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
     // Capture ready tasks before completion for unblocked detection
     let prev_ready_ids: std::collections::HashSet<i64> =
-        backend.list_ready_tasks()?.iter().map(|t| t.id).collect();
+        backend.list_ready_tasks().await?.iter().map(|t| t.id).collect();
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.complete_task(id, &now)?;
+    let updated = backend.complete_task(id, &now).await?;
 
     // Fire hooks with unblocked tasks
     if should_fire_client_hooks(&config, using_http) {
-        let unblocked = hooks::compute_unblocked(&*backend, &prev_ready_ids);
+        let unblocked = hooks::compute_unblocked(&*backend, &prev_ready_ids).await;
         let unblocked_opt = if unblocked.is_empty() { None } else { Some(unblocked) };
         hooks::fire_hooks(
             &config, "task_completed", &updated, &*backend,
             Some(prev_status), unblocked_opt,
-        );
+        ).await;
     }
 
     match cli.output {
@@ -1222,11 +1221,11 @@ fn verify_pr_status(pr_url: &str, auto_merge: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
+async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
-    let task = backend.get_task(id)?;
+    let task = backend.get_task(id).await?;
     task.status.transition_to(TaskStatus::Canceled)?;
 
     if cli.dry_run {
@@ -1241,7 +1240,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = backend.cancel_task(id, &now, reason)?;
+    let updated = backend.cancel_task(id, &now, reason).await?;
 
     // Fire hooks
     let config = load_config_with_cli(&root, cli)?;
@@ -1249,7 +1248,7 @@ fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         hooks::fire_hooks(
             &config, "task_canceled", &updated, &*backend,
             Some(prev_status), None,
-        );
+        ).await;
     }
 
     match cli.output {
@@ -1290,7 +1289,7 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/localflow)
 "#;
 
-fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
+async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
     match command {
         HooksCommand::Log {
             n,
@@ -1364,8 +1363,8 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
-                let stats = backend.task_stats().unwrap_or_default();
-                let ready_count = backend.ready_count().unwrap_or(0);
+                let stats = backend.task_stats().await.unwrap_or_default();
+                let ready_count = backend.ready_count().await.unwrap_or(0);
                 let event = hooks::NoEligibleTaskEvent {
                     event_id: uuid::Uuid::new_v4().to_string(),
                     event: "no_eligible_task".into(),
@@ -1407,7 +1406,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {
-                backend.get_task(*id)?
+                backend.get_task(*id).await?
             } else {
                 use localflow::models::{Priority, TaskStatus};
                 Task {
@@ -1436,7 +1435,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 }
             };
 
-            let event = hooks::build_event(event_name, &task, &*backend, None, None);
+            let event = hooks::build_event(event_name, &task, &*backend, None, None).await;
             let json = serde_json::to_string_pretty(&event)?;
 
             if *dry_run {
@@ -1602,7 +1601,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
+async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
 
@@ -1620,7 +1619,7 @@ fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.check_dod(task_id, index)?;
+            let task = backend.check_dod(task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1642,7 +1641,7 @@ fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = backend.uncheck_dod(task_id, index)?;
+            let task = backend.uncheck_dod(task_id, index).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1662,7 +1661,7 @@ fn print_dod_items(items: &[localflow::models::DodItem]) {
     }
 }
 
-fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
+async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, _) = create_backend(&root, cli.config.as_deref())?;
 
@@ -1673,7 +1672,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Add dependency: task #{} depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps add".into(), operations });
             }
-            let task = backend.add_dependency(task_id, on)?;
+            let task = backend.add_dependency(task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Added dependency: task #{} depends on #{}", task_id, on),
@@ -1685,7 +1684,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Remove dependency: task #{} no longer depends on #{}", task_id, on)];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps remove".into(), operations });
             }
-            let task = backend.remove_dependency(task_id, on)?;
+            let task = backend.remove_dependency(task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => println!("Removed dependency: task #{} no longer depends on #{}", task_id, on),
@@ -1698,7 +1697,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
                 let operations = vec![format!("Set dependencies for task #{}: [{}]", task_id, dep_strs.join(", "))];
                 return print_dry_run(&cli.output, &DryRunOperation { command: "deps set".into(), operations });
             }
-            let task = backend.set_dependencies(task_id, on)?;
+            let task = backend.set_dependencies(task_id, on).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1713,7 +1712,7 @@ fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
         }
         DepsCommand::List { task_id } => {
             // Read-only: ignore --dry-run
-            let deps = backend.list_dependencies(*task_id)?;
+            let deps = backend.list_dependencies(*task_id).await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
                 OutputFormat::Text => {
@@ -1968,8 +1967,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cmd_add_with_flags() {
+    #[tokio::test]
+    async fn cmd_add_with_flags() {
         let tmp = tempfile::tempdir().unwrap();
         let cli = Cli {
             output: OutputFormat::Text,
@@ -2009,10 +2008,11 @@ mod tests {
             false,
             None,
         )
+        .await
         .unwrap();
 
         let backend = db::SqliteBackend::new(tmp.path()).unwrap();
-        let task = backend.get_task(1).unwrap();
+        let task = backend.get_task(1).await.unwrap();
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
         assert_eq!(task.priority, localflow::models::Priority::P1);
@@ -2023,8 +2023,8 @@ mod tests {
         assert_eq!(task.tags, vec!["rust"]);
     }
 
-    #[test]
-    fn cmd_add_with_from_json_file() {
+    #[tokio::test]
+    async fn cmd_add_with_from_json_file() {
         let tmp = tempfile::tempdir().unwrap();
         let json_path = tmp.path().join("task.json");
         std::fs::write(&json_path, r#"{"title":"file task","priority":"P0"}"#).unwrap();
@@ -2067,16 +2067,17 @@ mod tests {
             false,
             Some(json_path),
         )
+        .await
         .unwrap();
 
         let backend = db::SqliteBackend::new(tmp.path()).unwrap();
-        let task = backend.get_task(1).unwrap();
+        let task = backend.get_task(1).await.unwrap();
         assert_eq!(task.title, "file task");
         assert_eq!(task.priority, localflow::models::Priority::P0);
     }
 
-    #[test]
-    fn cmd_add_missing_title_error() {
+    #[tokio::test]
+    async fn cmd_add_missing_title_error() {
         let tmp = tempfile::tempdir().unwrap();
         let cli = Cli {
             output: OutputFormat::Text,
@@ -2115,7 +2116,7 @@ mod tests {
             None,
             false,
             None,
-        );
+        ).await;
         assert!(result.is_err());
         assert!(result
             .unwrap_err()
@@ -2123,8 +2124,8 @@ mod tests {
             .contains("--title is required"));
     }
 
-    #[test]
-    fn cmd_add_text_output() {
+    #[tokio::test]
+    async fn cmd_add_text_output() {
         let tmp = tempfile::tempdir().unwrap();
         let cli = Cli {
             output: OutputFormat::Text,
@@ -2164,14 +2165,15 @@ mod tests {
             false,
             None,
         )
+        .await
         .unwrap();
         let backend = db::SqliteBackend::new(tmp.path()).unwrap();
-        let task = backend.get_task(1).unwrap();
+        let task = backend.get_task(1).await.unwrap();
         assert_eq!(task.title, "my task");
     }
 
-    #[test]
-    fn cmd_add_json_output() {
+    #[tokio::test]
+    async fn cmd_add_json_output() {
         let tmp = tempfile::tempdir().unwrap();
         let cli = Cli {
             output: OutputFormat::Json,
@@ -2211,9 +2213,10 @@ mod tests {
             false,
             None,
         )
+        .await
         .unwrap();
         let backend = db::SqliteBackend::new(tmp.path()).unwrap();
-        let task = backend.get_task(1).unwrap();
+        let task = backend.get_task(1).await.unwrap();
         assert_eq!(task.title, "json out");
     }
 
