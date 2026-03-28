@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::models::{
-    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CreateProjectParams, CreateTaskParams, DodItem, ListTasksFilter, Priority, Project, Task,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 struct Migration {
@@ -80,6 +80,24 @@ const MIGRATIONS: &[Migration] = &[
             );
         ",
     },
+    Migration {
+        version: 2,
+        name: "add_projects",
+        sql: "
+            CREATE TABLE projects (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+            );
+
+            INSERT INTO projects (id, name, description) VALUES (1, 'default', 'Default project');
+
+            ALTER TABLE tasks ADD COLUMN project_id INTEGER NOT NULL DEFAULT 1;
+
+            CREATE INDEX idx_tasks_project_id ON tasks(project_id);
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -114,11 +132,16 @@ fn run_migrations(conn: &Connection) -> Result<()> {
                 "INSERT INTO schema_migrations (version, name) VALUES (1, 'initial_schema')",
                 [],
             )?;
-            return Ok(());
+            // Fall through to apply remaining migrations (v2+)
         }
     }
 
-    let current_version = max_version.unwrap_or(0);
+    let current_version: i64 = conn
+        .query_row(
+            "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
+            [],
+            |row| row.get(0),
+        )?;
     for m in MIGRATIONS {
         if m.version > current_version {
             let tx_sql = format!("BEGIN;\n{}\nCOMMIT;", m.sql);
@@ -247,7 +270,104 @@ fn migrate_legacy(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
+// --- Project functions ---
+
+fn create_project(conn: &Connection, params: &CreateProjectParams) -> Result<Project> {
+    conn.execute(
+        "INSERT INTO projects (name, description) VALUES (?1, ?2)",
+        rusqlite::params![params.name, params.description],
+    )?;
+    let id = conn.last_insert_rowid();
+    get_project(conn, id)
+}
+
+fn get_project(conn: &Connection, id: i64) -> Result<Project> {
+    let (name, description, created_at): (String, Option<String>, String) = conn
+        .query_row(
+            "SELECT name, description, created_at FROM projects WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .context("project not found")?;
+    Ok(Project {
+        id,
+        name,
+        description,
+        created_at,
+    })
+}
+
+fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
+    let (id, description, created_at): (i64, Option<String>, String) = conn
+        .query_row(
+            "SELECT id, description, created_at FROM projects WHERE name = ?1",
+            params![name],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .context("project not found")?;
+    Ok(Project {
+        id,
+        name: name.to_string(),
+        description,
+        created_at,
+    })
+}
+
+fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
+    let mut stmt = conn.prepare("SELECT id, name, description, created_at FROM projects ORDER BY id")?;
+    let projects = stmt
+        .query_map([], |row| {
+            Ok(Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(projects)
+}
+
+fn delete_project(conn: &Connection, id: i64) -> Result<()> {
+    if id == 1 {
+        anyhow::bail!("cannot delete the default project");
+    }
+    // Check for existing tasks
+    let task_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE project_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if task_count > 0 {
+        anyhow::bail!("cannot delete project with {} existing task(s)", task_count);
+    }
+    let affected = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
+    if affected == 0 {
+        anyhow::bail!("project not found: {id}");
+    }
+    Ok(())
+}
+
+/// Verify that a task belongs to the given project.
+fn verify_task_project(conn: &Connection, project_id: i64, task_id: i64) -> Result<()> {
+    let actual_project_id: i64 = conn
+        .query_row(
+            "SELECT project_id FROM tasks WHERE id = ?1",
+            params![task_id],
+            |row| row.get(0),
+        )
+        .context("task not found")?;
+    if actual_project_id != project_id {
+        anyhow::bail!("task not found");
+    }
+    Ok(())
+}
+
+// --- Task functions ---
+
+fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+    // Verify project exists
+    get_project(conn, project_id)?;
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
     let metadata_str = params
         .metadata
@@ -255,8 +375,8 @@ fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
         .map(|v| serde_json::to_string(v))
         .transpose()?;
     conn.execute(
-        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str],
+        "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id],
     )?;
     let task_id = conn.last_insert_rowid();
 
@@ -295,11 +415,11 @@ fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
 }
 
 fn get_task(conn: &Connection, id: i64) -> Result<Task> {
-    let (title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str): (
-        String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
+    let (project_id, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str): (
+        i64, String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
     ) = conn
         .query_row(
-            "SELECT title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata FROM tasks WHERE id = ?1",
+            "SELECT project_id, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata FROM tasks WHERE id = ?1",
             params![id],
             |row| {
                 Ok((
@@ -307,6 +427,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
                     row.get(4)?, row.get(5)?, row.get(6)?, row.get(7)?,
                     row.get(8)?, row.get(9)?, row.get(10)?, row.get(11)?,
                     row.get(12)?, row.get(13)?, row.get(14)?, row.get(15)?,
+                    row.get(16)?,
                 ))
             },
         )
@@ -339,6 +460,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
 
     Ok(Task {
         id,
+        project_id,
         title,
         background,
         description,
@@ -670,9 +792,12 @@ fn delete_task(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+    conditions.push("t.project_id = ?".to_string());
+    param_values.push(Box::new(project_id));
 
     if !filter.statuses.is_empty() {
         let placeholders: Vec<&str> = filter.statuses.iter().map(|_| "?").collect();
@@ -730,10 +855,11 @@ fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Task>> 
     Ok(tasks)
 }
 
-fn next_task(conn: &Connection) -> Result<Option<Task>> {
+fn next_task(conn: &Connection, project_id: i64) -> Result<Option<Task>> {
     let sql = "
         SELECT t.id FROM tasks t
-        WHERE t.status = 'todo'
+        WHERE t.project_id = ?1
+          AND t.status = 'todo'
           AND NOT EXISTS (
             SELECT 1 FROM task_dependencies td
             JOIN tasks dep ON dep.id = td.depends_on_task_id
@@ -743,7 +869,7 @@ fn next_task(conn: &Connection) -> Result<Option<Task>> {
         LIMIT 1
     ";
     let id: Option<i64> = conn
-        .query_row(sql, [], |row| row.get(0))
+        .query_row(sql, params![project_id], |row| row.get(0))
         .optional()?;
     match id {
         Some(id) => Ok(Some(get_task(conn, id)?)),
@@ -751,9 +877,9 @@ fn next_task(conn: &Connection) -> Result<Option<Task>> {
     }
 }
 
-fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
-    let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")?;
-    let rows = stmt.query_map([], |row| {
+fn task_stats(conn: &Connection, project_id: i64) -> Result<HashMap<String, i64>> {
+    let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks WHERE project_id = ?1 GROUP BY status")?;
+    let rows = stmt.query_map(params![project_id], |row| {
         let status: String = row.get(0)?;
         let count: i64 = row.get(1)?;
         Ok((status, count))
@@ -766,26 +892,27 @@ fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
     Ok(stats)
 }
 
-fn ready_count(conn: &Connection) -> Result<i64> {
+fn ready_count(conn: &Connection, project_id: i64) -> Result<i64> {
     let sql = "
         SELECT COUNT(*) FROM tasks t
-        WHERE t.status = 'todo'
+        WHERE t.project_id = ?1
+          AND t.status = 'todo'
           AND NOT EXISTS (
             SELECT 1 FROM task_dependencies td
             JOIN tasks dep ON dep.id = td.depends_on_task_id
             WHERE td.task_id = t.id AND dep.status != 'completed'
           )
     ";
-    let count: i64 = conn.query_row(sql, [], |row| row.get(0))?;
+    let count: i64 = conn.query_row(sql, params![project_id], |row| row.get(0))?;
     Ok(count)
 }
 
-fn list_ready_tasks(conn: &Connection) -> Result<Vec<Task>> {
+fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
     let filter = ListTasksFilter {
         ready: true,
         ..Default::default()
     };
-    list_tasks(conn, &filter)
+    list_tasks(conn, project_id, &filter)
 }
 
 /// Check if adding dep_id as a dependency of task_id would create a cycle.
@@ -1006,174 +1133,168 @@ impl SqliteBackend {
     }
 }
 
+macro_rules! blocking {
+    ($self:ident, $body:expr) => {{
+        let conn = $self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+            $body(&conn)
+        }).await?
+    }};
+}
+
 #[async_trait]
 impl TaskBackend for SqliteBackend {
-    async fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
         let params = params.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            create_task(&conn, &params)
-        }).await?
+        blocking!(self, |conn: &Connection| create_project(conn, &params))
     }
 
-    async fn get_task(&self, id: i64) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            get_task(&conn, id)
-        }).await?
+    async fn get_project(&self, id: i64) -> Result<Project> {
+        blocking!(self, |conn: &Connection| get_project(conn, id))
     }
 
-    async fn ready_task(&self, id: i64) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            ready_task(&conn, id)
-        }).await?
+    async fn get_project_by_name(&self, name: &str) -> Result<Project> {
+        let name = name.to_owned();
+        blocking!(self, |conn: &Connection| get_project_by_name(conn, &name))
     }
 
-    async fn start_task(&self, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn list_projects(&self) -> Result<Vec<Project>> {
+        blocking!(self, |conn: &Connection| list_projects(conn))
+    }
+
+    async fn delete_project(&self, id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| delete_project(conn, id))
+    }
+
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| create_task(conn, project_id, &params))
+    }
+
+    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            get_task(conn, id)
+        })
+    }
+
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            ready_task(conn, id)
+        })
+    }
+
+    async fn start_task(&self, project_id: i64, id: i64, assignee_session_id: Option<String>, started_at: &str) -> Result<Task> {
         let started_at = started_at.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            start_task(&conn, id, assignee_session_id, &started_at)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            start_task(conn, id, assignee_session_id, &started_at)
+        })
     }
 
-    async fn complete_task(&self, id: i64, completed_at: &str) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn complete_task(&self, project_id: i64, id: i64, completed_at: &str) -> Result<Task> {
         let completed_at = completed_at.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            complete_task(&conn, id, &completed_at)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            complete_task(conn, id, &completed_at)
+        })
     }
 
-    async fn cancel_task(&self, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn cancel_task(&self, project_id: i64, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
         let canceled_at = canceled_at.to_owned();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            cancel_task(&conn, id, &canceled_at, reason)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            cancel_task(conn, id, &canceled_at, reason)
+        })
     }
 
-    async fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let params = params.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            update_task(&conn, id, &params)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            update_task(conn, id, &params)
+        })
     }
 
-    async fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
-        let conn = self.conn.clone();
+    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
         let params = params.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            update_task_arrays(&conn, id, &params)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            update_task_arrays(conn, id, &params)
+        })
     }
 
-    async fn delete_task(&self, id: i64) -> Result<()> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            delete_task(&conn, id)
-        }).await?
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, id)?;
+            delete_task(conn, id)
+        })
     }
 
-    async fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
-        let conn = self.conn.clone();
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
         let filter = filter.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            list_tasks(&conn, &filter)
-        }).await?
+        blocking!(self, |conn: &Connection| list_tasks(conn, project_id, &filter))
     }
 
-    async fn next_task(&self) -> Result<Option<Task>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            next_task(&conn)
-        }).await?
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+        blocking!(self, |conn: &Connection| next_task(conn, project_id))
     }
 
-    async fn task_stats(&self) -> Result<HashMap<String, i64>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            task_stats(&conn)
-        }).await?
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+        blocking!(self, |conn: &Connection| task_stats(conn, project_id))
     }
 
-    async fn ready_count(&self) -> Result<i64> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            ready_count(&conn)
-        }).await?
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        blocking!(self, |conn: &Connection| ready_count(conn, project_id))
     }
 
-    async fn list_ready_tasks(&self) -> Result<Vec<Task>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            list_ready_tasks(&conn)
-        }).await?
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
     }
 
-    async fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            add_dependency(&conn, task_id, dep_id)
-        }).await?
+    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            add_dependency(conn, task_id, dep_id)
+        })
     }
 
-    async fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            remove_dependency(&conn, task_id, dep_id)
-        }).await?
+    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            remove_dependency(conn, task_id, dep_id)
+        })
     }
 
-    async fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let conn = self.conn.clone();
+    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
         let dep_ids = dep_ids.to_vec();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            set_dependencies(&conn, task_id, &dep_ids)
-        }).await?
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            set_dependencies(conn, task_id, &dep_ids)
+        })
     }
 
-    async fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            list_dependencies(&conn, task_id)
-        }).await?
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            list_dependencies(conn, task_id)
+        })
     }
 
-    async fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            check_dod(&conn, task_id, index)
-        }).await?
+    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            check_dod(conn, task_id, index)
+        })
     }
 
-    async fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let conn = conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
-            uncheck_dod(&conn, task_id, index)
-        }).await?
+    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+        blocking!(self, |conn: &Connection| {
+            verify_task_project(conn, project_id, task_id)?;
+            uncheck_dod(conn, task_id, index)
+        })
     }
 }
 
@@ -1253,6 +1374,7 @@ mod tests {
         assert!(tables.contains(&"task_tags".to_string()));
         assert!(tables.contains(&"task_dependencies".to_string()));
         assert!(tables.contains(&"schema_migrations".to_string()));
+        assert!(tables.contains(&"projects".to_string()));
     }
 
     #[test]
@@ -1295,6 +1417,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "Test task".to_string(),
                 background: Some("bg".to_string()),
@@ -1343,14 +1466,14 @@ mod tests {
     #[test]
     fn create_task_default_priority() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, &default_create_params("default prio")).unwrap();
+        let task = create_task(&conn, 1, &default_create_params("default prio")).unwrap();
         assert_eq!(task.priority, Priority::P2);
     }
 
     #[test]
     fn update_task_fields() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, &default_create_params("original")).unwrap();
+        let task = create_task(&conn, 1, &default_create_params("original")).unwrap();
 
         let updated = update_task(
             &conn,
@@ -1384,7 +1507,7 @@ mod tests {
     #[test]
     fn status_transition_validated() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, &default_create_params("t")).unwrap();
+        let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
         assert_eq!(task.status, TaskStatus::Draft);
 
         // draft -> in_progress should fail (must go through todo)
@@ -1412,19 +1535,19 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // cancel from draft
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let canceled = cancel_task(&conn, t1.id, "2025-01-01T00:00:00Z", Some("reason1".into())).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
         assert_eq!(canceled.cancel_reason.as_deref(), Some("reason1"));
 
         // cancel from todo
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         ready_task(&conn, t2.id).unwrap();
         let canceled = cancel_task(&conn, t2.id, "2025-01-01T00:00:00Z", None).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
 
         // cancel from in_progress
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
         transition_to(&conn, t3.id, TaskStatus::InProgress);
         let canceled = cancel_task(&conn, t3.id, "2025-01-01T00:00:00Z", None).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
@@ -1435,6 +1558,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "to delete".to_string(),
                 background: None,
@@ -1484,24 +1608,25 @@ mod tests {
     #[test]
     fn list_tasks_no_filter() {
         let (_tmp, conn) = setup();
-        create_task(&conn, &default_create_params("a")).unwrap();
-        create_task(&conn, &default_create_params("b")).unwrap();
+        create_task(&conn, 1, &default_create_params("a")).unwrap();
+        create_task(&conn, 1, &default_create_params("b")).unwrap();
 
-        let tasks = list_tasks(&conn, &ListTasksFilter::default()).unwrap();
+        let tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
         assert_eq!(tasks.len(), 2);
     }
 
     #[test]
     fn list_tasks_filter_by_status() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("draft")).unwrap();
-        let _t2 = create_task(&conn, &default_create_params("todo")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("draft")).unwrap();
+        let _t2 = create_task(&conn, 1, &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
         transition_to(&conn, t1.id, TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
+            1,
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Draft],
                 tags: vec![],
@@ -1515,6 +1640,7 @@ mod tests {
 
         let todos = list_tasks(
             &conn,
+            1,
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Todo],
                 tags: vec![],
@@ -1532,6 +1658,7 @@ mod tests {
         let (_tmp, conn) = setup();
         create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "tagged".to_string(),
                 branch: None,
@@ -1542,10 +1669,11 @@ mod tests {
             },
         )
         .unwrap();
-        create_task(&conn, &default_create_params("untagged")).unwrap();
+        create_task(&conn, 1, &default_create_params("untagged")).unwrap();
 
         let result = list_tasks(
             &conn,
+            1,
             &ListTasksFilter {
                 statuses: vec![],
                 tags: vec!["rust".to_string()],
@@ -1563,12 +1691,13 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // Create dep task and move to completed
-        let dep = create_task(&conn, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
         transition_to(&conn, dep.id, TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
         let ready_t = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "ready".to_string(),
                 dependencies: vec![dep.id],
@@ -1578,9 +1707,10 @@ mod tests {
         transition_to(&conn, ready_t.id, TaskStatus::Todo);
 
         // Create another dep that is NOT completed
-        let dep2 = create_task(&conn, &default_create_params("dep2")).unwrap();
+        let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
         let blocked_task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep2.id],
@@ -1591,6 +1721,7 @@ mod tests {
 
         let result = list_tasks(
             &conn,
+            1,
             &ListTasksFilter {
                 statuses: vec![],
                 tags: vec![],
@@ -1608,6 +1739,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "t1".to_string(),
                 branch: None,
@@ -1630,11 +1762,12 @@ mod tests {
     #[test]
     fn task_with_dependencies() {
         let (_tmp, conn) = setup();
-        let dep1 = create_task(&conn, &default_create_params("dep1")).unwrap();
-        let dep2 = create_task(&conn, &default_create_params("dep2")).unwrap();
+        let dep1 = create_task(&conn, 1, &default_create_params("dep1")).unwrap();
+        let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
 
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "with deps".to_string(),
                 dependencies: vec![dep1.id, dep2.id],
@@ -1670,6 +1803,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -1702,6 +1836,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -1733,6 +1868,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -1762,6 +1898,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 definition_of_done: vec!["old".to_string()],
                 ..default_create_params("t")
@@ -1794,6 +1931,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 in_scope: vec!["a".to_string(), "b".to_string()],
                 ..default_create_params("t")
@@ -1819,6 +1957,7 @@ mod tests {
     fn make_todo(conn: &Connection, title: &str, priority: Option<Priority>) -> Task {
         let task = create_task(
             conn,
+            1,
             &CreateTaskParams {
                 priority,
                 ..default_create_params(title)
@@ -1837,7 +1976,7 @@ mod tests {
     #[test]
     fn next_task_returns_none_when_empty() {
         let (_tmp, conn) = setup();
-        assert!(next_task(&conn).unwrap().is_none());
+        assert!(next_task(&conn, 1).unwrap().is_none());
     }
 
     #[test]
@@ -1845,11 +1984,12 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // Create a dep that is NOT completed (still draft)
-        let dep = create_task(&conn, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
 
         // Create a todo task that depends on dep
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id],
@@ -1858,7 +1998,7 @@ mod tests {
         ).unwrap();
         ready_task(&conn, task.id).unwrap();
 
-        assert!(next_task(&conn).unwrap().is_none());
+        assert!(next_task(&conn, 1).unwrap().is_none());
     }
 
     #[test]
@@ -1869,7 +2009,7 @@ mod tests {
         make_todo(&conn, "high", Some(Priority::P0));
         make_todo(&conn, "mid", Some(Priority::P1));
 
-        let task = next_task(&conn).unwrap().unwrap();
+        let task = next_task(&conn, 1).unwrap().unwrap();
         assert_eq!(task.title, "high");
     }
 
@@ -1882,7 +2022,7 @@ mod tests {
         make_todo(&conn, "first", Some(Priority::P2));
         make_todo(&conn, "second", Some(Priority::P2));
 
-        let task = next_task(&conn).unwrap().unwrap();
+        let task = next_task(&conn, 1).unwrap().unwrap();
         assert_eq!(task.title, "first");
     }
 
@@ -1895,7 +2035,7 @@ mod tests {
         let t1 = make_todo(&conn, "t1", Some(Priority::P2));
         let t2 = make_todo(&conn, "t2", Some(Priority::P2));
 
-        let task = next_task(&conn).unwrap().unwrap();
+        let task = next_task(&conn, 1).unwrap().unwrap();
         // t1 was created first, so it has lower id
         assert!(t1.id < t2.id);
         assert_eq!(task.id, t1.id);
@@ -1909,6 +2049,7 @@ mod tests {
 
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "ready".to_string(),
                 dependencies: vec![dep.id],
@@ -1917,7 +2058,7 @@ mod tests {
         ).unwrap();
         ready_task(&conn, task.id).unwrap();
 
-        let result = next_task(&conn).unwrap().unwrap();
+        let result = next_task(&conn, 1).unwrap().unwrap();
         assert_eq!(result.title, "ready");
     }
 
@@ -1926,8 +2067,8 @@ mod tests {
     #[test]
     fn add_dependency_basic() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("task2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("task2")).unwrap();
 
         let updated = add_dependency(&conn, t1.id, t2.id).unwrap();
         assert!(updated.dependencies.contains(&t2.id));
@@ -1936,7 +2077,7 @@ mod tests {
     #[test]
     fn add_dependency_self_error() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
         let result = add_dependency(&conn, t1.id, t1.id);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("itself"));
@@ -1945,7 +2086,7 @@ mod tests {
     #[test]
     fn add_dependency_nonexistent_task() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("task1")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
         assert!(add_dependency(&conn, t1.id, 999).is_err());
         assert!(add_dependency(&conn, 999, t1.id).is_err());
     }
@@ -1953,8 +2094,8 @@ mod tests {
     #[test]
     fn add_dependency_cycle_direct() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         let result = add_dependency(&conn, t2.id, t1.id);
@@ -1965,9 +2106,9 @@ mod tests {
     #[test]
     fn add_dependency_cycle_indirect() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         add_dependency(&conn, t2.id, t3.id).unwrap();
@@ -1979,8 +2120,8 @@ mod tests {
     #[test]
     fn add_dependency_idempotent() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         let result = add_dependency(&conn, t1.id, t2.id);
@@ -1992,8 +2133,8 @@ mod tests {
     #[test]
     fn remove_dependency_basic() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         let updated = remove_dependency(&conn, t1.id, t2.id).unwrap();
@@ -2003,8 +2144,8 @@ mod tests {
     #[test]
     fn remove_dependency_nonexistent() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         let result = remove_dependency(&conn, t1.id, t2.id);
         assert!(result.is_err());
@@ -2014,9 +2155,9 @@ mod tests {
     #[test]
     fn set_dependencies_basic() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
         let updated = set_dependencies(&conn, t1.id, &[t2.id, t3.id]).unwrap();
         assert_eq!(updated.dependencies.len(), 2);
@@ -2027,9 +2168,9 @@ mod tests {
     #[test]
     fn set_dependencies_replace() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
         set_dependencies(&conn, t1.id, &[t2.id]).unwrap();
         let updated = set_dependencies(&conn, t1.id, &[t3.id]).unwrap();
@@ -2039,8 +2180,8 @@ mod tests {
     #[test]
     fn set_dependencies_empty() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         let updated = set_dependencies(&conn, t1.id, &[]).unwrap();
@@ -2050,9 +2191,9 @@ mod tests {
     #[test]
     fn set_dependencies_cycle_error_rollback() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
         // t2 -> t1
         add_dependency(&conn, t2.id, t1.id).unwrap();
@@ -2068,9 +2209,9 @@ mod tests {
     #[test]
     fn list_dependencies_basic() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
         add_dependency(&conn, t1.id, t3.id).unwrap();
@@ -2085,7 +2226,7 @@ mod tests {
     #[test]
     fn list_dependencies_empty() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, &default_create_params("t1")).unwrap();
+        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
 
         let deps = list_dependencies(&conn, t1.id).unwrap();
         assert!(deps.is_empty());
@@ -2096,6 +2237,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 title: "t".to_string(),
                 background: Some("bg".to_string()),
@@ -2133,6 +2275,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 definition_of_done: vec!["item1".to_string(), "item2".to_string()],
                 ..default_create_params("t")
@@ -2161,6 +2304,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
+            1,
             &CreateTaskParams {
                 definition_of_done: vec!["item1".to_string()],
                 ..default_create_params("t")
@@ -2175,7 +2319,7 @@ mod tests {
     #[test]
     fn check_dod_empty_list() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, &default_create_params("t")).unwrap();
+        let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
         assert!(check_dod(&conn, task.id, 1).is_err());
     }
 
@@ -2185,7 +2329,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
     }
 
     #[test]
@@ -2278,9 +2422,9 @@ mod tests {
         // Open via open_db which runs migrations
         let conn = open_db(tmp.path()).unwrap();
 
-        // Version should be 1
+        // Version should be 2 (legacy v1 + add_projects v2)
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn.prepare("SELECT description FROM tasks LIMIT 0").is_ok();
@@ -2318,13 +2462,13 @@ mod tests {
         let v2 = current_schema_version(&conn2).unwrap();
         assert_eq!(v1, v2);
 
-        // Only one row in schema_migrations
+        // Two rows in schema_migrations (v1 + v2)
         let count: i64 = conn2
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 1);
+        assert_eq!(count, 2);
     }
 
     #[test]

@@ -18,8 +18,8 @@ use crate::backend::TaskBackend;
 use crate::hooks;
 use crate::hooks::LogFormat;
 use crate::models::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CreateProjectParams, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 #[derive(Clone)]
@@ -207,31 +207,68 @@ pub async fn serve(
     };
 
     let app = Router::new()
-        // Static path before wildcard to avoid capture
-        .route("/api/v1/tasks/next", post(next_task))
-        // Task CRUD
-        .route("/api/v1/tasks", get(list_tasks).post(create_task))
+        // Project CRUD
+        .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
-            "/api/v1/tasks/{id}",
+            "/api/v1/projects/{project_id}",
+            get(get_project).delete(delete_project),
+        )
+        // Task next (static path before wildcard)
+        .route(
+            "/api/v1/projects/{project_id}/tasks/next",
+            post(next_task),
+        )
+        // Task CRUD
+        .route(
+            "/api/v1/projects/{project_id}/tasks",
+            get(list_tasks).post(create_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}",
             get(get_task).put(edit_task).delete(delete_task),
         )
         // Status transitions
-        .route("/api/v1/tasks/{id}/ready", post(ready_task))
-        .route("/api/v1/tasks/{id}/start", post(start_task))
-        .route("/api/v1/tasks/{id}/complete", post(complete_task))
-        .route("/api/v1/tasks/{id}/cancel", post(cancel_task))
-        // Dependencies
-        .route("/api/v1/tasks/{id}/deps", get(list_deps).post(add_dep))
-        .route("/api/v1/tasks/{id}/deps/{dep_id}", delete(remove_dep))
-        // DoD
-        .route("/api/v1/tasks/{id}/dod/{index}/check", post(check_dod))
         .route(
-            "/api/v1/tasks/{id}/dod/{index}/uncheck",
+            "/api/v1/projects/{project_id}/tasks/{id}/ready",
+            post(ready_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/start",
+            post(start_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/complete",
+            post(complete_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/cancel",
+            post(cancel_task),
+        )
+        // Dependencies
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/deps",
+            get(list_deps).post(add_dep),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}",
+            delete(remove_dep),
+        )
+        // DoD
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check",
+            post(check_dod),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck",
             post(uncheck_dod),
         )
-        // Other
+        // Project stats
+        .route(
+            "/api/v1/projects/{project_id}/stats",
+            get(get_stats),
+        )
+        // Server-wide
         .route("/api/v1/config", get(get_config))
-        .route("/api/v1/stats", get(get_stats))
         .with_state(state)
         .layer(
             TraceLayer::new_for_http()
@@ -294,11 +331,49 @@ fn get_local_ip() -> Option<std::net::IpAddr> {
     socket.local_addr().ok().map(|a| a.ip())
 }
 
-// --- Handlers ---
+// --- Project Handlers ---
 
-// GET /api/v1/tasks
+// GET /api/v1/projects
+async fn list_projects(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<crate::models::Project>>, ApiError> {
+    let projects = state.backend.list_projects().await.map_err(classify_error)?;
+    Ok(Json(projects))
+}
+
+// POST /api/v1/projects
+async fn create_project(
+    State(state): State<AppState>,
+    Json(params): Json<CreateProjectParams>,
+) -> Result<(StatusCode, Json<crate::models::Project>), ApiError> {
+    let project = state.backend.create_project(&params).await.map_err(classify_error)?;
+    Ok((StatusCode::CREATED, Json(project)))
+}
+
+// GET /api/v1/projects/{project_id}
+async fn get_project(
+    State(state): State<AppState>,
+    Path(project_id): Path<i64>,
+) -> Result<Json<crate::models::Project>, ApiError> {
+    let project = state.backend.get_project(project_id).await.map_err(classify_error)?;
+    Ok(Json(project))
+}
+
+// DELETE /api/v1/projects/{project_id}
+async fn delete_project(
+    State(state): State<AppState>,
+    Path(project_id): Path<i64>,
+) -> Result<StatusCode, ApiError> {
+    state.backend.delete_project(project_id).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// --- Task Handlers ---
+
+// GET /api/v1/projects/{project_id}/tasks
 async fn list_tasks(
     State(state): State<AppState>,
+    Path(project_id): Path<i64>,
     Query(query): Query<ListTasksQuery>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
     let statuses: Vec<TaskStatus> = query
@@ -313,16 +388,16 @@ async fn list_tasks(
         depends_on: query.depends_on,
         ready: query.ready.unwrap_or(false),
     };
-    let tasks = state.backend.list_tasks(&filter).await.map_err(classify_error)?;
+    let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(classify_error)?;
     Ok(Json(tasks))
 }
 
-// POST /api/v1/tasks
+// POST /api/v1/projects/{project_id}/tasks
 async fn create_task(
     State(state): State<AppState>,
+    Path(project_id): Path<i64>,
     Json(params): Json<CreateTaskParams>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
-    // Handle branch template expansion
     let needs_template = params
         .branch
         .as_ref()
@@ -333,10 +408,11 @@ async fn create_task(
         let mut params_without_branch = params;
         params_without_branch.branch = None;
         let created =
-            state.backend.create_task(&params_without_branch).await.map_err(classify_error)?;
+            state.backend.create_task(project_id, &params_without_branch).await.map_err(classify_error)?;
         let expanded =
             branch_template.as_deref().unwrap().replace("${task_id}", &created.id.to_string());
         state.backend.update_task(
+            project_id,
             created.id,
             &UpdateTaskParams {
                 title: None,
@@ -357,29 +433,28 @@ async fn create_task(
         .await
         .map_err(classify_error)?
     } else {
-        state.backend.create_task(&params).await.map_err(classify_error)?
+        state.backend.create_task(project_id, &params).await.map_err(classify_error)?
     };
 
-    // Fire hooks
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(&config, "task_added", &task, state.backend.as_ref(), None, None).await;
 
     Ok((StatusCode::CREATED, Json(task)))
 }
 
-// GET /api/v1/tasks/{id}
+// GET /api/v1/projects/{project_id}/tasks/{id}
 async fn get_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
-// PUT /api/v1/tasks/{id}
+// PUT /api/v1/projects/{project_id}/tasks/{id}
 async fn edit_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<EditTaskBody>,
 ) -> Result<Json<Task>, ApiError> {
     let branch_value = if body.clear_branch {
@@ -440,27 +515,27 @@ async fn edit_task(
         remove_out_of_scope: body.remove_out_of_scope,
     };
 
-    state.backend.update_task(id, &scalar_params).await.map_err(classify_error)?;
-    state.backend.update_task_arrays(id, &array_params).await.map_err(classify_error)?;
-    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    state.backend.update_task(project_id, id, &scalar_params).await.map_err(classify_error)?;
+    state.backend.update_task_arrays(project_id, id, &array_params).await.map_err(classify_error)?;
+    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
-// DELETE /api/v1/tasks/{id}
+// DELETE /api/v1/projects/{project_id}/tasks/{id}
 async fn delete_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
-    state.backend.delete_task(id).await.map_err(classify_error)?;
+    state.backend.delete_task(project_id, id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-// POST /api/v1/tasks/{id}/ready
+// POST /api/v1/projects/{project_id}/tasks/{id}/ready
 async fn ready_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
-    let updated = state.backend.ready_task(id).await.map_err(classify_error)?;
+    let updated = state.backend.ready_task(project_id, id).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -475,17 +550,17 @@ async fn ready_task(
     Ok(Json(updated))
 }
 
-// POST /api/v1/tasks/{id}/start
+// POST /api/v1/projects/{project_id}/tasks/{id}/start
 async fn start_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<StartBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated =
-        state.backend.start_task(id, body.session_id, &now).await.map_err(classify_error)?;
+        state.backend.start_task(project_id, id, body.session_id, &now).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -500,21 +575,20 @@ async fn start_task(
     Ok(Json(updated))
 }
 
-// POST /api/v1/tasks/{id}/complete
+// POST /api/v1/projects/{project_id}/tasks/{id}/complete
 async fn complete_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     body: Option<Json<CompleteBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
 
-    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     task.status
         .transition_to(TaskStatus::Completed)
         .map_err(classify_error)?;
 
-    // Check DoD items
     let unchecked: Vec<_> = task
         .definition_of_done
         .iter()
@@ -528,7 +602,6 @@ async fn complete_task(
         )));
     }
 
-    // PR workflow checks
     if !skip_pr_check
         && config.workflow.completion_mode == hooks::CompletionMode::PrThenComplete
     {
@@ -541,7 +614,7 @@ async fn complete_task(
         verify_pr_status(pr_url, config.workflow.auto_merge)?;
     }
 
-    let prev_ready_ids: std::collections::HashSet<i64> = state.backend.list_ready_tasks()
+    let prev_ready_ids: std::collections::HashSet<i64> = state.backend.list_ready_tasks(project_id)
         .await
         .map_err(classify_error)?
         .iter()
@@ -550,9 +623,9 @@ async fn complete_task(
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = state.backend.complete_task(id, &now).await.map_err(classify_error)?;
+    let updated = state.backend.complete_task(project_id, id, &now).await.map_err(classify_error)?;
 
-    let unblocked = hooks::compute_unblocked(state.backend.as_ref(), &prev_ready_ids).await;
+    let unblocked = hooks::compute_unblocked(state.backend.as_ref(), project_id, &prev_ready_ids).await;
     let unblocked_opt = if unblocked.is_empty() {
         None
     } else {
@@ -570,21 +643,21 @@ async fn complete_task(
     Ok(Json(updated))
 }
 
-// POST /api/v1/tasks/{id}/cancel
+// POST /api/v1/projects/{project_id}/tasks/{id}/cancel
 async fn cancel_task(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     body: Option<Json<CancelBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let reason = body.and_then(|b| b.0.reason);
-    let task = state.backend.get_task(id).await.map_err(classify_error)?;
+    let task = state.backend.get_task(project_id, id).await.map_err(classify_error)?;
     task.status
         .transition_to(TaskStatus::Canceled)
         .map_err(classify_error)?;
 
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let updated = state.backend.cancel_task(id, &now, reason).await.map_err(classify_error)?;
+    let updated = state.backend.cancel_task(project_id, id, &now, reason).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -599,17 +672,18 @@ async fn cancel_task(
     Ok(Json(updated))
 }
 
-// POST /api/v1/tasks/next
+// POST /api/v1/projects/{project_id}/tasks/next
 async fn next_task(
     State(state): State<AppState>,
+    Path(project_id): Path<i64>,
     body: Option<Json<NextBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let session_id = body.and_then(|b| b.0.session_id);
-    let task = match state.backend.next_task().await.map_err(classify_error)? {
+    let task = match state.backend.next_task(project_id).await.map_err(classify_error)? {
         Some(t) => t,
         None => {
             let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-            hooks::fire_no_eligible_task_hooks(&config, state.backend.as_ref()).await;
+            hooks::fire_no_eligible_task_hooks(&config, state.backend.as_ref(), project_id).await;
             return Err(ApiError::NotFound("no eligible task found".to_string()));
         }
     };
@@ -617,7 +691,7 @@ async fn next_task(
     let prev_status = task.status;
     let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
     let updated =
-        state.backend.start_task(task.id, session_id, &now).await.map_err(classify_error)?;
+        state.backend.start_task(project_id, task.id, session_id, &now).await.map_err(classify_error)?;
 
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     hooks::fire_hooks(
@@ -632,49 +706,49 @@ async fn next_task(
     Ok(Json(updated))
 }
 
-// GET /api/v1/tasks/{id}/deps
+// GET /api/v1/projects/{project_id}/tasks/{id}/deps
 async fn list_deps(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    let deps = state.backend.list_dependencies(id).await.map_err(classify_error)?;
+    let deps = state.backend.list_dependencies(project_id, id).await.map_err(classify_error)?;
     Ok(Json(deps))
 }
 
-// POST /api/v1/tasks/{id}/deps
+// POST /api/v1/projects/{project_id}/tasks/{id}/deps
 async fn add_dep(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path((project_id, id)): Path<(i64, i64)>,
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.add_dependency(id, body.dep_id).await.map_err(classify_error)?;
+    let task = state.backend.add_dependency(project_id, id, body.dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
-// DELETE /api/v1/tasks/{id}/deps/{dep_id}
+// DELETE /api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}
 async fn remove_dep(
     State(state): State<AppState>,
-    Path((id, dep_id)): Path<(i64, i64)>,
+    Path((project_id, id, dep_id)): Path<(i64, i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.remove_dependency(id, dep_id).await.map_err(classify_error)?;
+    let task = state.backend.remove_dependency(project_id, id, dep_id).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
-// POST /api/v1/tasks/{id}/dod/{index}/check
+// POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check
 async fn check_dod(
     State(state): State<AppState>,
-    Path((id, index)): Path<(i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.check_dod(id, index).await.map_err(classify_error)?;
+    let task = state.backend.check_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
-// POST /api/v1/tasks/{id}/dod/{index}/uncheck
+// POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck
 async fn uncheck_dod(
     State(state): State<AppState>,
-    Path((id, index)): Path<(i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let task = state.backend.uncheck_dod(id, index).await.map_err(classify_error)?;
+    let task = state.backend.uncheck_dod(project_id, id, index).await.map_err(classify_error)?;
     Ok(Json(task))
 }
 
@@ -686,11 +760,12 @@ async fn get_config(
     Ok(Json(config))
 }
 
-// GET /api/v1/stats
+// GET /api/v1/projects/{project_id}/stats
 async fn get_stats(
     State(state): State<AppState>,
+    Path(project_id): Path<i64>,
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
-    let stats = state.backend.task_stats().await.map_err(classify_error)?;
+    let stats = state.backend.task_stats(project_id).await.map_err(classify_error)?;
     Ok(Json(stats))
 }
 

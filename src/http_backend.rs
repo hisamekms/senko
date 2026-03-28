@@ -6,7 +6,8 @@ use serde_json::json;
 
 use crate::backend::TaskBackend;
 use crate::models::{
-    CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
+    CreateProjectParams, CreateTaskParams, ListTasksFilter, Project, Task, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 
 pub struct HttpBackend {
@@ -28,6 +29,10 @@ impl HttpBackend {
 
     fn url(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
+    }
+
+    fn project_url(&self, project_id: i64, path: &str) -> String {
+        format!("{}/api/v1/projects/{project_id}{path}", self.base_url)
     }
 }
 
@@ -58,7 +63,7 @@ async fn check_success(resp: reqwest::Response) -> Result<()> {
     }
 }
 
-/// Build the JSON body for `PUT /api/v1/tasks/{id}` from `UpdateTaskParams`.
+/// Build the JSON body for `PUT /tasks/{id}` from `UpdateTaskParams`.
 fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
@@ -99,7 +104,7 @@ fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
     serde_json::Value::Object(map)
 }
 
-/// Build the JSON body for `PUT /api/v1/tasks/{id}` from `UpdateTaskArrayParams`.
+/// Build the JSON body for `PUT /tasks/{id}` from `UpdateTaskArrayParams`.
 fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
@@ -131,29 +136,82 @@ fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
 
 #[async_trait]
 impl TaskBackend for HttpBackend {
-    async fn create_task(&self, params: &CreateTaskParams) -> Result<Task> {
+    async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
         let resp = self
             .client
-            .post(self.url("/api/v1/tasks"))
+            .post(self.url("/api/v1/projects"))
             .json(params)
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn get_task(&self, id: i64) -> Result<Task> {
+    async fn get_project(&self, id: i64) -> Result<Project> {
         let resp = self
             .client
-            .get(self.url(&format!("/api/v1/tasks/{id}")))
+            .get(self.url(&format!("/api/v1/projects/{id}")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn ready_task(&self, id: i64) -> Result<Task> {
+    async fn get_project_by_name(&self, name: &str) -> Result<Project> {
+        // List all projects and find by name
+        let projects: Vec<Project> = {
+            let resp = self
+                .client
+                .get(self.url("/api/v1/projects"))
+                .send()
+                .await?;
+            read_json_or_error(resp).await?
+        };
+        projects
+            .into_iter()
+            .find(|p| p.name == name)
+            .ok_or_else(|| anyhow::anyhow!("project not found"))
+    }
+
+    async fn list_projects(&self) -> Result<Vec<Project>> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{id}/ready")))
+            .get(self.url("/api/v1/projects"))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn delete_project(&self, id: i64) -> Result<()> {
+        let resp = self
+            .client
+            .delete(self.url(&format!("/api/v1/projects/{id}")))
+            .send()
+            .await?;
+        check_success(resp).await
+    }
+
+    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+        let resp = self
+            .client
+            .post(self.project_url(project_id, "/tasks"))
+            .json(params)
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let resp = self
+            .client
+            .get(self.project_url(project_id, &format!("/tasks/{id}")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+        let resp = self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/ready")))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -161,55 +219,56 @@ impl TaskBackend for HttpBackend {
 
     async fn start_task(
         &self,
+        project_id: i64,
         id: i64,
         assignee_session_id: Option<String>,
         _started_at: &str,
     ) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{id}/start")))
+            .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
             .json(&json!({ "session_id": assignee_session_id }))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn complete_task(&self, id: i64, _completed_at: &str) -> Result<Task> {
+    async fn complete_task(&self, project_id: i64, id: i64, _completed_at: &str) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{id}/complete")))
+            .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
             .json(&json!({}))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn cancel_task(&self, id: i64, _canceled_at: &str, reason: Option<String>) -> Result<Task> {
+    async fn cancel_task(&self, project_id: i64, id: i64, _canceled_at: &str, reason: Option<String>) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{id}/cancel")))
+            .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
             .json(&json!({ "reason": reason }))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn update_task(&self, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+    async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let body = update_params_to_json(params);
         let resp = self
             .client
-            .put(self.url(&format!("/api/v1/tasks/{id}")))
+            .put(self.project_url(project_id, &format!("/tasks/{id}")))
             .json(&body)
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn update_task_arrays(&self, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+    async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
         let body = array_params_to_json(params);
         let resp = self
             .client
-            .put(self.url(&format!("/api/v1/tasks/{id}")))
+            .put(self.project_url(project_id, &format!("/tasks/{id}")))
             .json(&body)
             .send()
             .await?;
@@ -217,17 +276,17 @@ impl TaskBackend for HttpBackend {
         Ok(())
     }
 
-    async fn delete_task(&self, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
         let resp = self
             .client
-            .delete(self.url(&format!("/api/v1/tasks/{id}")))
+            .delete(self.project_url(project_id, &format!("/tasks/{id}")))
             .send()
             .await?;
         check_success(resp).await
     }
 
-    async fn list_tasks(&self, filter: &ListTasksFilter) -> Result<Vec<Task>> {
-        let mut url = self.url("/api/v1/tasks");
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+        let mut url = self.project_url(project_id, "/tasks");
         let mut params: Vec<String> = Vec::new();
 
         for status in &filter.statuses {
@@ -251,10 +310,10 @@ impl TaskBackend for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn next_task(&self) -> Result<Option<Task>> {
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
         let resp = self
             .client
-            .post(self.url("/api/v1/tasks/next"))
+            .post(self.project_url(project_id, "/tasks/next"))
             .json(&json!({}))
             .send()
             .await?;
@@ -268,85 +327,87 @@ impl TaskBackend for HttpBackend {
         }
     }
 
-    async fn task_stats(&self) -> Result<HashMap<String, i64>> {
-        let resp = self.client.get(self.url("/api/v1/stats")).send().await?;
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+        let resp = self
+            .client
+            .get(self.project_url(project_id, "/stats"))
+            .send()
+            .await?;
         read_json_or_error(resp).await
     }
 
-    async fn ready_count(&self) -> Result<i64> {
-        let tasks = self.list_tasks(&ListTasksFilter {
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        let tasks = self.list_tasks(project_id, &ListTasksFilter {
             ready: true,
             ..Default::default()
         }).await?;
         Ok(tasks.len() as i64)
     }
 
-    async fn list_ready_tasks(&self) -> Result<Vec<Task>> {
-        self.list_tasks(&ListTasksFilter {
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        self.list_tasks(project_id, &ListTasksFilter {
             ready: true,
             ..Default::default()
         }).await
     }
 
-    async fn add_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{task_id}/deps")))
+            .post(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
             .json(&json!({ "dep_id": dep_id }))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn remove_dependency(&self, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let resp = self
             .client
-            .delete(self.url(&format!("/api/v1/tasks/{task_id}/deps/{dep_id}")))
+            .delete(self.project_url(project_id, &format!("/tasks/{task_id}/deps/{dep_id}")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn set_dependencies(&self, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let current_deps = self.list_dependencies(task_id).await?;
+    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+        let current_deps = self.list_dependencies(project_id, task_id).await?;
         let current_ids: std::collections::HashSet<i64> =
             current_deps.iter().map(|t| t.id).collect();
         let desired: std::collections::HashSet<i64> = dep_ids.iter().copied().collect();
 
         for id in current_ids.difference(&desired) {
-            self.remove_dependency(task_id, *id).await?;
+            self.remove_dependency(project_id, task_id, *id).await?;
         }
         for id in desired.difference(&current_ids) {
-            self.add_dependency(task_id, *id).await?;
+            self.add_dependency(project_id, task_id, *id).await?;
         }
 
-        self.get_task(task_id).await
+        self.get_task(project_id, task_id).await
     }
 
-    async fn list_dependencies(&self, task_id: i64) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let resp = self
             .client
-            .get(self.url(&format!("/api/v1/tasks/{task_id}/deps")))
+            .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn check_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!("/api/v1/tasks/{task_id}/dod/{index}/check")))
+            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check")))
             .send()
             .await?;
         read_json_or_error(resp).await
     }
 
-    async fn uncheck_dod(&self, task_id: i64, index: usize) -> Result<Task> {
+    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
         let resp = self
             .client
-            .post(self.url(&format!(
-                "/api/v1/tasks/{task_id}/dod/{index}/uncheck"
-            )))
+            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck")))
             .send()
             .await?;
         read_json_or_error(resp).await

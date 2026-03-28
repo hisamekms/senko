@@ -306,8 +306,8 @@ pub async fn build_event(
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) -> HookEvent {
-    let stats = backend.task_stats().await.unwrap_or_default();
-    let ready_count = backend.ready_count().await.unwrap_or(0);
+    let stats = backend.task_stats(task.project_id).await.unwrap_or_default();
+    let ready_count = backend.ready_count(task.project_id).await.unwrap_or(0);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
         event: event_name.into(),
@@ -466,7 +466,7 @@ pub async fn fire_hooks(
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
-pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend) {
+pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend, project_id: i64) {
     let commands = &config.hooks.on_no_eligible_task;
     if commands.is_empty() {
         return;
@@ -474,8 +474,8 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
 
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
-    let stats = backend.task_stats().await.unwrap_or_default();
-    let ready_count = backend.ready_count().await.unwrap_or(0);
+    let stats = backend.task_stats(project_id).await.unwrap_or_default();
+    let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
     let event = NoEligibleTaskEvent {
         event_id: Uuid::new_v4().to_string(),
         event: "no_eligible_task".into(),
@@ -543,9 +543,10 @@ pub fn execute_hook_sync(command: &str, json: &str) -> Result<std::process::Exit
 /// captured before the completion.
 pub async fn compute_unblocked(
     backend: &dyn TaskBackend,
+    project_id: i64,
     prev_ready_ids: &std::collections::HashSet<i64>,
 ) -> Vec<UnblockedTask> {
-    let curr_ready = backend.list_ready_tasks().await.unwrap_or_default();
+    let curr_ready = backend.list_ready_tasks(project_id).await.unwrap_or_default();
     curr_ready
         .iter()
         .filter(|t| !prev_ready_ids.contains(&t.id))
@@ -622,6 +623,7 @@ on_task_completed = "echo completed"
         let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
+            project_id: 1,
             title: "Test".into(),
             background: None,
             description: None,
@@ -661,6 +663,7 @@ on_task_completed = "echo completed"
         let (_dir, backend) = setup_db();
         let task = Task {
             id: 1,
+            project_id: 1,
             title: "Test".into(),
             background: None,
             description: None,
@@ -692,6 +695,7 @@ on_task_completed = "echo completed"
     async fn event_has_stats() {
         let (_dir, backend) = setup_db();
         backend.create_task(
+            1,
             &crate::models::CreateTaskParams {
                 title: "Task1".into(),
                 background: None,
@@ -709,7 +713,7 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        let task = backend.get_task(1).await.unwrap();
+        let task = backend.get_task(1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert!(event.stats.contains_key("draft"));
         assert_eq!(*event.stats.get("draft").unwrap(), 1);
@@ -719,6 +723,7 @@ on_task_completed = "echo completed"
     async fn event_has_ready_count() {
         let (_dir, backend) = setup_db();
         backend.create_task(
+            1,
             &crate::models::CreateTaskParams {
                 title: "Ready".into(),
                 background: None,
@@ -736,8 +741,8 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        backend.ready_task(1).await.unwrap();
-        let task = backend.get_task(1).await.unwrap();
+        backend.ready_task(1, 1).await.unwrap();
+        let task = backend.get_task(1, 1).await.unwrap();
         let event = build_event("task_added", &task, &backend, None, None).await;
         assert_eq!(event.ready_count, 1);
     }
@@ -748,6 +753,7 @@ on_task_completed = "echo completed"
 
         // Create task 1 (will be completed) and task 2 (depends on task 1)
         backend.create_task(
+            1,
             &crate::models::CreateTaskParams {
                 title: "Dependency".into(),
                 background: None,
@@ -765,10 +771,11 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        backend.ready_task(1).await.unwrap();
-        backend.start_task(1, None, "2025-01-01T00:00:00Z").await.unwrap();
+        backend.ready_task(1, 1).await.unwrap();
+        backend.start_task(1, 1, None, "2025-01-01T00:00:00Z").await.unwrap();
 
         backend.create_task(
+            1,
             &crate::models::CreateTaskParams {
                 title: "Blocked".into(),
                 background: None,
@@ -786,17 +793,17 @@ on_task_completed = "echo completed"
         )
         .await
         .unwrap();
-        backend.ready_task(2).await.unwrap();
-        backend.add_dependency(2, 1).await.unwrap();
+        backend.ready_task(1, 2).await.unwrap();
+        backend.add_dependency(1, 2, 1).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =
-            backend.list_ready_tasks().await.unwrap().iter().map(|t| t.id).collect();
+            backend.list_ready_tasks(1).await.unwrap().iter().map(|t| t.id).collect();
 
         // Complete task 1
-        backend.complete_task(1, "2025-01-01T00:00:00Z").await.unwrap();
+        backend.complete_task(1, 1, "2025-01-01T00:00:00Z").await.unwrap();
 
-        let unblocked = compute_unblocked(&backend, &prev_ready).await;
+        let unblocked = compute_unblocked(&backend, 1, &prev_ready).await;
         assert_eq!(unblocked.len(), 1);
         assert_eq!(unblocked[0].id, 2);
         assert_eq!(unblocked[0].title, "Blocked");
@@ -822,6 +829,7 @@ on_task_completed = "echo completed"
         let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 1,
+            project_id: 1,
             title: "Test".into(),
             background: None,
             description: None,
@@ -859,6 +867,7 @@ on_task_completed = "echo completed"
         let config = Config::default();
         let task = Task {
             id: 1,
+            project_id: 1,
             title: "Test".into(),
             background: None,
             description: None,
@@ -953,6 +962,7 @@ on_task_completed = "echo completed"
         let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 1,
+            project_id: 1,
             title: "Test".into(),
             background: None,
             description: None,
@@ -1040,6 +1050,7 @@ on_task_completed = ["notify", "log"]
         let (_db_dir, backend) = setup_db();
         let task = Task {
             id: 42,
+            project_id: 1,
             title: "Hook stdin test".into(),
             background: None,
             description: None,

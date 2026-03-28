@@ -130,8 +130,23 @@ pub struct DodItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Project {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateProjectParams {
+    pub name: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     pub id: i64,
+    pub project_id: i64,
     pub title: String,
     pub background: Option<String>,
     pub description: Option<String>,
