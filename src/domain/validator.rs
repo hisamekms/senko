@@ -26,6 +26,30 @@ where
     false
 }
 
+/// Async version of cycle detection for use in the application layer.
+pub async fn has_cycle_async<F, Fut>(task_id: i64, dep_id: i64, get_dependencies: F) -> bool
+where
+    F: Fn(i64) -> Fut,
+    Fut: std::future::Future<Output = Vec<i64>>,
+{
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    queue.push_back(dep_id);
+    visited.insert(dep_id);
+
+    while let Some(current) = queue.pop_front() {
+        for d in get_dependencies(current).await {
+            if d == task_id {
+                return true;
+            }
+            if visited.insert(d) {
+                queue.push_back(d);
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
