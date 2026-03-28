@@ -58,3 +58,9 @@ pub trait ProjectRepository: Send + Sync {
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
 }
+
+/// Combined trait for backends that implement both TaskRepository and ProjectRepository.
+/// Backends automatically implement TaskBackend via the blanket impl.
+pub trait TaskBackend: TaskRepository + ProjectRepository {}
+
+impl<T: TaskRepository + ProjectRepository> TaskBackend for T {}

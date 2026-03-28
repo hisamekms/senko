@@ -17,14 +17,18 @@ use crate::application::{ProjectService, TaskService, UserService};
 use crate::auth::{
     self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
 };
-use crate::backend::TaskBackend;
+use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
-use crate::hooks;
+use crate::infra::hook as hooks;
 use crate::infra::hook::executor::ShellHookExecutor;
-use crate::models::{
-    AddProjectMemberParams, CreateApiKeyParams, CreateProjectParams, CreateTaskParams,
-    CreateUserParams, ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams,
+use crate::domain::config::Config;
+use crate::domain::project::CreateProjectParams;
+use crate::domain::task::{
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
+};
+use crate::domain::user::{
+    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
 };
 
 #[derive(Clone)]
@@ -66,7 +70,7 @@ async fn check_project_permission(
 }
 
 /// For endpoints that require authentication: returns the user or 401.
-fn require_auth_user(auth: &OptionalAuthUser, auth_enabled: bool) -> Result<Option<&crate::models::User>, ApiError> {
+fn require_auth_user(auth: &OptionalAuthUser, auth_enabled: bool) -> Result<Option<&crate::domain::user::User>, ApiError> {
     if !auth_enabled {
         return Ok(None);
     }
@@ -435,7 +439,7 @@ fn get_local_ip() -> Option<std::net::IpAddr> {
 async fn list_projects(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-) -> Result<Json<Vec<crate::models::Project>>, ApiError> {
+) -> Result<Json<Vec<crate::domain::project::Project>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let projects = state.project_service.list_projects().await.map_err(classify_error)?;
     Ok(Json(projects))
@@ -446,7 +450,7 @@ async fn create_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Json(params): Json<CreateProjectParams>,
-) -> Result<(StatusCode, Json<crate::models::Project>), ApiError> {
+) -> Result<(StatusCode, Json<crate::domain::project::Project>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let project = state.project_service.create_project(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(project)))
@@ -457,7 +461,7 @@ async fn get_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
-) -> Result<Json<crate::models::Project>, ApiError> {
+) -> Result<Json<crate::domain::project::Project>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let project = state.project_service.get_project(project_id).await.map_err(classify_error)?;
     Ok(Json(project))
@@ -734,7 +738,7 @@ async fn uncheck_dod(
 // GET /api/v1/config
 async fn get_config(
     State(state): State<AppState>,
-) -> Result<Json<hooks::Config>, ApiError> {
+) -> Result<Json<Config>, ApiError> {
     let config = hooks::load_config(&state.project_root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
     Ok(Json(config))
 }
@@ -756,7 +760,7 @@ async fn get_stats(
 async fn list_users(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-) -> Result<Json<Vec<crate::models::User>>, ApiError> {
+) -> Result<Json<Vec<crate::domain::user::User>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let users = state.user_service.list_users().await.map_err(classify_error)?;
     Ok(Json(users))
@@ -767,7 +771,7 @@ async fn create_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Json(params): Json<CreateUserParams>,
-) -> Result<(StatusCode, Json<crate::models::User>), ApiError> {
+) -> Result<(StatusCode, Json<crate::domain::user::User>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let user = state.user_service.create_user(&params).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(user)))
@@ -778,7 +782,7 @@ async fn get_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
-) -> Result<Json<crate::models::User>, ApiError> {
+) -> Result<Json<crate::domain::user::User>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let user = state.user_service.get_user(user_id).await.map_err(classify_error)?;
     Ok(Json(user))
@@ -813,7 +817,7 @@ async fn list_members(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
-) -> Result<Json<Vec<crate::models::ProjectMember>>, ApiError> {
+) -> Result<Json<Vec<crate::domain::user::ProjectMember>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let members = state.project_service.list_project_members(project_id).await.map_err(classify_error)?;
     Ok(Json(members))
@@ -825,7 +829,7 @@ async fn add_member(
     auth: OptionalAuthUser,
     Path(project_id): Path<i64>,
     Json(body): Json<AddMemberBody>,
-) -> Result<(StatusCode, Json<crate::models::ProjectMember>), ApiError> {
+) -> Result<(StatusCode, Json<crate::domain::user::ProjectMember>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let params = AddProjectMemberParams {
         user_id: body.user_id,
@@ -840,7 +844,7 @@ async fn get_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, user_id)): Path<(i64, i64)>,
-) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+) -> Result<Json<crate::domain::user::ProjectMember>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let member = state.project_service.get_project_member(project_id, user_id).await.map_err(classify_error)?;
     Ok(Json(member))
@@ -852,7 +856,7 @@ async fn update_member_role(
     auth: OptionalAuthUser,
     Path((project_id, user_id)): Path<(i64, i64)>,
     Json(body): Json<UpdateRoleBody>,
-) -> Result<Json<crate::models::ProjectMember>, ApiError> {
+) -> Result<Json<crate::domain::user::ProjectMember>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let member = state.project_service.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
     Ok(Json(member))
@@ -876,7 +880,7 @@ async fn list_api_keys(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
-) -> Result<Json<Vec<crate::models::ApiKey>>, ApiError> {
+) -> Result<Json<Vec<crate::domain::user::ApiKey>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let keys = state.user_service.list_api_keys(user_id).await.map_err(classify_error)?;
     Ok(Json(keys))
@@ -888,7 +892,7 @@ async fn create_api_key(
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
     body: Option<Json<CreateApiKeyParams>>,
-) -> Result<(StatusCode, Json<crate::models::ApiKeyWithSecret>), ApiError> {
+) -> Result<(StatusCode, Json<crate::domain::user::ApiKeyWithSecret>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let name = body.and_then(|b| b.0.name).unwrap_or_default();
     let key = state.user_service.create_api_key(user_id, &name).await.map_err(classify_error)?;

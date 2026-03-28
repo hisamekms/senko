@@ -7,11 +7,14 @@ use aws_sdk_dynamodb::Client;
 use chrono::Utc;
 use tokio::sync::OnceCell;
 
-use crate::backend::TaskBackend;
-use crate::models::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
-    CreateUserParams, DodItem, ListTasksFilter, Priority, Project, ProjectMember, Role, Task,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, User,
+use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::repository::{ProjectRepository, TaskRepository};
+use crate::domain::task::{
+    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
+};
+use crate::domain::user::{
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
 };
 
 pub struct DynamoDbBackend {
@@ -603,7 +606,7 @@ fn item_to_member(item: &HashMap<String, AttributeValue>) -> Result<ProjectMembe
 }
 
 #[async_trait]
-impl TaskBackend for DynamoDbBackend {
+impl ProjectRepository for DynamoDbBackend {
     // Project management
 
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project> {
@@ -799,9 +802,10 @@ impl TaskBackend for DynamoDbBackend {
     async fn delete_api_key(&self, _key_id: i64) -> Result<()> {
         bail!("API key management is not yet supported for DynamoDB backend")
     }
+}
 
-    // Task CRUD
-
+#[async_trait]
+impl TaskRepository for DynamoDbBackend {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
         let id = self.next_id("TASK").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

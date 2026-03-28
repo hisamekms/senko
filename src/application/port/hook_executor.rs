@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
 /// Port trait for firing hook events after task state changes.

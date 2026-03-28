@@ -8,8 +8,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
 
-use crate::backend::TaskBackend;
-use crate::models::{ProjectMember, Role, User};
+use crate::domain::repository::TaskBackend;
+use crate::domain::user::{ProjectMember, Role, User};
 
 // --- AuthProvider trait (extensible for OIDC in the future) ---
 

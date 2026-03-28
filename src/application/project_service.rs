@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::TaskBackend;
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::user::{
     AddProjectMemberParams, ProjectMember, Role,

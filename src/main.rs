@@ -7,17 +7,20 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use localflow::application::port::HookExecutor;
 use localflow::application::{ProjectService, TaskService, UserService};
-use localflow::backend::TaskBackend;
-use localflow::db;
-use localflow::hooks::{self, HookMode};
-use localflow::http_backend::HttpBackend;
+use localflow::domain::config::{Config, HookMode};
+use localflow::domain::project::CreateProjectParams;
+use localflow::domain::repository::TaskBackend;
+use localflow::domain::task::{
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
+};
+use localflow::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
+use localflow::infra::hook as hooks;
+use localflow::infra::http::HttpBackend;
 use localflow::infra::hook::executor::ShellHookExecutor;
 use localflow::infra::pr_verifier::GhCliPrVerifier;
-use localflow::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
-    ListTasksFilter, Priority, Role, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
-};
-use localflow::project::resolve_project_root;
+use localflow::infra::project_root::resolve_project_root;
+use localflow::infra::sqlite as db;
 
 const DEFAULT_PROJECT_ID: i64 = 1;
 
@@ -27,7 +30,7 @@ fn create_backend(
     project_root: &std::path::Path,
     config_path: Option<&std::path::Path>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
-    let resolve_api_key = |config: &hooks::Config| -> Option<String> {
+    let resolve_api_key = |config: &Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
@@ -59,7 +62,7 @@ fn create_backend(
     // 3. DynamoDB backend (via env var or config)
     #[cfg(feature = "dynamodb")]
     {
-        use localflow::dynamodb_backend::DynamoDbBackend;
+        use localflow::infra::dynamodb::DynamoDbBackend;
 
         let table_from_env = std::env::var("LOCALFLOW_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
         let region_from_env = std::env::var("LOCALFLOW_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
@@ -83,7 +86,7 @@ fn create_backend(
     Ok((Arc::new(db::SqliteBackend::new(project_root)?), false))
 }
 
-fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<hooks::Config> {
+fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<Config> {
     let mut config = hooks::load_config(root, cli.config.as_deref())?;
     if let Some(ref d) = cli.log_dir {
         config.log.dir = Some(d.to_string_lossy().into_owned());
@@ -91,21 +94,21 @@ fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<hooks::Conf
     Ok(config)
 }
 
-fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
+fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
     match config.backend.hook_mode {
         HookMode::Server => !using_http,
         HookMode::Client | HookMode::Both => true,
     }
 }
 
-fn create_hook_executor(config: hooks::Config, using_http: bool) -> Arc<dyn HookExecutor> {
+fn create_hook_executor(config: Config, using_http: bool) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
     Arc::new(ShellHookExecutor::new(config, should_fire))
 }
 
 fn create_task_service(
     backend: Arc<dyn TaskBackend>,
-    config: &hooks::Config,
+    config: &Config,
     using_http: bool,
 ) -> TaskService {
     let hooks = create_hook_executor(config.clone(), using_http);
@@ -127,7 +130,7 @@ fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 async fn resolve_project_id(
     backend: &dyn TaskBackend,
     cli_project: Option<&str>,
-    config: &hooks::Config,
+    config: &Config,
 ) -> Result<i64> {
     let name = cli_project.or(config.project.name.as_deref());
     match name {
@@ -829,7 +832,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            localflow::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            localflow::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
@@ -838,7 +841,7 @@ async fn run(cli: Cli) -> Result<()> {
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
-            localflow::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            localflow::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
@@ -1438,7 +1441,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let task = if let Some(id) = task_id {
                 backend.get_task(project_id, *id).await?
             } else {
-                use localflow::models::{Priority, TaskStatus};
+                use localflow::domain::task::{Priority, TaskStatus};
                 Task {
                     id: 0,
                     project_id,
@@ -1694,7 +1697,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     Ok(())
 }
 
-fn print_dod_items(items: &[localflow::models::DodItem]) {
+fn print_dod_items(items: &[localflow::domain::task::DodItem]) {
     for item in items {
         let mark = if item.checked { "x" } else { " " };
         println!("  [{mark}] {}", item.content);
@@ -2252,10 +2255,10 @@ mod tests {
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
-        assert_eq!(task.priority, localflow::models::Priority::P1);
+        assert_eq!(task.priority, localflow::domain::task::Priority::P1);
         assert_eq!(
             task.definition_of_done,
-            vec![localflow::models::DodItem { content: "done".to_string(), checked: false }]
+            vec![localflow::domain::task::DodItem { content: "done".to_string(), checked: false }]
         );
         assert_eq!(task.tags, vec!["rust"]);
     }
@@ -2311,7 +2314,7 @@ mod tests {
         let backend = db::SqliteBackend::new(tmp.path()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "file task");
-        assert_eq!(task.priority, localflow::models::Priority::P0);
+        assert_eq!(task.priority, localflow::domain::task::Priority::P0);
     }
 
     #[tokio::test]

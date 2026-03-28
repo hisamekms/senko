@@ -5,10 +5,12 @@ use async_trait::async_trait;
 use serde_json::json;
 
 use crate::domain::repository::{ProjectRepository, TaskRepository};
-use crate::models::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
-    CreateUserParams, ListTasksFilter, Project, ProjectMember, Role, Task, UpdateTaskArrayParams,
-    UpdateTaskParams, User,
+use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::task::{
+    CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
+};
+use crate::domain::user::{
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
 };
 
 pub struct HttpBackend {

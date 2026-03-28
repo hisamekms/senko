@@ -6,9 +6,10 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 
 use crate::application::port::HookExecutor;
 use crate::application::{ProjectService, TaskService, UserService};
-use crate::backend::TaskBackend;
-use crate::hooks::{self, HookMode, LogConfig, LogFormat};
-use crate::http_backend::HttpBackend;
+use crate::domain::repository::TaskBackend;
+use crate::domain::config::{Config, HookMode, LogConfig, LogFormat};
+use crate::infra::hook as hooks;
+use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
@@ -20,7 +21,7 @@ pub fn create_backend(
     project_root: &Path,
     config_path: Option<&Path>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
-    let resolve_api_key = |config: &hooks::Config| -> Option<String> {
+    let resolve_api_key = |config: &Config| -> Option<String> {
         std::env::var("LOCALFLOW_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
@@ -52,7 +53,7 @@ pub fn create_backend(
     // 3. DynamoDB backend (via env var or config)
     #[cfg(feature = "dynamodb")]
     {
-        use crate::dynamodb_backend::DynamoDbBackend;
+        use crate::infra::dynamodb::DynamoDbBackend;
 
         let table_from_env = std::env::var("LOCALFLOW_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
         let region_from_env = std::env::var("LOCALFLOW_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
@@ -73,14 +74,14 @@ pub fn create_backend(
     }
 
     // 4. Default: SqliteBackend
-    Ok((Arc::new(crate::db::SqliteBackend::new(project_root)?), false))
+    Ok((Arc::new(crate::infra::sqlite::SqliteBackend::new(project_root)?), false))
 }
 
 pub fn load_config_with_overrides(
     root: &Path,
     config_path: Option<&Path>,
     log_dir: Option<&Path>,
-) -> Result<hooks::Config> {
+) -> Result<Config> {
     let mut config = hooks::load_config(root, config_path)?;
     if let Some(d) = log_dir {
         config.log.dir = Some(d.to_string_lossy().into_owned());
@@ -88,21 +89,21 @@ pub fn load_config_with_overrides(
     Ok(config)
 }
 
-pub fn should_fire_client_hooks(config: &hooks::Config, using_http: bool) -> bool {
+pub fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
     match config.backend.hook_mode {
         HookMode::Server => !using_http,
         HookMode::Client | HookMode::Both => true,
     }
 }
 
-pub fn create_hook_executor(config: hooks::Config, using_http: bool) -> Arc<dyn HookExecutor> {
+pub fn create_hook_executor(config: Config, using_http: bool) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
     Arc::new(ShellHookExecutor::new(config, should_fire))
 }
 
 pub fn create_task_service(
     backend: Arc<dyn TaskBackend>,
-    config: &hooks::Config,
+    config: &Config,
     using_http: bool,
 ) -> TaskService {
     let hooks = create_hook_executor(config.clone(), using_http);
@@ -124,7 +125,7 @@ pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 pub async fn resolve_project_id(
     backend: &dyn TaskBackend,
     cli_project: Option<&str>,
-    config: &hooks::Config,
+    config: &Config,
 ) -> Result<i64> {
     let name = cli_project.or(config.project.name.as_deref());
     match name {

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use chrono::Utc;
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::TaskBackend;
 use crate::domain::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, TaskStatus, UnblockedTask, UpdateTaskArrayParams,

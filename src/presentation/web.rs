@@ -12,10 +12,10 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::backend::TaskBackend;
+use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
-use crate::hooks;
-use crate::models::{DodItem, Priority, Task, TaskStatus};
+use crate::infra::hook as hooks;
+use crate::domain::task::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
 struct AppState {
@@ -94,7 +94,7 @@ async fn index_handler(
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| StatusCode::BAD_REQUEST)?;
     let tags: Vec<String> = query.tag.iter().filter(|t| !t.is_empty()).cloned().collect();
-    let filter = crate::models::ListTasksFilter {
+    let filter = crate::domain::task::ListTasksFilter {
         statuses,
         tags,
         ..Default::default()
@@ -103,7 +103,7 @@ async fn index_handler(
     let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Collect all tags from all tasks (unfiltered) for the filter UI
-    let all_tasks = state.backend.list_tasks(project_id, &crate::models::ListTasksFilter::default())
+    let all_tasks = state.backend.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut all_tags: Vec<String> = all_tasks
@@ -132,7 +132,7 @@ async fn task_handler(
 async fn graph_handler(
     State(state): State<AppState>,
 ) -> Result<Html<String>, StatusCode> {
-    let tasks = state.backend.list_tasks(1, &crate::models::ListTasksFilter::default())
+    let tasks = state.backend.list_tasks(1, &crate::domain::task::ListTasksFilter::default())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 

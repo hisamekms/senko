@@ -6,10 +6,13 @@ use rusqlite::{params, Connection, OptionalExtension};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::models::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateProjectParams, CreateTaskParams,
-    CreateUserParams, DodItem, ListTasksFilter, Priority, Project, ProjectMember, Role, Task,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, User,
+use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::task::{
+    CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
+};
+use crate::domain::user::{
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ProjectMember, Role, User,
 };
 
 struct Migration {

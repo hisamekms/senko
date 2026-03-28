@@ -1,14 +1,6 @@
 pub mod application;
 pub mod auth;
-pub mod backend;
 pub mod bootstrap;
-pub mod db;
 pub mod domain;
-#[cfg(feature = "dynamodb")]
-pub mod dynamodb_backend;
-pub mod hooks;
-pub mod http_backend;
 pub mod infra;
-pub mod models;
 pub mod presentation;
-pub mod project;

@@ -11,14 +11,17 @@ use crate::bootstrap::{
     create_backend, create_hook_executor, create_project_service, create_task_service,
     create_user_service, load_config_with_overrides, resolve_project_id, DEFAULT_PROJECT_ID,
 };
-use crate::hooks;
-use crate::models::{
-    AddProjectMemberParams, CreateProjectParams, CreateTaskParams, CreateUserParams,
-    ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+use crate::domain::config::Config;
+use crate::infra::hook as hooks;
+use crate::domain::project::CreateProjectParams;
+use crate::domain::task::{
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
-use crate::project::resolve_project_root;
+use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
+use crate::infra::project_root::resolve_project_root;
 
-fn load_config(cli: &Cli, root: &std::path::Path) -> Result<hooks::Config> {
+fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
     load_config_with_overrides(root, cli.config.as_deref(), cli.log_dir.as_deref())
 }
 
@@ -674,7 +677,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let task = if let Some(id) = task_id {
                 backend.get_task(project_id, *id).await?
             } else {
-                use crate::models::{Priority, TaskStatus};
+                use crate::domain::task::{Priority, TaskStatus};
                 Task {
                     id: 0,
                     project_id,
@@ -1029,7 +1032,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     Ok(())
 }
 
-fn print_dod_items(items: &[crate::models::DodItem]) {
+fn print_dod_items(items: &[crate::domain::task::DodItem]) {
     for item in items {
         let mark = if item.checked { "x" } else { " " };
         println!("  [{mark}] {}", item.content);
@@ -1347,14 +1350,14 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::db::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "test task");
         assert_eq!(task.background.as_deref(), Some("bg"));
-        assert_eq!(task.priority, crate::models::Priority::P1);
+        assert_eq!(task.priority, crate::domain::task::Priority::P1);
         assert_eq!(
             task.definition_of_done,
-            vec![crate::models::DodItem { content: "done".to_string(), checked: false }]
+            vec![crate::domain::task::DodItem { content: "done".to_string(), checked: false }]
         );
         assert_eq!(task.tags, vec!["rust"]);
     }
@@ -1407,10 +1410,10 @@ mod tests {
         .await
         .unwrap();
 
-        let backend = crate::db::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "file task");
-        assert_eq!(task.priority, crate::models::Priority::P0);
+        assert_eq!(task.priority, crate::domain::task::Priority::P0);
     }
 
     #[tokio::test]
@@ -1506,7 +1509,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::db::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "my task");
     }
@@ -1555,7 +1558,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let backend = crate::db::SqliteBackend::new(tmp.path()).unwrap();
+        let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path()).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title, "json out");
     }

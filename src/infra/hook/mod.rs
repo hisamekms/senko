@@ -10,14 +10,9 @@ use serde::Serialize;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::backend::TaskBackend;
-use crate::models::{Task, TaskStatus};
-
-// Re-export config types for backward compatibility
-pub use crate::domain::config::*;
-
-// Re-export UnblockedTask from domain for backward compatibility
-pub use crate::domain::task::UnblockedTask;
+use crate::domain::config::{CompletionMode, Config, HookMode, HooksConfig, LogFormat};
+use crate::domain::repository::TaskBackend;
+use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
 #[derive(Debug, Serialize)]
 pub struct HookEvent {
@@ -434,7 +429,7 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::SqliteBackend;
+    use crate::infra::sqlite::SqliteBackend;
     use crate::domain::repository::{ProjectRepository, TaskRepository};
     use std::sync::Mutex;
 
@@ -501,7 +496,7 @@ on_task_completed = "echo completed"
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P2,
+            priority: crate::domain::task::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,
@@ -542,7 +537,7 @@ on_task_completed = "echo completed"
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P2,
+            priority: crate::domain::task::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,
@@ -571,7 +566,7 @@ on_task_completed = "echo completed"
         let (_dir, backend) = setup_db();
         backend.create_task(
             1,
-            &crate::models::CreateTaskParams {
+            &crate::domain::task::CreateTaskParams {
                 title: "Task1".into(),
                 background: None,
                 description: None,
@@ -599,7 +594,7 @@ on_task_completed = "echo completed"
         let (_dir, backend) = setup_db();
         backend.create_task(
             1,
-            &crate::models::CreateTaskParams {
+            &crate::domain::task::CreateTaskParams {
                 title: "Ready".into(),
                 background: None,
                 description: None,
@@ -632,7 +627,7 @@ on_task_completed = "echo completed"
         // Create task 1 (will be completed) and task 2 (depends on task 1)
         backend.create_task(
             1,
-            &crate::models::CreateTaskParams {
+            &crate::domain::task::CreateTaskParams {
                 title: "Dependency".into(),
                 background: None,
                 description: None,
@@ -657,7 +652,7 @@ on_task_completed = "echo completed"
 
         backend.create_task(
             1,
-            &crate::models::CreateTaskParams {
+            &crate::domain::task::CreateTaskParams {
                 title: "Blocked".into(),
                 background: None,
                 description: None,
@@ -721,7 +716,7 @@ on_task_completed = "echo completed"
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P2,
+            priority: crate::domain::task::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,
@@ -760,7 +755,7 @@ on_task_completed = "echo completed"
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P2,
+            priority: crate::domain::task::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,
@@ -856,7 +851,7 @@ on_task_completed = "echo completed"
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P2,
+            priority: crate::domain::task::Priority::P2,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,
@@ -945,7 +940,7 @@ on_task_completed = ["notify", "log"]
             background: None,
             description: None,
             plan: None,
-            priority: crate::models::Priority::P1,
+            priority: crate::domain::task::Priority::P1,
             status: TaskStatus::Draft,
             assignee_session_id: None,
             assignee_user_id: None,

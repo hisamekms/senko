@@ -7,10 +7,11 @@ use std::sync::Arc;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::backend::TaskBackend;
-use crate::db;
-use crate::models::{Priority, Role};
-use crate::project::resolve_project_root;
+use crate::domain::repository::TaskBackend;
+use crate::infra::sqlite as db;
+use crate::domain::task::Priority;
+use crate::domain::user::Role;
+use crate::infra::project_root::resolve_project_root;
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum OutputFormat {
