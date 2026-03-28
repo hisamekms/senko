@@ -7,6 +7,14 @@ edition = "2024"
 name = "localflow"
 path = "src/main.rs"
 
+[[bin]]
+name = "localflow-dynamodb"
+path = "src/main.rs"
+required-features = ["dynamodb"]
+
+[features]
+dynamodb = ["dep:aws-sdk-dynamodb", "dep:aws-config"]
+
 [dependencies]
 clap = { version = "4.5.60", features = ["derive"] }
 rusqlite = { version = "0.38.0", features = ["bundled"] }
@@ -26,6 +34,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tower-http = { version = "0.6", features = ["trace"] }
+aws-sdk-dynamodb = { version = "1", optional = true }
+aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -35,7 +35,30 @@ fn create_backend(
         return Ok((Box::new(HttpBackend::new(url)), true));
     }
 
-    // 3. Default: SqliteBackend
+    // 3. DynamoDB backend (via env var or config)
+    #[cfg(feature = "dynamodb")]
+    {
+        use localflow::dynamodb_backend::DynamoDbBackend;
+
+        let table_from_env = std::env::var("LOCALFLOW_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
+        let region_from_env = std::env::var("LOCALFLOW_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
+
+        let (table, region) = match (&table_from_env, &config.backend.dynamodb) {
+            (Some(t), _) => (Some(t.clone()), region_from_env),
+            (None, Some(ddb_config)) => {
+                let table = ddb_config.table_name.clone();
+                let region = region_from_env.or_else(|| ddb_config.region.clone());
+                (table, region)
+            }
+            _ => (None, None),
+        };
+
+        if let Some(table_name) = table {
+            return Ok((Box::new(DynamoDbBackend::new(table_name, region)), false));
+        }
+    }
+
+    // 4. Default: SqliteBackend
     Ok((Box::new(db::SqliteBackend::new(project_root)?), false))
 }
 

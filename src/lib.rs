@@ -1,6 +1,8 @@
 pub mod api;
 pub mod backend;
 pub mod db;
+#[cfg(feature = "dynamodb")]
+pub mod dynamodb_backend;
 pub mod hooks;
 pub mod http_backend;
 pub mod models;

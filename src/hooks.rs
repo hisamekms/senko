@@ -44,11 +44,21 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
+#[cfg(feature = "dynamodb")]
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct DynamoDbConfig {
+    pub table_name: Option<String>,
+    pub region: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default)]
 pub struct BackendConfig {
     pub api_url: Option<String>,
     #[serde(default)]
     pub hook_mode: HookMode,
+    #[cfg(feature = "dynamodb")]
+    #[serde(default)]
+    pub dynamodb: Option<DynamoDbConfig>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
