@@ -7,6 +7,7 @@ pub mod domain;
 pub mod dynamodb_backend;
 pub mod hooks;
 pub mod http_backend;
+pub mod infra;
 pub mod models;
 pub mod project;
 pub mod web;
