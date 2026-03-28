@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -125,38 +127,177 @@ impl Default for WorkflowConfig {
     }
 }
 
-mod string_or_vec {
-    use serde::{Deserialize, Deserializer};
+// --- Named hook types ---
 
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(untagged)]
-        enum StringOrVec {
-            String(String),
-            Vec(Vec<String>),
-        }
-        match StringOrVec::deserialize(deserializer)? {
-            StringOrVec::String(s) => Ok(vec![s]),
-            StringOrVec::Vec(v) => Ok(v),
-        }
-    }
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HookEntry {
+    pub command: String,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HooksConfig {
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_task_added: Vec<String>,
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_task_ready: Vec<String>,
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_task_started: Vec<String>,
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_task_completed: Vec<String>,
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_task_canceled: Vec<String>,
-    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
-    pub on_no_eligible_task: Vec<String>,
+    #[serde(default)]
+    pub on_task_added: BTreeMap<String, HookEntry>,
+    #[serde(default)]
+    pub on_task_ready: BTreeMap<String, HookEntry>,
+    #[serde(default)]
+    pub on_task_started: BTreeMap<String, HookEntry>,
+    #[serde(default)]
+    pub on_task_completed: BTreeMap<String, HookEntry>,
+    #[serde(default)]
+    pub on_task_canceled: BTreeMap<String, HookEntry>,
+    #[serde(default)]
+    pub on_no_eligible_task: BTreeMap<String, HookEntry>,
+}
+
+impl HooksConfig {
+    /// Get enabled commands for a given event name.
+    pub fn commands_for_event(&self, event_name: &str) -> Vec<&str> {
+        let map = match event_name {
+            "task_added" => &self.on_task_added,
+            "task_ready" => &self.on_task_ready,
+            "task_started" => &self.on_task_started,
+            "task_completed" => &self.on_task_completed,
+            "task_canceled" => &self.on_task_canceled,
+            "no_eligible_task" => &self.on_no_eligible_task,
+            _ => return vec![],
+        };
+        map.values()
+            .filter(|e| e.enabled)
+            .map(|e| e.command.as_str())
+            .collect()
+    }
+}
+
+// --- RawConfig for layered merging ---
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawConfig {
+    #[serde(default)]
+    pub hooks: HooksConfig,
+    #[serde(default)]
+    pub workflow: RawWorkflowConfig,
+    #[serde(default)]
+    pub backend: RawBackendConfig,
+    #[serde(default)]
+    pub log: RawLogConfig,
+    #[serde(default)]
+    pub project: ProjectConfig,
+    #[serde(default)]
+    pub user: UserConfig,
+    #[serde(default)]
+    pub auth: RawAuthConfig,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawWorkflowConfig {
+    pub completion_mode: Option<CompletionMode>,
+    pub auto_merge: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawBackendConfig {
+    pub api_url: Option<String>,
+    pub api_key: Option<String>,
+    pub hook_mode: Option<HookMode>,
+    #[cfg(feature = "dynamodb")]
+    pub dynamodb: Option<DynamoDbConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawLogConfig {
+    pub dir: Option<String>,
+    pub level: Option<String>,
+    pub format: Option<LogFormat>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawAuthConfig {
+    pub enabled: Option<bool>,
+}
+
+impl RawConfig {
+    /// Merge two configs: `self` is the base (lower priority), `overlay` wins.
+    pub fn merge(self, overlay: RawConfig) -> RawConfig {
+        RawConfig {
+            hooks: merge_hooks(self.hooks, overlay.hooks),
+            workflow: RawWorkflowConfig {
+                completion_mode: overlay.workflow.completion_mode.or(self.workflow.completion_mode),
+                auto_merge: overlay.workflow.auto_merge.or(self.workflow.auto_merge),
+            },
+            backend: RawBackendConfig {
+                api_url: overlay.backend.api_url.or(self.backend.api_url),
+                api_key: overlay.backend.api_key.or(self.backend.api_key),
+                hook_mode: overlay.backend.hook_mode.or(self.backend.hook_mode),
+                #[cfg(feature = "dynamodb")]
+                dynamodb: overlay.backend.dynamodb.or(self.backend.dynamodb),
+            },
+            log: RawLogConfig {
+                dir: overlay.log.dir.or(self.log.dir),
+                level: overlay.log.level.or(self.log.level),
+                format: overlay.log.format.or(self.log.format),
+            },
+            project: ProjectConfig {
+                name: overlay.project.name.or(self.project.name),
+            },
+            user: UserConfig {
+                name: overlay.user.name.or(self.user.name),
+            },
+            auth: RawAuthConfig {
+                enabled: overlay.auth.enabled.or(self.auth.enabled),
+            },
+        }
+    }
+
+    /// Resolve to final Config, filling None values with defaults.
+    pub fn resolve(self) -> Config {
+        Config {
+            hooks: self.hooks,
+            workflow: WorkflowConfig {
+                completion_mode: self.workflow.completion_mode.unwrap_or_default(),
+                auto_merge: self.workflow.auto_merge.unwrap_or(true),
+            },
+            backend: BackendConfig {
+                api_url: self.backend.api_url,
+                api_key: self.backend.api_key,
+                hook_mode: self.backend.hook_mode.unwrap_or_default(),
+                #[cfg(feature = "dynamodb")]
+                dynamodb: self.backend.dynamodb,
+            },
+            log: LogConfig {
+                dir: self.log.dir,
+                level: self.log.level.unwrap_or_else(default_log_level),
+                format: self.log.format.unwrap_or_default(),
+            },
+            project: self.project,
+            user: self.user,
+            auth: AuthConfig {
+                enabled: self.auth.enabled.unwrap_or(false),
+            },
+        }
+    }
+}
+
+/// Merge hooks: base hooks + overlay hooks. Same-name hooks: overlay wins.
+/// Disabled hooks (enabled=false) are kept in the map (filtered at execution time).
+fn merge_hooks(base: HooksConfig, overlay: HooksConfig) -> HooksConfig {
+    fn merge_map(
+        mut base: BTreeMap<String, HookEntry>,
+        overlay: BTreeMap<String, HookEntry>,
+    ) -> BTreeMap<String, HookEntry> {
+        for (name, entry) in overlay {
+            base.insert(name, entry);
+        }
+        base
+    }
+    HooksConfig {
+        on_task_added: merge_map(base.on_task_added, overlay.on_task_added),
+        on_task_ready: merge_map(base.on_task_ready, overlay.on_task_ready),
+        on_task_started: merge_map(base.on_task_started, overlay.on_task_started),
+        on_task_completed: merge_map(base.on_task_completed, overlay.on_task_completed),
+        on_task_canceled: merge_map(base.on_task_canceled, overlay.on_task_canceled),
+        on_no_eligible_task: merge_map(base.on_no_eligible_task, overlay.on_no_eligible_task),
+    }
 }

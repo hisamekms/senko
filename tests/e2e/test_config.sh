@@ -39,8 +39,8 @@ cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'EOF'
 completion_mode = "pr_then_complete"
 auto_merge = false
 
-[hooks]
-on_task_added = "echo added"
+[hooks.on_task_added.my-hook]
+command = "echo added"
 EOF
 CUSTOM_OUT="$(run_lf config)"
 assert_json_field "$CUSTOM_OUT" '.workflow.completion_mode' "pr_then_complete" "custom completion_mode"

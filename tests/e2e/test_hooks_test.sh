@@ -20,9 +20,14 @@ run_lf ready "$TASK_ID" >/dev/null
 
 # Configure a hook for task_ready
 cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
-[hooks]
-on_task_ready = "cat"
-on_task_started = ["echo hook1", "echo hook2"]
+[hooks.on_task_ready.cat-hook]
+command = "cat"
+
+[hooks.on_task_started.hook1]
+command = "echo hook1"
+
+[hooks.on_task_started.hook2]
+command = "echo hook2"
 EOF
 
 # 1. dry-run: should output event JSON without executing hooks

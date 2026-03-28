@@ -513,45 +513,23 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             );
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("  [hooks]");
-            if config.hooks.on_task_added.is_empty() {
-                println!("    on_task_added: (none)");
-            } else {
-                println!(
-                    "    on_task_added: {}",
-                    config.hooks.on_task_added.join(", ")
-                );
-            }
-            if config.hooks.on_task_ready.is_empty() {
-                println!("    on_task_ready: (none)");
-            } else {
-                println!(
-                    "    on_task_ready: {}",
-                    config.hooks.on_task_ready.join(", ")
-                );
-            }
-            if config.hooks.on_task_started.is_empty() {
-                println!("    on_task_started: (none)");
-            } else {
-                println!(
-                    "    on_task_started: {}",
-                    config.hooks.on_task_started.join(", ")
-                );
-            }
-            if config.hooks.on_task_completed.is_empty() {
-                println!("    on_task_completed: (none)");
-            } else {
-                println!(
-                    "    on_task_completed: {}",
-                    config.hooks.on_task_completed.join(", ")
-                );
-            }
-            if config.hooks.on_task_canceled.is_empty() {
-                println!("    on_task_canceled: (none)");
-            } else {
-                println!(
-                    "    on_task_canceled: {}",
-                    config.hooks.on_task_canceled.join(", ")
-                );
+            for (event, hooks) in [
+                ("on_task_added", &config.hooks.on_task_added),
+                ("on_task_ready", &config.hooks.on_task_ready),
+                ("on_task_started", &config.hooks.on_task_started),
+                ("on_task_completed", &config.hooks.on_task_completed),
+                ("on_task_canceled", &config.hooks.on_task_canceled),
+                ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
+            ] {
+                if hooks.is_empty() {
+                    println!("    {event}: (none)");
+                } else {
+                    println!("    {event}:");
+                    for (name, entry) in hooks {
+                        let status = if entry.enabled { "" } else { " [disabled]" };
+                        println!("      {name}: {}{status}", entry.command);
+                    }
+                }
             }
             println!("  [backend]");
             match config.backend.api_url {

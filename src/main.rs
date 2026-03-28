@@ -1297,14 +1297,25 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
 
 const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # See: https://github.com/hisamekms/localflow
+#
+# Config layering (priority high → low):
+#   1. CLI flag (--config)
+#   2. LOCALFLOW_CONFIG env var
+#   3. Project config (.localflow/config.toml)
+#   4. User config (~/.config/localflow/config.toml)
 
-[hooks]
-# on_task_added = "echo 'task added'"
-# on_task_ready = "echo 'task ready'"
-# on_task_started = "echo 'task started'"
-# on_task_completed = "echo 'task completed'"
-# on_task_canceled = "echo 'task canceled'"
-# on_no_eligible_task = "echo 'no eligible task'"
+# Named hooks: [hooks.<event>.<name>]
+# Each hook has a `command` and optional `enabled` (default: true).
+# Set `enabled = false` to disable a hook inherited from user config.
+#
+# [hooks.on_task_added.my-hook]
+# command = "echo 'task added'"
+#
+# [hooks.on_task_ready.my-hook]
+# command = "echo 'task ready'"
+#
+# [hooks.on_task_completed.my-hook]
+# command = "echo 'task completed'"
 
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
@@ -1584,45 +1595,23 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             );
             println!("    auto_merge: {}", config.workflow.auto_merge);
             println!("  [hooks]");
-            if config.hooks.on_task_added.is_empty() {
-                println!("    on_task_added: (none)");
-            } else {
-                println!(
-                    "    on_task_added: {}",
-                    config.hooks.on_task_added.join(", ")
-                );
-            }
-            if config.hooks.on_task_ready.is_empty() {
-                println!("    on_task_ready: (none)");
-            } else {
-                println!(
-                    "    on_task_ready: {}",
-                    config.hooks.on_task_ready.join(", ")
-                );
-            }
-            if config.hooks.on_task_started.is_empty() {
-                println!("    on_task_started: (none)");
-            } else {
-                println!(
-                    "    on_task_started: {}",
-                    config.hooks.on_task_started.join(", ")
-                );
-            }
-            if config.hooks.on_task_completed.is_empty() {
-                println!("    on_task_completed: (none)");
-            } else {
-                println!(
-                    "    on_task_completed: {}",
-                    config.hooks.on_task_completed.join(", ")
-                );
-            }
-            if config.hooks.on_task_canceled.is_empty() {
-                println!("    on_task_canceled: (none)");
-            } else {
-                println!(
-                    "    on_task_canceled: {}",
-                    config.hooks.on_task_canceled.join(", ")
-                );
+            for (event, hooks) in [
+                ("on_task_added", &config.hooks.on_task_added),
+                ("on_task_ready", &config.hooks.on_task_ready),
+                ("on_task_started", &config.hooks.on_task_started),
+                ("on_task_completed", &config.hooks.on_task_completed),
+                ("on_task_canceled", &config.hooks.on_task_canceled),
+                ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
+            ] {
+                if hooks.is_empty() {
+                    println!("    {event}: (none)");
+                } else {
+                    println!("    {event}:");
+                    for (name, entry) in hooks {
+                        let status = if entry.enabled { "" } else { " [disabled]" };
+                        println!("      {name}: {}{status}", entry.command);
+                    }
+                }
             }
             println!("  [backend]");
             match config.backend.api_url {

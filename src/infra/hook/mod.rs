@@ -38,42 +38,109 @@ pub struct NoEligibleTaskEvent {
 }
 
 pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
-    let config_path = resolve_config_path(project_root, explicit_config);
-    let config = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
-            .with_context(|| format!("failed to read config file: {}", config_path.display()))?;
-        toml::from_str(&content)
-            .with_context(|| format!("failed to parse config file: {}", config_path.display()))?
-    } else if explicit_config.is_some()
-        || std::env::var("LOCALFLOW_CONFIG")
-            .ok()
-            .filter(|v| !v.is_empty())
-            .is_some()
-    {
-        // Explicit path was given but file doesn't exist — that's an error
-        bail!(
-            "config file not found: {}",
-            config_path.display()
-        );
+    // 1. Load user config (lowest priority layer)
+    let user_raw = load_user_config()?;
+
+    // 2. Determine and load the project/explicit config
+    let project_raw = if let Some(path) = explicit_config {
+        // Explicit --config flag: must exist
+        Some(load_config_file(path, true)?)
+    } else if let Some(env_path) = env_config_path() {
+        // LOCALFLOW_CONFIG env var: must exist
+        Some(load_config_file(&env_path, true)?)
     } else {
-        Config::default()
+        let default_path = project_root.join(".localflow").join("config.toml");
+        if default_path.exists() {
+            Some(load_config_file(&default_path, false)?)
+        } else {
+            None
+        }
     };
+
+    // 3. Merge: user config as base, project config as overlay
+    let merged_raw = match (user_raw, project_raw) {
+        (Some(base), Some(overlay)) => base.merge(overlay),
+        (None, Some(overlay)) => overlay,
+        (Some(base), None) => base,
+        (None, None) => RawConfig::default(),
+    };
+
+    // 4. Resolve to final Config and apply env overrides
+    let config = merged_raw.resolve();
     Ok(apply_env_overrides(config))
 }
 
-fn resolve_config_path(project_root: &Path, explicit: Option<&Path>) -> PathBuf {
-    // 1. Explicit CLI flag (--config) takes top priority
-    if let Some(path) = explicit {
-        return path.to_path_buf();
+/// Return the user-level config path.
+/// `$XDG_CONFIG_HOME/localflow/config.toml` or `~/.config/localflow/config.toml`
+fn user_config_path() -> Option<PathBuf> {
+    let config_dir = std::env::var("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .ok()
+        .filter(|p| p.is_absolute())
+        .or_else(|| {
+            std::env::var("HOME")
+                .ok()
+                .map(|h| PathBuf::from(h).join(".config"))
+        })?;
+    Some(config_dir.join("localflow").join("config.toml"))
+}
+
+/// Load user-level config if it exists.
+fn load_user_config() -> Result<Option<RawConfig>> {
+    let path = match user_config_path() {
+        Some(p) if p.exists() => p,
+        _ => return Ok(None),
+    };
+    let raw = load_config_file(&path, false)?;
+    Ok(Some(raw))
+}
+
+/// Return the config path from the LOCALFLOW_CONFIG env var, if set.
+fn env_config_path() -> Option<PathBuf> {
+    std::env::var("LOCALFLOW_CONFIG")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+}
+
+/// Load and parse a config file into RawConfig, with legacy hook format detection.
+fn load_config_file(path: &Path, must_exist: bool) -> Result<RawConfig> {
+    if !path.exists() {
+        if must_exist {
+            bail!("config file not found: {}", path.display());
+        }
+        return Ok(RawConfig::default());
     }
-    // 2. LOCALFLOW_CONFIG env var
-    if let Ok(val) = std::env::var("LOCALFLOW_CONFIG") {
-        if !val.is_empty() {
-            return PathBuf::from(val);
+    let content = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read config file: {}", path.display()))?;
+    detect_legacy_hook_format(&content, path)?;
+    toml::from_str(&content)
+        .with_context(|| format!("failed to parse config file: {}", path.display()))
+}
+
+/// Check if the config uses the old array-based hook format and return a helpful error.
+fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
+    let raw: toml::Value = match toml::from_str(content) {
+        Ok(v) => v,
+        Err(_) => return Ok(()), // let the real parser produce the error
+    };
+    if let Some(hooks) = raw.get("hooks").and_then(|v| v.as_table()) {
+        for (key, val) in hooks {
+            if val.is_str() || val.is_array() {
+                bail!(
+                    "Legacy hook format detected in {}.\n\
+                     The array-based hook format is no longer supported.\n\
+                     Please migrate to named hooks:\n\n\
+                     Old format:\n  [hooks]\n  {} = \"command\"\n\n\
+                     New format:\n  [hooks.{}.my-hook]\n  command = \"command\"\n",
+                    path.display(),
+                    key,
+                    key,
+                );
+            }
         }
     }
-    // 3. Default: project_root/.localflow/config.toml
-    project_root.join(".localflow").join("config.toml")
+    Ok(())
 }
 
 fn apply_env_overrides(mut config: Config) -> Config {
@@ -112,35 +179,38 @@ fn apply_env_overrides(mut config: Config) -> Config {
         }
     }
 
-    // Hook commands (append to existing config.toml entries)
+    // Hook commands (insert as named "_env" entry)
+    fn insert_env_hook(map: &mut std::collections::BTreeMap<String, HookEntry>, val: String) {
+        map.insert("_env".to_string(), HookEntry { command: val, enabled: true });
+    }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED") {
         if !val.is_empty() {
-            config.hooks.on_task_added.push(val);
+            insert_env_hook(&mut config.hooks.on_task_added, val);
         }
     }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_READY") {
         if !val.is_empty() {
-            config.hooks.on_task_ready.push(val);
+            insert_env_hook(&mut config.hooks.on_task_ready, val);
         }
     }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_STARTED") {
         if !val.is_empty() {
-            config.hooks.on_task_started.push(val);
+            insert_env_hook(&mut config.hooks.on_task_started, val);
         }
     }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_COMPLETED") {
         if !val.is_empty() {
-            config.hooks.on_task_completed.push(val);
+            insert_env_hook(&mut config.hooks.on_task_completed, val);
         }
     }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_CANCELED") {
         if !val.is_empty() {
-            config.hooks.on_task_canceled.push(val);
+            insert_env_hook(&mut config.hooks.on_task_canceled, val);
         }
     }
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_NO_ELIGIBLE_TASK") {
         if !val.is_empty() {
-            config.hooks.on_no_eligible_task.push(val);
+            insert_env_hook(&mut config.hooks.on_no_eligible_task, val);
         }
     }
 
@@ -306,15 +376,7 @@ pub async fn fire_hooks(
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) {
-    let commands = match event_name {
-        "task_added" => &config.hooks.on_task_added,
-        "task_ready" => &config.hooks.on_task_ready,
-        "task_started" => &config.hooks.on_task_started,
-        "task_completed" => &config.hooks.on_task_completed,
-        "task_canceled" => &config.hooks.on_task_canceled,
-        "no_eligible_task" => &config.hooks.on_no_eligible_task,
-        _ => return,
-    };
+    let commands = config.hooks.commands_for_event(event_name);
     if commands.is_empty() {
         return;
     }
@@ -334,14 +396,14 @@ pub async fn fire_hooks(
         }
     };
 
-    for cmd in commands {
+    for cmd in &commands {
         execute_hook(cmd, event_name, &json, log_path.as_deref());
     }
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
 pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend, project_id: i64) {
-    let commands = &config.hooks.on_no_eligible_task;
+    let commands = config.hooks.commands_for_event("no_eligible_task");
     if commands.is_empty() {
         return;
     }
@@ -370,21 +432,19 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
         }
     };
 
-    for cmd in commands {
+    for cmd in &commands {
         execute_hook(cmd, "no_eligible_task", &json, log_path.as_deref());
     }
 }
 
 /// Return the hook commands configured for the given event name.
 /// Returns `None` if the event name is not recognized.
-pub fn get_commands_for_event<'a>(config: &'a Config, event_name: &str) -> Option<&'a Vec<String>> {
+pub fn get_commands_for_event(config: &Config, event_name: &str) -> Option<Vec<String>> {
+    let commands = config.hooks.commands_for_event(event_name);
+    // Return None only for unrecognized event names
     match event_name {
-        "task_added" => Some(&config.hooks.on_task_added),
-        "task_ready" => Some(&config.hooks.on_task_ready),
-        "task_started" => Some(&config.hooks.on_task_started),
-        "task_completed" => Some(&config.hooks.on_task_completed),
-        "task_canceled" => Some(&config.hooks.on_task_canceled),
-        "no_eligible_task" => Some(&config.hooks.on_no_eligible_task),
+        "task_added" | "task_ready" | "task_started" | "task_completed" | "task_canceled"
+        | "no_eligible_task" => Some(commands.into_iter().map(|s| s.to_string()).collect()),
         _ => None,
     }
 }
@@ -468,16 +528,20 @@ mod tests {
         std::fs::write(
             localflow_dir.join("config.toml"),
             r#"
-[hooks]
-on_task_added = "echo added"
-on_task_completed = "echo completed"
+[hooks.on_task_added.my-hook]
+command = "echo added"
+
+[hooks.on_task_completed.my-hook]
+command = "echo completed"
 "#,
         )
         .unwrap();
 
         let config = load_config(dir.path(), None).unwrap();
-        assert_eq!(config.hooks.on_task_added, vec!["echo added"]);
-        assert_eq!(config.hooks.on_task_completed, vec!["echo completed"]);
+        assert_eq!(config.hooks.on_task_added.len(), 1);
+        assert_eq!(config.hooks.on_task_added["my-hook"].command, "echo added");
+        assert_eq!(config.hooks.on_task_completed.len(), 1);
+        assert_eq!(config.hooks.on_task_completed["my-hook"].command, "echo completed");
     }
 
     #[test]
@@ -706,10 +770,13 @@ on_task_completed = "echo completed"
         let cmd1 = format!("echo hook1 > {}", marker1.display());
         let cmd2 = format!("echo hook2 > {}", marker2.display());
 
+        let mut on_task_added = std::collections::BTreeMap::new();
+        on_task_added.insert("hook1".to_string(), HookEntry { command: cmd1, enabled: true });
+        on_task_added.insert("hook2".to_string(), HookEntry { command: cmd2, enabled: true });
+
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: vec![cmd1, cmd2],
-                on_task_completed: vec![],
+                on_task_added,
                 ..Default::default()
             },
             ..Default::default()
@@ -842,9 +909,11 @@ on_task_completed = "echo completed"
         let log_path = dir.path().join("hooks.log");
 
         // Run a hook that exits with non-zero
+        let mut on_task_added = std::collections::BTreeMap::new();
+        on_task_added.insert("fail".to_string(), HookEntry { command: "exit 1".into(), enabled: true });
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: vec!["exit 1".into()],
+                on_task_added,
                 ..Default::default()
             },
             ..Default::default()
@@ -891,30 +960,52 @@ on_task_completed = "echo completed"
     }
 
     #[test]
-    fn parse_hooks_string_value() {
+    fn parse_named_hooks() {
         let toml_str = r#"
-[hooks]
-on_task_added = "echo added"
-on_task_completed = "echo completed"
+[hooks.on_task_added.notify]
+command = "echo added"
+
+[hooks.on_task_completed.log]
+command = "echo completed"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.hooks.on_task_added, vec!["echo added"]);
-        assert_eq!(config.hooks.on_task_completed, vec!["echo completed"]);
+        assert_eq!(config.hooks.on_task_added.len(), 1);
+        assert_eq!(config.hooks.on_task_added["notify"].command, "echo added");
+        assert!(config.hooks.on_task_added["notify"].enabled);
+        assert_eq!(config.hooks.on_task_completed["log"].command, "echo completed");
     }
 
     #[test]
-    fn parse_hooks_array_value() {
+    fn parse_named_hooks_multiple() {
         let toml_str = r#"
-[hooks]
-on_task_added = ["echo first", "echo second"]
-on_task_completed = ["notify", "log"]
+[hooks.on_task_added.first]
+command = "echo first"
+
+[hooks.on_task_added.second]
+command = "echo second"
+
+[hooks.on_task_completed.notify]
+command = "notify"
+
+[hooks.on_task_completed.log]
+command = "log"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(
-            config.hooks.on_task_added,
-            vec!["echo first", "echo second"]
-        );
-        assert_eq!(config.hooks.on_task_completed, vec!["notify", "log"]);
+        assert_eq!(config.hooks.on_task_added.len(), 2);
+        assert_eq!(config.hooks.on_task_completed.len(), 2);
+    }
+
+    #[test]
+    fn parse_hooks_with_enabled_false() {
+        let toml_str = r#"
+[hooks.on_task_added.disabled-hook]
+command = "echo disabled"
+enabled = false
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(!config.hooks.on_task_added["disabled-hook"].enabled);
+        let commands = config.hooks.commands_for_event("task_added");
+        assert!(commands.is_empty());
     }
 
     #[test]
@@ -925,15 +1016,39 @@ on_task_completed = ["notify", "log"]
         assert!(config.hooks.on_task_completed.is_empty());
     }
 
+    #[test]
+    fn legacy_hook_format_rejected() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let localflow_dir = dir.path().join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+        std::fs::write(
+            localflow_dir.join("config.toml"),
+            r#"
+[hooks]
+on_task_added = "echo added"
+"#,
+        )
+        .unwrap();
+
+        let result = load_config(dir.path(), None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Legacy hook format"), "error should mention legacy format: {err}");
+        assert!(err.contains("named hooks"), "error should mention migration: {err}");
+    }
+
     #[tokio::test]
     async fn hook_receives_json_on_stdin() {
         let dir = tempfile::tempdir().unwrap();
         let output_file = dir.path().join("stdin_capture.json");
         let cmd = format!("cat > {}", output_file.display());
 
+        let mut on_task_added = std::collections::BTreeMap::new();
+        on_task_added.insert("capture".to_string(), HookEntry { command: cmd, enabled: true });
         let config = Config {
             hooks: HooksConfig {
-                on_task_added: vec![cmd],
+                on_task_added,
                 ..Default::default()
             },
             ..Default::default()
@@ -1044,16 +1159,21 @@ on_task_completed = ["notify", "log"]
     }
 
     #[test]
-    fn env_override_hooks_append() {
+    fn env_override_hooks_insert() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
             let orig = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
             std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "env-hook");
             // Start with a config that already has a hook from config.toml
             let mut config = Config::default();
-            config.hooks.on_task_added = vec!["toml-hook".into()];
+            config.hooks.on_task_added.insert(
+                "toml-hook".to_string(),
+                HookEntry { command: "toml-hook".into(), enabled: true },
+            );
             let config = apply_env_overrides(config);
-            assert_eq!(config.hooks.on_task_added, vec!["toml-hook", "env-hook"]);
+            assert_eq!(config.hooks.on_task_added.len(), 2);
+            assert_eq!(config.hooks.on_task_added["toml-hook"].command, "toml-hook");
+            assert_eq!(config.hooks.on_task_added["_env"].command, "env-hook");
             match orig {
                 Some(v) => std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", v),
                 None => std::env::remove_var("LOCALFLOW_HOOK_ON_TASK_ADDED"),
@@ -1267,10 +1387,184 @@ dir = "/var/log/localflow"
 
     #[test]
     fn log_config_deserialization_missing_section() {
-        let toml_str = r#"
-[hooks]
-"#;
+        let toml_str = "[hooks]\n";
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.log.dir, None);
+    }
+
+    #[test]
+    fn raw_config_merge_overlay_wins() {
+        let base = RawConfig {
+            workflow: RawWorkflowConfig {
+                completion_mode: Some(CompletionMode::MergeThenComplete),
+                auto_merge: Some(true),
+            },
+            log: RawLogConfig {
+                level: Some("debug".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let overlay = RawConfig {
+            workflow: RawWorkflowConfig {
+                completion_mode: Some(CompletionMode::PrThenComplete),
+                auto_merge: None,
+            },
+            ..Default::default()
+        };
+        let merged = base.merge(overlay).resolve();
+        assert_eq!(merged.workflow.completion_mode, CompletionMode::PrThenComplete);
+        assert!(merged.workflow.auto_merge); // from base
+        assert_eq!(merged.log.level, "debug"); // from base
+    }
+
+    #[test]
+    fn raw_config_merge_hooks() {
+        let mut base_hooks = HooksConfig::default();
+        base_hooks.on_task_added.insert(
+            "user-hook".to_string(),
+            HookEntry { command: "user-cmd".into(), enabled: true },
+        );
+        base_hooks.on_task_completed.insert(
+            "shared".to_string(),
+            HookEntry { command: "user-completed".into(), enabled: true },
+        );
+
+        let mut overlay_hooks = HooksConfig::default();
+        overlay_hooks.on_task_added.insert(
+            "project-hook".to_string(),
+            HookEntry { command: "project-cmd".into(), enabled: true },
+        );
+        // Override the shared hook
+        overlay_hooks.on_task_completed.insert(
+            "shared".to_string(),
+            HookEntry { command: "project-completed".into(), enabled: true },
+        );
+
+        let base = RawConfig { hooks: base_hooks, ..Default::default() };
+        let overlay = RawConfig { hooks: overlay_hooks, ..Default::default() };
+        let merged = base.merge(overlay).resolve();
+
+        // Both hooks present for on_task_added
+        assert_eq!(merged.hooks.on_task_added.len(), 2);
+        assert_eq!(merged.hooks.on_task_added["user-hook"].command, "user-cmd");
+        assert_eq!(merged.hooks.on_task_added["project-hook"].command, "project-cmd");
+        // Shared hook overridden by overlay
+        assert_eq!(merged.hooks.on_task_completed["shared"].command, "project-completed");
+    }
+
+    #[test]
+    fn raw_config_merge_hook_disable() {
+        let mut base_hooks = HooksConfig::default();
+        base_hooks.on_task_added.insert(
+            "notify".to_string(),
+            HookEntry { command: "notify-cmd".into(), enabled: true },
+        );
+
+        let mut overlay_hooks = HooksConfig::default();
+        overlay_hooks.on_task_added.insert(
+            "notify".to_string(),
+            HookEntry { command: "".into(), enabled: false },
+        );
+
+        let base = RawConfig { hooks: base_hooks, ..Default::default() };
+        let overlay = RawConfig { hooks: overlay_hooks, ..Default::default() };
+        let merged = base.merge(overlay).resolve();
+
+        // Hook is in the map but disabled
+        assert!(!merged.hooks.on_task_added["notify"].enabled);
+        // commands_for_event should filter it out
+        let cmds = merged.hooks.commands_for_event("task_added");
+        assert!(cmds.is_empty());
+    }
+
+    #[test]
+    fn user_config_loaded_as_fallback() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let user_config_dir = tmp.path().join("user-config").join("localflow");
+        std::fs::create_dir_all(&user_config_dir).unwrap();
+        std::fs::write(
+            user_config_dir.join("config.toml"),
+            r#"
+[workflow]
+auto_merge = false
+
+[hooks.on_task_added.user-hook]
+command = "user-cmd"
+"#,
+        )
+        .unwrap();
+
+        // Project has no config
+        let project_dir = tmp.path().join("project");
+        std::fs::create_dir_all(project_dir.join(".localflow")).unwrap();
+
+        unsafe {
+            let orig_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path().join("user-config"));
+            let config = load_config(project_dir.as_path(), None).unwrap();
+            assert!(!config.workflow.auto_merge);
+            assert_eq!(config.hooks.on_task_added.len(), 1);
+            assert_eq!(config.hooks.on_task_added["user-hook"].command, "user-cmd");
+            match orig_xdg {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
+    }
+
+    #[test]
+    fn project_config_overrides_user_config() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+
+        // User config
+        let user_config_dir = tmp.path().join("user-config").join("localflow");
+        std::fs::create_dir_all(&user_config_dir).unwrap();
+        std::fs::write(
+            user_config_dir.join("config.toml"),
+            r#"
+[workflow]
+auto_merge = false
+completion_mode = "pr_then_complete"
+
+[hooks.on_task_added.user-hook]
+command = "user-cmd"
+"#,
+        )
+        .unwrap();
+
+        // Project config overrides some fields
+        let project_dir = tmp.path().join("project");
+        let localflow_dir = project_dir.join(".localflow");
+        std::fs::create_dir_all(&localflow_dir).unwrap();
+        std::fs::write(
+            localflow_dir.join("config.toml"),
+            r#"
+[workflow]
+auto_merge = true
+
+[hooks.on_task_added.project-hook]
+command = "project-cmd"
+"#,
+        )
+        .unwrap();
+
+        unsafe {
+            let orig_xdg = std::env::var("XDG_CONFIG_HOME").ok();
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path().join("user-config"));
+            let config = load_config(project_dir.as_path(), None).unwrap();
+            // auto_merge overridden by project
+            assert!(config.workflow.auto_merge);
+            // completion_mode falls back to user config
+            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+            // Both hooks present
+            assert_eq!(config.hooks.on_task_added.len(), 2);
+            match orig_xdg {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+        }
     }
 }

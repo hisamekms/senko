@@ -427,14 +427,25 @@ pub enum MemberAction {
 
 pub const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # See: https://github.com/hisamekms/localflow
+#
+# Config layering (priority high → low):
+#   1. CLI flag (--config)
+#   2. LOCALFLOW_CONFIG env var
+#   3. Project config (.localflow/config.toml)
+#   4. User config (~/.config/localflow/config.toml)
 
-[hooks]
-# on_task_added = "echo 'task added'"
-# on_task_ready = "echo 'task ready'"
-# on_task_started = "echo 'task started'"
-# on_task_completed = "echo 'task completed'"
-# on_task_canceled = "echo 'task canceled'"
-# on_no_eligible_task = "echo 'no eligible task'"
+# Named hooks: [hooks.<event>.<name>]
+# Each hook has a `command` and optional `enabled` (default: true).
+# Set `enabled = false` to disable a hook inherited from user config.
+#
+# [hooks.on_task_added.my-hook]
+# command = "echo 'task added'"
+#
+# [hooks.on_task_ready.my-hook]
+# command = "echo 'task ready'"
+#
+# [hooks.on_task_completed.my-hook]
+# command = "echo 'task completed'"
 
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"

@@ -39,23 +39,25 @@ assert_json_field "$JSON_OUT" '.workflow.completion_mode' "pr_then_complete" "en
 assert_json_field "$JSON_OUT" '.workflow.auto_merge' "false" "env overrides toml auto_merge"
 assert_json_field "$JSON_OUT" '.backend.hook_mode' "both" "env overrides toml hook_mode"
 
-echo "[6] LOCALFLOW_HOOK_ON_TASK_ADDED appends to hooks"
+echo "[6] LOCALFLOW_HOOK_ON_TASK_ADDED inserts env hook"
 JSON_OUT="$(LOCALFLOW_HOOK_ON_TASK_ADDED="echo env-hook" run_lf config)"
-HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | length')
-assert_eq "1" "$HOOK_COUNT" "env hook appended (no toml hooks)"
+HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | keys | length')
+assert_eq "1" "$HOOK_COUNT" "env hook inserted (no toml hooks)"
+ENV_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added._env.command')
+assert_eq "echo env-hook" "$ENV_CMD" "env hook command"
 
-echo "[7] LOCALFLOW_HOOK_ON_TASK_ADDED appends alongside config.toml hooks"
+echo "[7] LOCALFLOW_HOOK_ON_TASK_ADDED alongside config.toml hooks"
 cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'EOF'
-[hooks]
-on_task_added = "echo toml-hook"
+[hooks.on_task_added.toml-hook]
+command = "echo toml-hook"
 EOF
 JSON_OUT="$(LOCALFLOW_HOOK_ON_TASK_ADDED="echo env-hook" run_lf config)"
-HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | length')
-assert_eq "2" "$HOOK_COUNT" "env hook appended alongside toml hook"
-FIRST=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added[0]')
-SECOND=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added[1]')
-assert_eq "echo toml-hook" "$FIRST" "first hook is from toml"
-assert_eq "echo env-hook" "$SECOND" "second hook is from env"
+HOOK_COUNT=$(echo "$JSON_OUT" | jq '.hooks.on_task_added | keys | length')
+assert_eq "2" "$HOOK_COUNT" "env hook alongside toml hook"
+TOML_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added["toml-hook"].command')
+ENV_CMD=$(echo "$JSON_OUT" | jq -r '.hooks.on_task_added._env.command')
+assert_eq "echo toml-hook" "$TOML_CMD" "toml hook command"
+assert_eq "echo env-hook" "$ENV_CMD" "env hook command"
 
 echo "[8] All 5 hook env vars work"
 rm -f "$TEST_PROJECT_ROOT/.localflow/config.toml"
@@ -65,11 +67,11 @@ JSON_OUT="$(LOCALFLOW_HOOK_ON_TASK_ADDED="cmd1" \
   LOCALFLOW_HOOK_ON_TASK_COMPLETED="cmd4" \
   LOCALFLOW_HOOK_ON_TASK_CANCELED="cmd5" \
   run_lf config)"
-assert_json_field "$JSON_OUT" '.hooks.on_task_added[0]' "cmd1" "on_task_added env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_ready[0]' "cmd2" "on_task_ready env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_started[0]' "cmd3" "on_task_started env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_completed[0]' "cmd4" "on_task_completed env"
-assert_json_field "$JSON_OUT" '.hooks.on_task_canceled[0]' "cmd5" "on_task_canceled env"
+assert_json_field "$JSON_OUT" '.hooks.on_task_added._env.command' "cmd1" "on_task_added env"
+assert_json_field "$JSON_OUT" '.hooks.on_task_ready._env.command' "cmd2" "on_task_ready env"
+assert_json_field "$JSON_OUT" '.hooks.on_task_started._env.command' "cmd3" "on_task_started env"
+assert_json_field "$JSON_OUT" '.hooks.on_task_completed._env.command' "cmd4" "on_task_completed env"
+assert_json_field "$JSON_OUT" '.hooks.on_task_canceled._env.command' "cmd5" "on_task_canceled env"
 
 echo "[9] LOCALFLOW_PROJECT_ROOT overrides --project-root"
 ALT_PROJECT="$(mktemp -d)"
