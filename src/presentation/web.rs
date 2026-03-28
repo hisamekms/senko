@@ -12,8 +12,8 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::api;
 use crate::backend::TaskBackend;
+use crate::bootstrap;
 use crate::hooks;
 use crate::models::{DodItem, Priority, Task, TaskStatus};
 
@@ -40,7 +40,7 @@ pub async fn serve(
 ) -> Result<()> {
     let config = hooks::load_config(&project_root, config_path.as_deref())
         .unwrap_or_default();
-    api::init_tracing(&config.log);
+    bootstrap::init_tracing(&config.log);
 
     let state = AppState {
         project_root: Arc::new(project_root),

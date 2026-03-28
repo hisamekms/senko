@@ -11,7 +11,6 @@ use axum::{Json, Router};
 use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
 use tower_http::trace::TraceLayer;
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::infra::pr_verifier::GhCliPrVerifier;
 use crate::application::{ProjectService, TaskService, UserService};
@@ -19,8 +18,8 @@ use crate::auth::{
     self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
 };
 use crate::backend::TaskBackend;
+use crate::bootstrap;
 use crate::hooks;
-use crate::hooks::LogFormat;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::models::{
     AddProjectMemberParams, CreateApiKeyParams, CreateProjectParams, CreateTaskParams,
@@ -127,24 +126,6 @@ impl From<AuthError> for ApiError {
             AuthError::MissingToken => ApiError::Unauthorized("missing authorization header".into()),
             AuthError::InvalidToken => ApiError::Unauthorized("invalid api key".into()),
             AuthError::Forbidden(msg) => ApiError::Forbidden(msg),
-        }
-    }
-}
-
-pub fn init_tracing(config: &hooks::LogConfig) {
-    let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new(&config.level));
-
-    let registry = tracing_subscriber::registry().with(env_filter);
-
-    match config.format {
-        LogFormat::Json => {
-            registry
-                .with(tracing_subscriber::fmt::layer().json())
-                .init();
-        }
-        LogFormat::Pretty => {
-            registry.with(tracing_subscriber::fmt::layer()).init();
         }
     }
 }
@@ -267,7 +248,7 @@ pub async fn serve(
 ) -> Result<()> {
     let config = hooks::load_config(&project_root, config_path.as_deref())
         .unwrap_or_default();
-    init_tracing(&config.log);
+    bootstrap::init_tracing(&config.log);
 
     let auth_provider: Option<Arc<dyn AuthProvider>> = if config.auth.enabled {
         tracing::info!("authentication enabled");
@@ -924,4 +905,3 @@ async fn delete_api_key(
     state.user_service.delete_api_key(key_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
-
