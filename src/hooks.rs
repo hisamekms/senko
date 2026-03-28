@@ -119,6 +119,8 @@ pub struct HooksConfig {
     pub on_task_completed: Vec<String>,
     #[serde(default, deserialize_with = "string_or_vec::deserialize")]
     pub on_task_canceled: Vec<String>,
+    #[serde(default, deserialize_with = "string_or_vec::deserialize")]
+    pub on_no_eligible_task: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -141,6 +143,15 @@ pub struct HookEvent {
     pub from_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unblocked_tasks: Option<Vec<UnblockedTask>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct NoEligibleTaskEvent {
+    pub event_id: String,
+    pub event: String,
+    pub timestamp: String,
+    pub stats: HashMap<String, i64>,
+    pub ready_count: i64,
 }
 
 pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
@@ -242,6 +253,11 @@ fn apply_env_overrides(mut config: Config) -> Config {
     if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_CANCELED") {
         if !val.is_empty() {
             config.hooks.on_task_canceled.push(val);
+        }
+    }
+    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_NO_ELIGIBLE_TASK") {
+        if !val.is_empty() {
+            config.hooks.on_no_eligible_task.push(val);
         }
     }
 
@@ -394,6 +410,7 @@ pub fn fire_hooks(
         "task_started" => &config.hooks.on_task_started,
         "task_completed" => &config.hooks.on_task_completed,
         "task_canceled" => &config.hooks.on_task_canceled,
+        "no_eligible_task" => &config.hooks.on_no_eligible_task,
         _ => return,
     };
     if commands.is_empty() {
@@ -420,6 +437,42 @@ pub fn fire_hooks(
     }
 }
 
+/// Fire hooks for the `no_eligible_task` event (no task object in payload).
+pub fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend) {
+    let commands = &config.hooks.on_no_eligible_task;
+    if commands.is_empty() {
+        return;
+    }
+
+    let log_path = log_file_path_with_dir(config.log.dir.as_deref());
+
+    let stats = backend.task_stats().unwrap_or_default();
+    let ready_count = backend.ready_count().unwrap_or(0);
+    let event = NoEligibleTaskEvent {
+        event_id: Uuid::new_v4().to_string(),
+        event: "no_eligible_task".into(),
+        timestamp: Utc::now().to_rfc3339(),
+        stats,
+        ready_count,
+    };
+
+    let json = match serde_json::to_string(&event) {
+        Ok(j) => j,
+        Err(e) => {
+            let msg = format!("hook error: failed to serialize event: {e}");
+            eprintln!("{msg}");
+            if let Some(ref p) = log_path {
+                log_to_file(p, "ERROR", &msg);
+            }
+            return;
+        }
+    };
+
+    for cmd in commands {
+        execute_hook(cmd, "no_eligible_task", &json, log_path.as_deref());
+    }
+}
+
 /// Return the hook commands configured for the given event name.
 /// Returns `None` if the event name is not recognized.
 pub fn get_commands_for_event<'a>(config: &'a Config, event_name: &str) -> Option<&'a Vec<String>> {
@@ -429,6 +482,7 @@ pub fn get_commands_for_event<'a>(config: &'a Config, event_name: &str) -> Optio
         "task_started" => Some(&config.hooks.on_task_started),
         "task_completed" => Some(&config.hooks.on_task_completed),
         "task_canceled" => Some(&config.hooks.on_task_canceled),
+        "no_eligible_task" => Some(&config.hooks.on_no_eligible_task),
         _ => None,
     }
 }

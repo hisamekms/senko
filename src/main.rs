@@ -1046,7 +1046,16 @@ fn cmd_next(cli: &Cli, session_id: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let (backend, using_http) = create_backend(&root, cli.config.as_deref())?;
 
-    let task = backend.next_task()?.ok_or_else(|| anyhow::anyhow!("no eligible task found"))?;
+    let task = match backend.next_task()? {
+        Some(t) => t,
+        None => {
+            let config = load_config_with_cli(&root, cli)?;
+            if should_fire_client_hooks(&config, using_http) {
+                hooks::fire_no_eligible_task_hooks(&config, &*backend);
+            }
+            anyhow::bail!("no eligible task found");
+        }
+    };
 
     if cli.dry_run {
         let mut operations = vec![
@@ -1267,6 +1276,7 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # on_task_started = "echo 'task started'"
 # on_task_completed = "echo 'task completed'"
 # on_task_canceled = "echo 'task canceled'"
+# on_no_eligible_task = "echo 'no eligible task'"
 
 [workflow]
 # completion_mode = "merge_then_complete"  # or "pr_then_complete"
@@ -1339,6 +1349,7 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 "task_started",
                 "task_completed",
                 "task_canceled",
+                "no_eligible_task",
             ];
             if !valid_events.contains(&event_name.as_str()) {
                 bail!(
@@ -1350,6 +1361,49 @@ fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = hooks::load_config(&root, cli.config.as_deref())?;
             let (backend, _) = create_backend(&root, cli.config.as_deref())?;
+
+            // no_eligible_task uses a different event structure (no task object)
+            if event_name == "no_eligible_task" {
+                let stats = backend.task_stats().unwrap_or_default();
+                let ready_count = backend.ready_count().unwrap_or(0);
+                let event = hooks::NoEligibleTaskEvent {
+                    event_id: uuid::Uuid::new_v4().to_string(),
+                    event: "no_eligible_task".into(),
+                    timestamp: chrono::Utc::now().to_rfc3339(),
+                    stats,
+                    ready_count,
+                };
+                let json = serde_json::to_string_pretty(&event)?;
+
+                if *dry_run {
+                    println!("{json}");
+                    return Ok(());
+                }
+
+                let commands = hooks::get_commands_for_event(&config, event_name)
+                    .expect("already validated event name");
+                if commands.is_empty() {
+                    eprintln!("No hooks configured for event: {event_name}");
+                    return Ok(());
+                }
+
+                let compact_json = serde_json::to_string(&event)?;
+                for (i, cmd) in commands.iter().enumerate() {
+                    if commands.len() > 1 {
+                        eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
+                    }
+                    match hooks::execute_hook_sync(cmd, &compact_json) {
+                        Ok(status) => {
+                            eprintln!("exit code: {}", status.code().unwrap_or(-1));
+                        }
+                        Err(e) => {
+                            eprintln!("hook error: {e:#}");
+                        }
+                    }
+                }
+
+                return Ok(());
+            }
 
             // Build the event using a real task or a sample task
             let task = if let Some(id) = task_id {

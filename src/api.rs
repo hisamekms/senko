@@ -597,9 +597,14 @@ async fn next_task(
     let config_path = state.config_path.clone();
     let session_id = body.and_then(|b| b.0.session_id);
     tokio::task::spawn_blocking(move || {
-        let task = backend.next_task()
-            .map_err(classify_error)?
-            .ok_or_else(|| ApiError::NotFound("no eligible task found".to_string()))?;
+        let task = match backend.next_task().map_err(classify_error)? {
+            Some(t) => t,
+            None => {
+                let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+                hooks::fire_no_eligible_task_hooks(&config, backend.as_ref());
+                return Err(ApiError::NotFound("no eligible task found".to_string()));
+            }
+        };
 
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
