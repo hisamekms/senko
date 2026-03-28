@@ -1,4 +1,4 @@
-# localflow
+# senko
 
 > **Alpha**: This project is in early development. APIs, CLI interfaces, and data formats may change without notice.
 
@@ -14,25 +14,25 @@ Works as a Claude Code skill to let AI agents manage and execute project tasks.
 - **Dependency tracking**: Tasks block until dependencies are completed
 - **Smart next-task selection**: Picks the highest-priority ready task automatically
 - **Dual output**: JSON (for AI/automation) and human-readable text
-- **Claude Code skill**: `/localflow` skill for seamless AI-driven task management
+- **Claude Code skill**: `/senko` skill for seamless AI-driven task management
 - **Watch hooks**: Run custom commands on task events (add, complete)
 - **Zero setup**: SQLite database auto-created on first run
 
-> **Note**: localflow stores data in `.localflow/` under your project root. Add `.localflow/` to your `.gitignore` to avoid committing local data.
+> **Note**: senko stores data in `.senko/` under your project root. Add `.senko/` to your `.gitignore` to avoid committing local data.
 
 ## Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hisamekms/localflow/main/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/hisamekms/senko/main/install.sh | sh
 ```
 
 Or specify a version:
 
 ```bash
-VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hisamekms/localflow/main/install.sh | sh
+VERSION=v0.1.0 curl -fsSL https://raw.githubusercontent.com/hisamekms/senko/main/install.sh | sh
 ```
 
-By default, the binary is installed to `~/.local/bin`. Set `LOCALFLOW_INSTALL_DIR` to change the location.
+By default, the binary is installed to `~/.local/bin`. Set `SENKO_INSTALL_DIR` to change the location.
 
 ### Build from source
 
@@ -40,21 +40,21 @@ By default, the binary is installed to `~/.local/bin`. Set `LOCALFLOW_INSTALL_DI
 cargo build --release
 ```
 
-The binary is at `target/release/localflow`. Add it to your `PATH`.
+The binary is at `target/release/senko`. Add it to your `PATH`.
 
 ## Claude Code Integration
 
-localflow is primarily used as a Claude Code skill. Run `skill-install` to set it up:
+senko is primarily used as a Claude Code skill. Run `skill-install` to set it up:
 
 ```bash
-localflow skill-install
+senko skill-install
 ```
 
-This generates `.claude/skills/localflow/SKILL.md` in your project, registering the `/localflow` skill with Claude Code.
+This generates `.claude/skills/senko/SKILL.md` in your project, registering the `/senko` skill with Claude Code.
 
 ### What the skill provides
 
-The `/localflow` skill gives Claude Code a full task management workflow:
+The `/senko` skill gives Claude Code a full task management workflow:
 
 - **Auto-select and execute** the next eligible task
 - **Add tasks** with interactive planning or simple mode
@@ -67,33 +67,33 @@ The `/localflow` skill gives Claude Code a full task management workflow:
 Once the skill is installed, use it directly in Claude Code:
 
 ```
-/localflow add Implement user authentication
+/senko add Implement user authentication
 ```
 Add a task with interactive planning — Claude will ask clarifying questions, discover dependencies, and finalize the task.
 
 ```
-/localflow
+/senko
 ```
 Auto-select the highest-priority ready task and start working on it.
 
 ```
-/localflow list
+/senko list
 ```
 Show all tasks with their status and priority.
 
 ```
-/localflow graph
+/senko graph
 ```
 Visualize task dependencies as a text-based graph.
 
 ```
-/localflow complete 3
+/senko complete 3
 ```
 Mark task #3 as completed (checks DoD items first).
 
 ## Hooks
 
-Hooks are shell commands that run automatically when CLI commands change task state. No daemon required — they fire inline as fire-and-forget child processes. Configure in `.localflow/config.toml`:
+Hooks are shell commands that run automatically when CLI commands change task state. No daemon required — they fire inline as fire-and-forget child processes. Configure in `.senko/config.toml`:
 
 ```toml
 [hooks]
@@ -113,7 +113,7 @@ For full details on event payloads, see [CLI Reference – Hooks](docs/CLI.md#ho
 
 ## Workflow Configuration
 
-Control task completion behavior via `[workflow]` in `.localflow/config.toml`:
+Control task completion behavior via `[workflow]` in `.senko/config.toml`:
 
 ```toml
 [workflow]
@@ -126,18 +126,18 @@ auto_merge = false                    # default: true
 | `completion_mode` | `merge_then_complete` (default), `pr_then_complete` | When `pr_then_complete`, `complete` verifies the PR is merged via `gh` |
 | `auto_merge` | `true` (default), `false` | When `false`, `complete` also verifies PR approval |
 
-Use `localflow config` to view current settings, or `localflow config --init` to generate a template.
+Use `senko config` to view current settings, or `senko config --init` to generate a template.
 
-To use a config file at a custom location, use the `--config` flag or the `LOCALFLOW_CONFIG` environment variable:
+To use a config file at a custom location, use the `--config` flag or the `SENKO_CONFIG` environment variable:
 
 ```bash
-localflow --config /path/to/config.toml list
-LOCALFLOW_CONFIG=/path/to/config.toml localflow list
+senko --config /path/to/config.toml list
+SENKO_CONFIG=/path/to/config.toml senko list
 ```
 
 When `completion_mode = "pr_then_complete"`:
-1. Set the PR URL on the task: `localflow edit <id> --pr-url <url>`
-2. The PR must be merged before `localflow complete <id>` succeeds
+1. Set the PR URL on the task: `senko edit <id> --pr-url <url>`
+2. The PR must be merged before `senko complete <id>` succeeds
 3. Use `--skip-pr-check` to bypass verification when needed
 
 ## CLI Reference

@@ -1,32 +1,32 @@
 ---
-name: localflow
-description: "Task management using localflow CLI. Provides workflows for adding, auto-selecting, executing, completing, canceling tasks and managing dependencies. Triggers on \"/localflow\", \"タスク追加\", \"次のタスク\", \"タスク実行\", \"タスクを作って\", \"タスク一覧\", \"タスク完了\", \"タスクキャンセル\", \"依存関係\", \"依存グラフ\", \"タスクグラフ\", \"DoDチェック\", \"add task\", \"next task\", \"complete task\", \"cancel task\", \"task list\", \"task dependencies\", \"dependency graph\", \"dod check\" or similar task management requests."
+name: senko
+description: "Task management using senko CLI. Provides workflows for adding, auto-selecting, executing, completing, canceling tasks and managing dependencies. Triggers on \"/senko\", \"タスク追加\", \"次のタスク\", \"タスク実行\", \"タスクを作って\", \"タスク一覧\", \"タスク完了\", \"タスクキャンセル\", \"依存関係\", \"依存グラフ\", \"タスクグラフ\", \"DoDチェック\", \"add task\", \"next task\", \"complete task\", \"cancel task\", \"task list\", \"task dependencies\", \"dependency graph\", \"dod check\" or similar task management requests."
 argument-hint: "[<id> | add <description> | list | graph | complete <id> | cancel <id> | deps ...]"
 ---
 
-# localflow — Task Management Skill
+# senko — Task Management Skill
 
-Manage and execute project tasks using the `localflow` CLI. localflow is a SQLite-backed task management tool with priority-driven selection and dependency tracking.
+Manage and execute project tasks using the `senko` CLI. senko is a SQLite-backed task management tool with priority-driven selection and dependency tracking.
 
 ## Commands
 
-- `/localflow` — Auto-select and execute the next eligible task
-- `/localflow <id>` — Execute a specific task by ID
-- `/localflow add <description>` — Add a new task (interactive planning)
-- `/localflow add --simple <description>` — Add a task without planning phase
-- `/localflow list` — Show task list
-- `/localflow graph` — Show dependency graph (Mermaid diagram)
-- `/localflow complete <id>` — Mark a task as completed
-- `/localflow cancel <id>` — Cancel a task
-- `/localflow dod check <task_id> <index>` — Mark a DoD item as checked
-- `/localflow dod uncheck <task_id> <index>` — Unmark a DoD item
-- `/localflow deps add <task_id> --on <dep_id>` — Add a dependency
-- `/localflow deps remove <task_id> --on <dep_id>` — Remove a dependency
-- `/localflow deps list <task_id>` — List dependencies of a task
+- `/senko` — Auto-select and execute the next eligible task
+- `/senko <id>` — Execute a specific task by ID
+- `/senko add <description>` — Add a new task (interactive planning)
+- `/senko add --simple <description>` — Add a task without planning phase
+- `/senko list` — Show task list
+- `/senko graph` — Show dependency graph (Mermaid diagram)
+- `/senko complete <id>` — Mark a task as completed
+- `/senko cancel <id>` — Cancel a task
+- `/senko dod check <task_id> <index>` — Mark a DoD item as checked
+- `/senko dod uncheck <task_id> <index>` — Unmark a DoD item
+- `/senko deps add <task_id> --on <dep_id>` — Add a dependency
+- `/senko deps remove <task_id> --on <dep_id>` — Remove a dependency
+- `/senko deps list <task_id>` — List dependencies of a task
 
 ## Argument Parsing
 
-**Default action: When `$ARGUMENTS` is empty, blank, or contains only the literal placeholder `$ARGUMENTS`, execute Auto-Select (run `localflow next`).** Do NOT show the task list — always run `next` when no arguments are provided.
+**Default action: When `$ARGUMENTS` is empty, blank, or contains only the literal placeholder `$ARGUMENTS`, execute Auto-Select (run `senko next`).** Do NOT show the task list — always run `next` when no arguments are provided.
 
 Parse `$ARGUMENTS` with these rules (check in order):
 
@@ -41,57 +41,57 @@ Parse `$ARGUMENTS` with these rules (check in order):
 8. **Starts with `deps`**: Manage dependencies (see "Manage Dependencies")
 9. **Number**: Execute that task (see "Execute Task")
 
-## localflow CLI Reference
+## senko CLI Reference
 
-All commands use `localflow`. Default output is JSON. The `--output` flag is **global** and must precede the subcommand.
+All commands use `senko`. Default output is JSON. The `--output` flag is **global** and must precede the subcommand.
 
 ```bash
 # Add a task (created in draft status)
-localflow add --title "Title" --priority p1 --description "Description"
+senko add --title "Title" --priority p1 --description "Description"
 
 # List tasks (with filters)
-localflow --output text list
-localflow list --status todo
-localflow list --status in_progress
-localflow list --ready                 # todo tasks with all deps completed
-localflow list --tag backend
+senko --output text list
+senko list --status todo
+senko list --status in_progress
+senko list --ready                 # todo tasks with all deps completed
+senko list --tag backend
 
 # Get task details (JSON only, no text output)
-localflow get <id>
+senko get <id>
 
 # Auto-select next task (highest-priority ready task → in_progress)
-localflow next
+senko next
 
 # Status transitions (dedicated commands)
-localflow ready <id>                       # draft → todo
-localflow start <id>                       # todo → in_progress
-localflow complete <id>                    # in_progress → completed (fails if unchecked DoD)
-localflow complete <id> --skip-pr-check    # bypass PR merge/review checks
-localflow cancel <id> --reason "Reason text"  # any active → canceled
+senko ready <id>                       # draft → todo
+senko start <id>                       # todo → in_progress
+senko complete <id>                    # in_progress → completed (fails if unchecked DoD)
+senko complete <id> --skip-pr-check    # bypass PR merge/review checks
+senko cancel <id> --reason "Reason text"  # any active → canceled
 
 # Edit task fields (no status changes — use dedicated commands above)
-localflow edit <id> --title "New Title" --add-tag backend
-localflow edit <id> --add-definition-of-done "Write unit tests"
-localflow edit <id> --pr-url "https://github.com/org/repo/pull/42"
+senko edit <id> --title "New Title" --add-tag backend
+senko edit <id> --add-definition-of-done "Write unit tests"
+senko edit <id> --pr-url "https://github.com/org/repo/pull/42"
 
 # Definition of Done (DoD) check/uncheck (1-based index)
-localflow dod check <task_id> <index>      # mark DoD item as done
-localflow dod uncheck <task_id> <index>    # unmark DoD item
+senko dod check <task_id> <index>      # mark DoD item as done
+senko dod uncheck <task_id> <index>    # unmark DoD item
 
 # Dependencies
-localflow deps add <task_id> --on <dep_id>
-localflow deps remove <task_id> --on <dep_id>
-localflow deps set <task_id> --on <dep_id1> <dep_id2>
-localflow deps list <task_id>
+senko deps add <task_id> --on <dep_id>
+senko deps remove <task_id> --on <dep_id>
+senko deps set <task_id> --on <dep_id1> <dep_id2>
+senko deps list <task_id>
 
 # Configuration
-localflow config                           # show current configuration
-localflow config --init                    # generate template config.toml
+senko config                           # show current configuration
+senko config --init                    # generate template config.toml
 ```
 
 ### Important CLI details
 
-- `--output text|json` and `--dry-run` are **global flags** — place them before the subcommand: `localflow --output text list`, `localflow --dry-run ready 1`
+- `--output text|json` and `--dry-run` are **global flags** — place them before the subcommand: `senko --output text list`, `senko --dry-run ready 1`
 - `--dry-run` shows what would happen without actually executing the command. Available for all state-changing commands (`add`, `edit`, `ready`, `start`, `complete`, `cancel`, `next`, `deps add/remove/set`, `dod check/uncheck`). Read-only commands (`list`, `get`, `deps list`) ignore it.
 - **DoD items have a checked state.** `complete` will fail if any DoD items are unchecked. Use `dod check <task_id> <index>` (1-based index) to mark items before completing. Tasks with no DoD items can complete freely.
 - **Status transitions use dedicated commands**, not `edit --status`:
@@ -102,7 +102,7 @@ localflow config --init                    # generate template config.toml
 - `get` only outputs JSON (no `--output text` support)
 - New tasks start in `draft` status. Status transitions: draft → todo → in_progress → completed. Any active status → canceled.
 - Priority levels: `p0` (highest) through `p3` (lowest). Default is `p2`.
-- **Workflow configuration** (`[workflow]` in `.localflow/config.toml`):
+- **Workflow configuration** (`[workflow]` in `.senko/config.toml`):
   - `completion_mode`: `merge_then_complete` (default) or `pr_then_complete`
   - `auto_merge`: `true` (default) / `false`
   - When `completion_mode = "pr_then_complete"`, `complete` requires `pr_url` to be set and the PR to be merged (checked via `gh`). Use `--skip-pr-check` to bypass.
@@ -112,10 +112,10 @@ localflow config --init                    # generate template config.toml
 
 ## List Tasks
 
-Retrieve and display tasks using `localflow list`.
+Retrieve and display tasks using `senko list`.
 
 ```bash
-localflow --output text list
+senko --output text list
 ```
 
 Use `--status`, `--tag`, and `--ready` to filter results. Combine filters as needed.
@@ -131,7 +131,7 @@ Visualize task dependencies as a text-based graph for terminal display.
 1. Fetch all tasks:
 
 ```bash
-localflow list
+senko list
 ```
 
 2. From the JSON output, build a dependency graph. Each task's `dependencies` array lists the IDs it depends on.
@@ -193,7 +193,7 @@ Task Dependencies Summary
 #### Phase 1: Create Task (draft)
 
 ```bash
-localflow add --title "<description>"
+senko add --title "<description>"
 ```
 
 Capture the `id` from JSON output for subsequent phases.
@@ -218,8 +218,8 @@ Continue until **no open questions remain**.
 Check existing active tasks for potential dependencies:
 
 ```bash
-localflow list --status todo
-localflow list --status in_progress
+senko list --status todo
+senko list --status in_progress
 ```
 
 Review the list to identify tasks the new task should depend on.
@@ -237,7 +237,7 @@ Review the list to identify tasks the new task should depend on.
 3. Apply confirmed settings:
 
 ```bash
-localflow edit <id> \
+senko edit <id> \
   --title "Final title" \
   --description "Planning description" \
   --priority p1 \
@@ -246,10 +246,10 @@ localflow edit <id> \
   --add-definition-of-done "E2E tests pass"
 
 # Transition to todo
-localflow ready <id>
+senko ready <id>
 
 # If dependencies exist
-localflow deps add <id> --on <dep_id>
+senko deps add <id> --on <dep_id>
 ```
 
 **Simple mode:**
@@ -258,8 +258,8 @@ localflow deps add <id> --on <dep_id>
 2. Transition to todo:
 
 ```bash
-localflow edit <id> --description "<description>"
-localflow ready <id>
+senko edit <id> --description "<description>"
+senko ready <id>
 ```
 
 Display the finalized task details to the user.
@@ -268,10 +268,10 @@ Display the finalized task details to the user.
 
 ## Auto-Select
 
-Use `localflow next` to auto-select the highest-priority eligible task.
+Use `senko next` to auto-select the highest-priority eligible task.
 
 ```bash
-localflow next
+senko next
 ```
 
 - **Success**: The selected task moves to `in_progress`. Read task info from JSON output and proceed to "Execute Task" Step 2.
@@ -283,10 +283,10 @@ localflow next
 
 ### Pre-check
 
-> Skip this step if coming from `localflow next` (already validated).
+> Skip this step if coming from `senko next` (already validated).
 
 ```bash
-localflow get <id>
+senko get <id>
 ```
 
 - Verify `status` is `todo`. If not, inform the user and stop.
@@ -295,14 +295,14 @@ localflow get <id>
 Then transition:
 
 ```bash
-localflow start <id>
+senko start <id>
 ```
 
 ### Execution Steps
 
 #### Step 1: Review Task
 
-Read full task info from `localflow get <id>` output: `description`, `plan`, `definition_of_done`, `in_scope`, `out_of_scope`.
+Read full task info from `senko get <id>` output: `description`, `plan`, `definition_of_done`, `in_scope`, `out_of_scope`.
 
 #### Step 2: Create Worktree
 
@@ -312,28 +312,28 @@ Generate a branch name from the task title. Use the `/wth` skill to create a wor
 
 Use `EnterPlanMode` to create an implementation plan. Investigate the codebase based on the task's description.
 
-Before creating the plan, run `localflow config` to check the workflow configuration. Include a Pre-start section and a Post-completion section in the plan. Based on the `completion_mode` and `auto_merge` settings, use the appropriate post-completion template:
+Before creating the plan, run `senko config` to check the workflow configuration. Include a Pre-start section and a Post-completion section in the plan. Based on the `completion_mode` and `auto_merge` settings, use the appropriate post-completion template:
 
 **When `completion_mode = "merge_then_complete"` (default):**
 
 ```
 # Pre-start
 - Save this plan to the task:
-  `localflow edit <id> --plan "The approved implementation plan text"`
+  `senko edit <id> --plan "The approved implementation plan text"`
 - This must be done before starting implementation.
 
 # Post-completion
 - When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
   2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
   3. Process the subagent's results for each item:
-     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **VERIFIED**: `senko dod check <id> <index>`
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
   4. All DoD items must be checked before proceeding to merge
 - Merge the branch into main (all DoD items must be checked before this step)
 - Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `localflow complete <id>`
+- Complete the task: `senko complete <id>`
 - Delete the worktree (using `/wth` skill)
 ```
 
@@ -342,22 +342,22 @@ Before creating the plan, run `localflow config` to check the workflow configura
 ```
 # Pre-start
 - Save this plan to the task:
-  `localflow edit <id> --plan "The approved implementation plan text"`
+  `senko edit <id> --plan "The approved implementation plan text"`
 - This must be done before starting implementation.
 
 # Post-completion
 - When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
   2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
   3. Process the subagent's results for each item:
-     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **VERIFIED**: `senko dod check <id> <index>`
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
   4. All DoD items must be checked before proceeding to PR
 - Create PR and merge (all DoD items must be checked before this step)
-- After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
+- After creating the PR, save the PR URL: `senko edit <id> --pr-url <pr_url>`
 - Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `localflow complete <id>`
+- Complete the task: `senko complete <id>`
 - Delete the worktree (using `/wth` skill)
 ```
 
@@ -366,23 +366,23 @@ Before creating the plan, run `localflow config` to check the workflow configura
 ```
 # Pre-start
 - Save this plan to the task:
-  `localflow edit <id> --plan "The approved implementation plan text"`
+  `senko edit <id> --plan "The approved implementation plan text"`
 - This must be done before starting implementation.
 
 # Post-completion
 - When implementation is done, verify DoD items using the dod-verifier subagent:
-  1. Run `localflow get <id>` and check `definition_of_done` for unchecked items
+  1. Run `senko get <id>` and check `definition_of_done` for unchecked items
   2. Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
   3. Process the subagent's results for each item:
-     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **VERIFIED**: `senko dod check <id> <index>`
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
   4. All DoD items must be checked before proceeding to PR
 - Create PR (all DoD items must be checked before this step)
-- After creating the PR, save the PR URL: `localflow edit <id> --pr-url <pr_url>`
+- After creating the PR, save the PR URL: `senko edit <id> --pr-url <pr_url>`
 - Request review and wait for approval before merging
 - Use `AskUserQuestion` to ask the user for completion approval
-- Complete the task: `localflow complete <id>`
+- Complete the task: `senko complete <id>`
 - Delete the worktree (using `/wth` skill)
 ```
 
@@ -395,27 +395,27 @@ Wait for the user to approve the plan.
 Mark a task as completed. `complete` will fail if any DoD items are unchecked.
 
 ```bash
-localflow get <id>
+senko get <id>
 ```
 
 1. Verify the task is in `in_progress` status. If not, inform the user and stop.
 2. Check if any DoD items are unchecked (`"checked": false` in JSON, or `[ ]` in text output). If unchecked items exist:
    - Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
    - Process the subagent's results for each item:
-     - **VERIFIED**: `localflow dod check <id> <index>`
+     - **VERIFIED**: `senko dod check <id> <index>`
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Inform the user that the item is not yet achieved
    - All DoD items must be checked before proceeding to complete
-3. Check the workflow configuration (`localflow config`):
+3. Check the workflow configuration (`senko config`):
    - If `completion_mode = "pr_then_complete"`:
-     - Ensure `pr_url` is set on the task (`localflow edit <id> --pr-url <url>`)
-     - The PR must be merged before `localflow complete <id>` will succeed
+     - Ensure `pr_url` is set on the task (`senko edit <id> --pr-url <url>`)
+     - The PR must be merged before `senko complete <id>` will succeed
      - If `auto_merge = false`, the PR must also have approval
      - Use `--skip-pr-check` to bypass these checks if needed
    - If `completion_mode = "merge_then_complete"` (default): no PR checks are performed
 
 ```bash
-localflow complete <id>
+senko complete <id>
 ```
 
 Display the completed task info to the user. If there is an associated worktree, remind the user to clean it up.
@@ -431,7 +431,7 @@ Manage the checked state of Definition of Done items. Indices are **1-based** (f
 Mark a DoD item as done:
 
 ```bash
-localflow dod check <task_id> <index>
+senko dod check <task_id> <index>
 ```
 
 ### `dod uncheck <task_id> <index>`
@@ -439,7 +439,7 @@ localflow dod check <task_id> <index>
 Unmark a DoD item:
 
 ```bash
-localflow dod uncheck <task_id> <index>
+senko dod uncheck <task_id> <index>
 ```
 
 ### Display format
@@ -456,13 +456,13 @@ DoD items show their check state in task output:
 Cancel a task. Ask the user for a cancellation reason if not provided.
 
 ```bash
-localflow get <id>
+senko get <id>
 ```
 
 Verify the task is not already in a terminal state (`completed` or `canceled`). If it is, inform the user and stop.
 
 ```bash
-localflow cancel <id> --reason "User-provided reason"
+senko cancel <id> --reason "User-provided reason"
 ```
 
 Display the canceled task info to the user. If there is an associated worktree, remind the user to clean it up.
@@ -475,10 +475,10 @@ Handle dependency operations based on the subcommand.
 
 ### `deps add <task_id> --on <dep_id>`
 
-Add a dependency. localflow will reject circular and self-dependencies automatically.
+Add a dependency. senko will reject circular and self-dependencies automatically.
 
 ```bash
-localflow deps add <task_id> --on <dep_id>
+senko deps add <task_id> --on <dep_id>
 ```
 
 ### `deps remove <task_id> --on <dep_id>`
@@ -486,7 +486,7 @@ localflow deps add <task_id> --on <dep_id>
 Remove a dependency.
 
 ```bash
-localflow deps remove <task_id> --on <dep_id>
+senko deps remove <task_id> --on <dep_id>
 ```
 
 ### `deps list <task_id>`
@@ -494,7 +494,7 @@ localflow deps remove <task_id> --on <dep_id>
 Show all tasks that the given task depends on.
 
 ```bash
-localflow deps list <task_id>
+senko deps list <task_id>
 ```
 
 Display results to the user. If there are unresolved dependencies, note which ones are blocking.
@@ -504,6 +504,6 @@ Display results to the user. If there are unresolved dependencies, note which on
 ## Notes
 
 - **Language**: Respond in the same language the user uses
-- **Errors**: When localflow returns an error, clearly communicate the error details to the user
+- **Errors**: When senko returns an error, clearly communicate the error details to the user
 - **Safety**: Be careful with worktree creation/deletion and branch operations
 - **Output format**: Use `--output text` (global flag, before subcommand) for human display; use JSON (default) for programmatic processing

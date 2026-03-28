@@ -8,8 +8,8 @@ pub fn resolve_project_root(explicit: Option<&Path>) -> Result<PathBuf> {
         return Ok(path.to_path_buf());
     }
 
-    // 2. LOCALFLOW_PROJECT_ROOT env var
-    if let Ok(val) = std::env::var("LOCALFLOW_PROJECT_ROOT") {
+    // 2. SENKO_PROJECT_ROOT env var
+    if let Ok(val) = std::env::var("SENKO_PROJECT_ROOT") {
         if !val.is_empty() {
             return Ok(PathBuf::from(val));
         }
@@ -26,8 +26,8 @@ fn resolve_from(explicit: Option<&Path>, start_dir: &Path) -> Result<PathBuf> {
         return Ok(path.to_path_buf());
     }
 
-    // 2. Search upward for .localflow/
-    if let Some(root) = search_upward(start_dir, ".localflow") {
+    // 2. Search upward for .senko/
+    if let Some(root) = search_upward(start_dir, ".senko") {
         return Ok(root);
     }
 
@@ -75,11 +75,11 @@ mod tests {
     }
 
     #[test]
-    fn detects_localflow_dir() {
+    fn detects_senko_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let sub = tmp.path().join("a/b/c");
         std::fs::create_dir_all(&sub).unwrap();
-        std::fs::create_dir_all(tmp.path().join("a/.localflow")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("a/.senko")).unwrap();
 
         let result = resolve_from(None, &sub).unwrap();
         assert_eq!(result, tmp.path().join("a").canonicalize().unwrap());
@@ -97,12 +97,12 @@ mod tests {
     }
 
     #[test]
-    fn localflow_takes_priority_over_git() {
+    fn senko_takes_priority_over_git() {
         let tmp = tempfile::tempdir().unwrap();
         let sub = tmp.path().join("proj/src");
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
-        std::fs::create_dir_all(tmp.path().join("proj/.localflow")).unwrap();
+        std::fs::create_dir_all(tmp.path().join("proj/.senko")).unwrap();
 
         let result = resolve_from(None, &sub).unwrap();
         assert_eq!(result, tmp.path().join("proj").canonicalize().unwrap());
@@ -114,10 +114,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let target_dir = tmp.path().join("evil");
         std::fs::create_dir_all(&target_dir).unwrap();
-        // Create a symlink .localflow -> evil (symlink attack)
-        std::os::unix::fs::symlink(&target_dir, tmp.path().join(".localflow")).unwrap();
+        // Create a symlink .senko -> evil (symlink attack)
+        std::os::unix::fs::symlink(&target_dir, tmp.path().join(".senko")).unwrap();
 
-        let result = search_upward(tmp.path(), ".localflow");
+        let result = search_upward(tmp.path(), ".senko");
         assert!(result.is_none(), "symlink marker should be skipped");
     }
 
@@ -127,14 +127,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let child = tmp.path().join("child");
         std::fs::create_dir_all(&child).unwrap();
-        // Symlink .localflow in child dir
+        // Symlink .senko in child dir
         let target_dir = tmp.path().join("evil");
         std::fs::create_dir_all(&target_dir).unwrap();
-        std::os::unix::fs::symlink(&target_dir, child.join(".localflow")).unwrap();
-        // Real .localflow in parent
-        std::fs::create_dir_all(tmp.path().join(".localflow")).unwrap();
+        std::os::unix::fs::symlink(&target_dir, child.join(".senko")).unwrap();
+        // Real .senko in parent
+        std::fs::create_dir_all(tmp.path().join(".senko")).unwrap();
 
-        let result = search_upward(&child, ".localflow");
+        let result = search_upward(&child, ".senko");
         assert_eq!(result, Some(tmp.path().canonicalize().unwrap()));
     }
 

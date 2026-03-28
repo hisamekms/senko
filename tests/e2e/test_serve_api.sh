@@ -11,7 +11,7 @@ BASE="http://127.0.0.1:$PORT/api/v1"
 PBASE="$BASE/projects/1"
 
 # Start the API server in background
-"$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve --port "$PORT" &
+"$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 

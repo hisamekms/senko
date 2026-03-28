@@ -478,11 +478,11 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
 
     if init {
-        let localflow_dir = root.join(".localflow");
-        fs::create_dir_all(&localflow_dir)?;
-        let config_path = localflow_dir.join("config.toml");
+        let senko_dir = root.join(".senko");
+        fs::create_dir_all(&senko_dir)?;
+        let config_path = senko_dir.join("config.toml");
         if config_path.exists() {
-            bail!(".localflow/config.toml already exists. Remove it first to re-initialize.");
+            bail!(".senko/config.toml already exists. Remove it first to re-initialize.");
         }
         fs::write(&config_path, CONFIG_TEMPLATE)?;
         match cli.output {
@@ -505,7 +505,7 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
         OutputFormat::Text => {
-            println!("Configuration (.localflow/config.toml):");
+            println!("Configuration (.senko/config.toml):");
             println!("  [workflow]");
             println!(
                 "    completion_mode: {}",

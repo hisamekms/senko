@@ -7,18 +7,18 @@
 ```
 --output <FORMAT>       json or text (default: json)
 --project-root <PATH>   Project root (auto-detected if omitted)
---config <PATH>         Path to config file (env: LOCALFLOW_CONFIG, default: .localflow/config.toml)
+--config <PATH>         Path to config file (env: SENKO_CONFIG, default: .senko/config.toml)
 --dry-run               Show what would happen without executing (state-changing commands only)
---log-dir <PATH>        Override log output directory (default: $XDG_STATE_HOME/localflow)
+--log-dir <PATH>        Override log output directory (default: $XDG_STATE_HOME/senko)
 ```
 
-> **Note**: `--output` and `--dry-run` are global flags — place them **before** the subcommand: `localflow --output text list`
+> **Note**: `--output` and `--dry-run` are global flags — place them **before** the subcommand: `senko --output text list`
 
 ## `add` – Create a task
 
 ```bash
-localflow add --title "Write docs" --priority p0
-localflow add --title "Fix bug" \
+senko add --title "Write docs" --priority p0
+senko add --title "Fix bug" \
   --background "Users report 500 errors" \
   --definition-of-done "No 500 errors in logs" \
   --in-scope "Error handler" \
@@ -31,10 +31,10 @@ New tasks start in `draft` status. Default priority is `p2`.
 ## `list` – List tasks
 
 ```bash
-localflow list                    # All tasks
-localflow list --status todo      # Filter by status
-localflow list --ready            # Todo tasks with all deps met
-localflow list --tag backend      # Filter by tag
+senko list                    # All tasks
+senko list --status todo      # Filter by status
+senko list --ready            # Todo tasks with all deps met
+senko list --tag backend      # Filter by tag
 ```
 
 Status values use snake_case in CLI flags: `todo`, `in_progress`, `completed`, `canceled`, `draft`.
@@ -42,7 +42,7 @@ Status values use snake_case in CLI flags: `todo`, `in_progress`, `completed`, `
 ## `get <id>` – Task details
 
 ```bash
-localflow get 1
+senko get 1
 ```
 
 > `get` outputs JSON only (no `--output text` support).
@@ -52,8 +52,8 @@ localflow get 1
 Selects the highest-priority `todo` task whose dependencies are all completed, and sets it to `in_progress`.
 
 ```bash
-localflow next
-localflow next --session-id "session-abc"
+senko next
+senko next --session-id "session-abc"
 ```
 
 Selection order: priority (P0 first) → created_at → id.
@@ -62,32 +62,32 @@ Selection order: priority (P0 first) → created_at → id.
 
 ```bash
 # Scalar fields
-localflow edit 1 --title "New title"
-localflow edit 1 --description "What to do"
-localflow edit 1 --plan "How to do it"
-localflow edit 1 --clear-description
-localflow edit 1 --clear-plan
-localflow edit 1 --status todo
-localflow edit 1 --priority p0
+senko edit 1 --title "New title"
+senko edit 1 --description "What to do"
+senko edit 1 --plan "How to do it"
+senko edit 1 --clear-description
+senko edit 1 --clear-plan
+senko edit 1 --status todo
+senko edit 1 --priority p0
 
 # Array fields (tags, definition-of-done, scope)
-localflow edit 1 --add-tag "urgent"
-localflow edit 1 --remove-tag "old"
-localflow edit 1 --set-tags "a" "b"         # Replace all
+senko edit 1 --add-tag "urgent"
+senko edit 1 --remove-tag "old"
+senko edit 1 --set-tags "a" "b"         # Replace all
 
 # Definition of Done
-localflow edit 1 --add-definition-of-done "Write unit tests"
+senko edit 1 --add-definition-of-done "Write unit tests"
 
 # PR URL
-localflow edit 1 --pr-url "https://github.com/org/repo/pull/42"
-localflow edit 1 --clear-pr-url
+senko edit 1 --pr-url "https://github.com/org/repo/pull/42"
+senko edit 1 --clear-pr-url
 ```
 
 ## `complete <id>` – Complete a task
 
 ```bash
-localflow complete 1
-localflow complete 1 --skip-pr-check    # Bypass PR merge/review checks
+senko complete 1
+senko complete 1 --skip-pr-check    # Bypass PR merge/review checks
 ```
 
 Fails if any DoD items are unchecked. Use `dod check` to mark items before completing.
@@ -97,31 +97,31 @@ When `completion_mode = "pr_then_complete"` in config, also verifies the PR is m
 ## `cancel <id>` – Cancel a task
 
 ```bash
-localflow cancel 1 --reason "out of scope"
+senko cancel 1 --reason "out of scope"
 ```
 
 ## `dod` – Manage Definition of Done items
 
 ```bash
-localflow dod check <task_id> <index>      # Mark DoD item as done (1-based)
-localflow dod uncheck <task_id> <index>    # Unmark DoD item
+senko dod check <task_id> <index>      # Mark DoD item as done (1-based)
+senko dod uncheck <task_id> <index>    # Unmark DoD item
 ```
 
 ## `deps` – Manage dependencies
 
 ```bash
-localflow deps add 5 --on 3        # Task 5 depends on task 3
-localflow deps remove 5 --on 3     # Remove dependency
-localflow deps set 5 --on 1 2 3    # Set exact dependencies
-localflow deps list 5              # List dependencies of task 5
+senko deps add 5 --on 3        # Task 5 depends on task 3
+senko deps remove 5 --on 3     # Remove dependency
+senko deps set 5 --on 1 2 3    # Set exact dependencies
+senko deps list 5              # List dependencies of task 5
 ```
 
 ## `config` – Show or initialize configuration
 
 ```bash
-localflow config              # Show current configuration (JSON)
-localflow --output text config # Show current configuration (text)
-localflow config --init       # Generate a template .localflow/config.toml
+senko config              # Show current configuration (JSON)
+senko --output text config # Show current configuration (text)
+senko config --init       # Generate a template .senko/config.toml
 ```
 
 Shows current configuration values (including defaults for missing settings). Use `--init` to generate a commented template file.
@@ -129,38 +129,38 @@ Shows current configuration values (including defaults for missing settings). Us
 ## `skill-install` – Claude Code integration
 
 ```bash
-localflow skill-install
+senko skill-install
 ```
 
-Generates a skill definition under `.claude/skills/localflow/` for Claude Code integration.
+Generates a skill definition under `.claude/skills/senko/` for Claude Code integration.
 
 ## `serve` – Start the JSON API server
 
 ```bash
-localflow serve                # Listen on 127.0.0.1:3142
-localflow serve --port 8080    # Listen on 127.0.0.1:8080
-localflow serve --host 0.0.0.0 # Listen on 0.0.0.0:3142 (all interfaces)
+senko serve                # Listen on 127.0.0.1:3142
+senko serve --port 8080    # Listen on 127.0.0.1:8080
+senko serve --host 0.0.0.0 # Listen on 0.0.0.0:3142 (all interfaces)
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--port <PORT>` | Port to listen on (env: `LOCALFLOW_PORT`, default: `3142`) |
-| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `LOCALFLOW_HOST`, default: `127.0.0.1`) |
+| `--port <PORT>` | Port to listen on (env: `SENKO_PORT`, default: `3142`) |
+| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `SENKO_HOST`, default: `127.0.0.1`) |
 
 Provides a full JSON REST API under `/api/v1/...` for all task operations (CRUD, status transitions, dependencies, DoD, config, stats). Hooks fire the same way as CLI commands.
 
 ## `web` – Start a read-only web viewer
 
 ```bash
-localflow web                # Listen on 127.0.0.1:3141
-localflow web --port 8080    # Listen on 127.0.0.1:8080
-localflow web --host 0.0.0.0 # Listen on 0.0.0.0:3141 (all interfaces)
+senko web                # Listen on 127.0.0.1:3141
+senko web --port 8080    # Listen on 127.0.0.1:8080
+senko web --host 0.0.0.0 # Listen on 0.0.0.0:3141 (all interfaces)
 ```
 
 | Option | Description |
 |--------|-------------|
-| `--port <PORT>` | Port to listen on (env: `LOCALFLOW_PORT`, default: `3141`) |
-| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `LOCALFLOW_HOST`, default: `127.0.0.1`) |
+| `--port <PORT>` | Port to listen on (env: `SENKO_PORT`, default: `3141`) |
+| `--host <ADDR>` | Bind address, e.g. `0.0.0.0` or `192.168.1.5` (env: `SENKO_HOST`, default: `127.0.0.1`) |
 
 ## Docker
 
@@ -168,7 +168,7 @@ localflow web --host 0.0.0.0 # Listen on 0.0.0.0:3141 (all interfaces)
 
 ```dockerfile
 FROM debian:bookworm-slim
-ARG LOCALFLOW_VERSION=0.10.0
+ARG SENKO_VERSION=0.10.0
 ARG TARGETARCH
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/* \
@@ -177,10 +177,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
        arm64) TARGET="aarch64-unknown-linux-musl" ;; \
        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
      esac \
-  && curl -fsSL "https://github.com/hisamekms/localflow/releases/download/v${LOCALFLOW_VERSION}/localflow-v${LOCALFLOW_VERSION}-${TARGET}.tar.gz" \
-     | tar xz -C /usr/local/bin localflow
+  && curl -fsSL "https://github.com/hisamekms/senko/releases/download/v${SENKO_VERSION}/senko-v${SENKO_VERSION}-${TARGET}.tar.gz" \
+     | tar xz -C /usr/local/bin senko
 WORKDIR /project
-ENTRYPOINT ["localflow"]
+ENTRYPOINT ["senko"]
 ```
 
 > **Note**: `TARGETARCH` is automatically set by Docker BuildKit based on the build platform. This Dockerfile supports both `amd64` and `arm64`.
@@ -189,23 +189,23 @@ ENTRYPOINT ["localflow"]
 
 ```bash
 # Build the image
-docker build -t localflow .
+docker build -t senko .
 
 # Run a one-off command
-docker run --rm -v "$(pwd)/.localflow:/project/.localflow" localflow list
+docker run --rm -v "$(pwd)/.senko:/project/.senko" senko list
 
 # Start the API server
 docker run --rm -p 3142:3142 \
-  -v "$(pwd)/.localflow:/project/.localflow" \
-  localflow serve --host 0.0.0.0
+  -v "$(pwd)/.senko:/project/.senko" \
+  senko serve --host 0.0.0.0
 ```
 
 ### Data persistence with volume mounts
 
-localflow stores its SQLite database and configuration in the `.localflow/` directory. Mount this directory as a volume to persist data across container runs:
+senko stores its SQLite database and configuration in the `.senko/` directory. Mount this directory as a volume to persist data across container runs:
 
 ```
--v "$(pwd)/.localflow:/project/.localflow"
+-v "$(pwd)/.senko:/project/.senko"
 ```
 
 This mount includes:
@@ -220,7 +220,7 @@ Hooks are shell commands that run automatically when CLI commands change task st
 
 ### Configuration
 
-Create `.localflow/config.toml` to define hooks:
+Create `.senko/config.toml` to define hooks:
 
 ```toml
 [hooks]
@@ -240,11 +240,11 @@ on_task_completed = ["notify-send 'Done'", "curl https://example.com/done"]
 
 | Hook | Trigger |
 |------|---------|
-| `on_task_added` | `localflow add` creates a new task |
-| `on_task_ready` | `localflow ready` transitions a task from draft to todo |
-| `on_task_started` | `localflow start` or `localflow next` starts a task |
-| `on_task_completed` | `localflow complete` completes a task |
-| `on_task_canceled` | `localflow cancel` cancels a task |
+| `on_task_added` | `senko add` creates a new task |
+| `on_task_ready` | `senko ready` transitions a task from draft to todo |
+| `on_task_started` | `senko start` or `senko next` starts a task |
+| `on_task_completed` | `senko complete` completes a task |
+| `on_task_canceled` | `senko cancel` cancels a task |
 
 Hooks receive the full event payload as JSON on **stdin** and are executed via `sh -c`.
 
@@ -271,7 +271,7 @@ The JSON object passed to hooks on stdin:
 | `event` | string | Event name (e.g. `"task_added"`, `"task_completed"`) |
 | `timestamp` | string | ISO 8601 (RFC 3339) timestamp |
 | `from_status` | string \| null | Previous status before the transition |
-| `task` | object | Full task object (same schema as `localflow get`) |
+| `task` | object | Full task object (same schema as `senko get`) |
 | `stats` | object | Task count by status (`{"todo": 3, "completed": 5, ...}`) |
 | `ready_count` | integer | Number of `todo` tasks with all dependencies met |
 | `unblocked_tasks` | array \| null | Tasks newly unblocked by this event (only on `task_completed`) |
@@ -301,50 +301,50 @@ All settings follow the precedence: **CLI flag > environment variable > config.t
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCALFLOW_PORT` | Port for `web` and `serve` commands | `3141` (web) / `3142` (serve) |
-| `LOCALFLOW_HOST` | Bind address (e.g. `0.0.0.0`, `192.168.1.5`) | `127.0.0.1` |
-| `LOCALFLOW_PROJECT_ROOT` | Project root directory | Auto-detected |
-| `LOCALFLOW_CONFIG` | Path to config file | `.localflow/config.toml` |
+| `SENKO_PORT` | Port for `web` and `serve` commands | `3141` (web) / `3142` (serve) |
+| `SENKO_HOST` | Bind address (e.g. `0.0.0.0`, `192.168.1.5`) | `127.0.0.1` |
+| `SENKO_PROJECT_ROOT` | Project root directory | Auto-detected |
+| `SENKO_CONFIG` | Path to config file | `.senko/config.toml` |
 
 ### Workflow
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCALFLOW_COMPLETION_MODE` | `merge_then_complete` or `pr_then_complete` | `merge_then_complete` |
-| `LOCALFLOW_AUTO_MERGE` | `true` or `false` | `true` |
+| `SENKO_COMPLETION_MODE` | `merge_then_complete` or `pr_then_complete` | `merge_then_complete` |
+| `SENKO_AUTO_MERGE` | `true` or `false` | `true` |
 
 ### Backend
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCALFLOW_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
-| `LOCALFLOW_HOOK_MODE` | `server`, `client`, or `both` | `server` |
+| `SENKO_API_URL` | API server URL (enables HTTP backend instead of SQLite) | _(unset = SQLite)_ |
+| `SENKO_HOOK_MODE` | `server`, `client`, or `both` | `server` |
 
 ### Log
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `LOCALFLOW_LOG_DIR` | Directory for hook log output | `$XDG_STATE_HOME/localflow` |
+| `SENKO_LOG_DIR` | Directory for hook log output | `$XDG_STATE_HOME/senko` |
 
 ### Hooks
 
 | Variable | Description |
 |----------|-------------|
-| `LOCALFLOW_HOOK_ON_TASK_ADDED` | Shell command to run when a task is created |
-| `LOCALFLOW_HOOK_ON_TASK_READY` | Shell command to run when a task becomes ready |
-| `LOCALFLOW_HOOK_ON_TASK_STARTED` | Shell command to run when a task is started |
-| `LOCALFLOW_HOOK_ON_TASK_COMPLETED` | Shell command to run when a task is completed |
-| `LOCALFLOW_HOOK_ON_TASK_CANCELED` | Shell command to run when a task is canceled |
+| `SENKO_HOOK_ON_TASK_ADDED` | Shell command to run when a task is created |
+| `SENKO_HOOK_ON_TASK_READY` | Shell command to run when a task becomes ready |
+| `SENKO_HOOK_ON_TASK_STARTED` | Shell command to run when a task is started |
+| `SENKO_HOOK_ON_TASK_COMPLETED` | Shell command to run when a task is completed |
+| `SENKO_HOOK_ON_TASK_CANCELED` | Shell command to run when a task is canceled |
 
 Hook environment variables override the corresponding `[hooks]` section in `config.toml`.
 
 ### Example: Docker deployment
 
 ```bash
-docker run -e LOCALFLOW_PORT=8080 \
-  -e LOCALFLOW_HOST=0.0.0.0 \
-  -e LOCALFLOW_HOOK_ON_TASK_COMPLETED="curl -X POST https://example.com/webhook" \
-  localflow serve
+docker run -e SENKO_PORT=8080 \
+  -e SENKO_HOST=0.0.0.0 \
+  -e SENKO_HOOK_ON_TASK_COMPLETED="curl -X POST https://example.com/webhook" \
+  senko serve
 ```
 
 ## Status Transitions

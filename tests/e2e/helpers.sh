@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e test helpers for localflow CLI
+# e2e test helpers for senko CLI
 
 set -euo pipefail
 
@@ -13,16 +13,16 @@ setup_test_env() {
   mkdir -p "$TEST_PROJECT_ROOT"
 
   # Resolve binary path
-  if [[ -z "${LOCALFLOW:-}" ]]; then
-    LOCALFLOW="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/target/debug/localflow"
+  if [[ -z "${SENKO:-}" ]]; then
+    SENKO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/target/debug/senko"
   fi
 
-  if [[ ! -x "$LOCALFLOW" ]]; then
-    echo "FATAL: localflow binary not found at $LOCALFLOW" >&2
+  if [[ ! -x "$SENKO" ]]; then
+    echo "FATAL: senko binary not found at $SENKO" >&2
     exit 1
   fi
 
-  export TEST_DIR TEST_PROJECT_ROOT LOCALFLOW
+  export TEST_DIR TEST_PROJECT_ROOT SENKO
 }
 
 # Cleanup temp directory
@@ -32,10 +32,10 @@ cleanup_test_env() {
   fi
 }
 
-# Run localflow with --project-root pointed at test directory
+# Run senko with --project-root pointed at test directory
 # Also sets --db-path to keep the database inside the test directory
 run_lf() {
-  "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" "$@"
+  "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" "$@"
 }
 
 # --- Assertion functions ---

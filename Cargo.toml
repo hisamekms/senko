@@ -1,19 +1,19 @@
 [package]
-name = "localflow"
+name = "senko"
 version = "0.12.0"
 edition = "2024"
 
 [[bin]]
-name = "localflow"
+name = "senko"
 path = "src/main.rs"
 
 [[bin]]
-name = "localflow-dynamodb"
+name = "senko-dynamodb"
 path = "src/main.rs"
 required-features = ["dynamodb"]
 
 [[bin]]
-name = "localflow-postgres"
+name = "senko-postgres"
 path = "src/main.rs"
 required-features = ["postgres"]
 

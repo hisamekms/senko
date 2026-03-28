@@ -33,25 +33,25 @@ The workflow (`.github/workflows/release.yml`) will:
 Each release includes per-platform archives:
 
 ```
-localflow-v0.2.0-aarch64-apple-darwin.tar.gz
-localflow-v0.2.0-aarch64-apple-darwin.tar.gz.sha256
-localflow-v0.2.0-aarch64-unknown-linux-musl.tar.gz
-localflow-v0.2.0-aarch64-unknown-linux-musl.tar.gz.sha256
-localflow-v0.2.0-x86_64-unknown-linux-musl.tar.gz
-localflow-v0.2.0-x86_64-unknown-linux-musl.tar.gz.sha256
+senko-v0.2.0-aarch64-apple-darwin.tar.gz
+senko-v0.2.0-aarch64-apple-darwin.tar.gz.sha256
+senko-v0.2.0-aarch64-unknown-linux-musl.tar.gz
+senko-v0.2.0-aarch64-unknown-linux-musl.tar.gz.sha256
+senko-v0.2.0-x86_64-unknown-linux-musl.tar.gz
+senko-v0.2.0-x86_64-unknown-linux-musl.tar.gz.sha256
 ```
 
 ## Installation from Release
 
 ```bash
 # Download and extract (example: Linux x86_64)
-curl -LO https://github.com/<owner>/localflow/releases/download/v0.2.0/localflow-v0.2.0-x86_64-unknown-linux-musl.tar.gz
-tar xzf localflow-v0.2.0-x86_64-unknown-linux-musl.tar.gz
-sudo mv localflow /usr/local/bin/
+curl -LO https://github.com/<owner>/senko/releases/download/v0.2.0/senko-v0.2.0-x86_64-unknown-linux-musl.tar.gz
+tar xzf senko-v0.2.0-x86_64-unknown-linux-musl.tar.gz
+sudo mv senko /usr/local/bin/
 ```
 
 ## Verifying Checksums
 
 ```bash
-sha256sum -c localflow-v0.2.0-x86_64-unknown-linux-musl.tar.gz.sha256
+sha256sum -c senko-v0.2.0-x86_64-unknown-linux-musl.tar.gz.sha256
 ```

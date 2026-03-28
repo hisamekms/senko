@@ -1,8 +1,8 @@
-# localflow Specification
+# senko Specification
 
 ## Overview
 
-localflow is a **local-only task management CLI** designed for single-developer or single-agent workflows.  
+senko is a **local-only task management CLI** designed for single-developer or single-agent workflows.  
 It is not a collaboration tool and is intended to be used locally within a project.
 
 Tasks are stored in a SQLite database located in the project directory.
@@ -21,7 +21,7 @@ The CLI binary name:
 
 ```
 
-localflow
+senko
 
 ```
 
@@ -29,7 +29,7 @@ Claude Code integration is provided via:
 
 ```
 
-localflow skill-install
+senko skill-install
 
 ```
 
@@ -43,7 +43,7 @@ Database location:
 
 ```
 
-<project_root>/.localflow/data.db
+<project_root>/.senko/data.db
 
 ```
 
@@ -51,10 +51,10 @@ Database location:
 
 # Project Root Resolution
 
-localflow determines the project root as follows:
+senko determines the project root as follows:
 
 1. If `--project-root` is provided → use it
-2. Search upward for `.localflow/`
+2. Search upward for `.senko/`
 3. If not found → search for Git repository root
 4. If not found → use current directory
 
@@ -311,15 +311,15 @@ assignee_session_id -> set
 
 ```
 
-localflow add
-localflow list
-localflow get
-localflow next
-localflow edit
-localflow complete
-localflow cancel
-localflow deps
-localflow skill-install
+senko add
+senko list
+senko get
+senko next
+senko edit
+senko complete
+senko cancel
+senko deps
+senko skill-install
 
 ```
 
@@ -355,7 +355,7 @@ Example:
 
 ```
 
-localflow add 
+senko add 
 --title "Implement auth API" 
 --definition-of-done "tests pass" 
 --definition-of-done "docs updated" 
@@ -392,7 +392,7 @@ Example:
 
 ```
 
-localflow add --title "task"
+senko add --title "task"
 
 ```
 
@@ -420,7 +420,7 @@ Retrieve a task by id.
 
 ```
 
-localflow get <task_id>
+senko get <task_id>
 
 ```
 
@@ -432,7 +432,7 @@ Select and start the next task.
 
 ```
 
-localflow next --session-id <session_id>
+senko next --session-id <session_id>
 
 ```
 
@@ -510,7 +510,7 @@ Complete a task.
 
 ```
 
-localflow complete <task_id>
+senko complete <task_id>
 
 ```
 
@@ -539,7 +539,7 @@ Cancel a task.
 
 ```
 
-localflow cancel <task_id>
+senko cancel <task_id>
 
 ```
 
@@ -583,7 +583,7 @@ Add dependency:
 
 ```
 
-localflow deps add <task_id> <depends_on_task_id>
+senko deps add <task_id> <depends_on_task_id>
 
 ```
 
@@ -591,7 +591,7 @@ Remove dependency:
 
 ```
 
-localflow deps remove <task_id> <depends_on_task_id>
+senko deps remove <task_id> <depends_on_task_id>
 
 ```
 
@@ -599,7 +599,7 @@ Replace dependency:
 
 ```
 
-localflow deps replace <task_id> <old_dep> <new_dep>
+senko deps replace <task_id> <old_dep> <new_dep>
 
 ```
 
@@ -611,7 +611,7 @@ Generate Claude Code skill configuration.
 
 ```
 
-localflow skill-install
+senko skill-install
 
 ```
 
@@ -623,4 +623,4 @@ SKILL.md
 
 ```
 
-Used to allow Claude Code to operate localflow via CLI.
+Used to allow Claude Code to operate senko via CLI.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# e2e test runner for localflow CLI
+# e2e test runner for senko CLI
 
 set -euo pipefail
 
@@ -17,12 +17,12 @@ for arg in "$@"; do
   esac
 done
 
-echo "=== Building localflow ==="
+echo "=== Building senko ==="
 cd "$PROJECT_ROOT"
 cargo build 2>&1
 echo ""
 
-export LOCALFLOW="$PROJECT_ROOT/target/debug/localflow"
+export SENKO="$PROJECT_ROOT/target/debug/senko"
 
 # Collect test files
 TEST_FILES=()
@@ -56,7 +56,7 @@ run_single_test() {
 }
 
 export -f run_single_test
-export RESULTS_DIR LOCALFLOW
+export RESULTS_DIR SENKO
 
 echo "=== Running ${#TEST_FILES[@]} tests (parallel=$PARALLEL) ==="
 echo ""

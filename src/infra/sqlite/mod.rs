@@ -253,7 +253,7 @@ fn xdg_data_base() -> Option<std::path::PathBuf> {
 }
 
 /// Compute a per-project XDG database path using a hash of the project root.
-/// Returns `$XDG_DATA_HOME/localflow/projects/<hash>/data.db`.
+/// Returns `$XDG_DATA_HOME/senko/projects/<hash>/data.db`.
 fn xdg_project_db_path(project_root: &Path) -> Option<std::path::PathBuf> {
     use sha2::{Sha256, Digest};
     let data_dir = xdg_data_base()?;
@@ -261,14 +261,14 @@ fn xdg_project_db_path(project_root: &Path) -> Option<std::path::PathBuf> {
         .unwrap_or_else(|| project_root.to_path_buf());
     let hash = format!("{:x}", Sha256::digest(canonical.to_string_lossy().as_bytes()));
     let short_hash = &hash[..16];
-    Some(data_dir.join("localflow").join("projects").join(short_hash).join("data.db"))
+    Some(data_dir.join("senko").join("projects").join(short_hash).join("data.db"))
 }
 
 /// Old global XDG path (pre-per-project migration).
-/// Returns `$XDG_DATA_HOME/localflow/data.db`.
+/// Returns `$XDG_DATA_HOME/senko/data.db`.
 fn xdg_global_db_path() -> Option<std::path::PathBuf> {
     let data_dir = xdg_data_base()?;
-    Some(data_dir.join("localflow").join("data.db"))
+    Some(data_dir.join("senko").join("data.db"))
 }
 
 /// Copy a database file and its WAL/SHM companions to a new location.
@@ -294,11 +294,11 @@ fn copy_db_files(src: &Path, dst: &Path) -> Result<()> {
 }
 
 /// Resolve the database path with the following priority (high → low):
-/// 1. `explicit_db_path` (CLI --db-path or LOCALFLOW_DB_PATH env)
+/// 1. `explicit_db_path` (CLI --db-path or SENKO_DB_PATH env)
 /// 2. `config_db_path` (config.toml [storage] db_path)
 /// 3. Per-project XDG path (already exists)
 /// 4. Migration from old global XDG path → per-project XDG path
-/// 5. Migration from legacy `.localflow/data.db` → per-project XDG path
+/// 5. Migration from legacy `.senko/data.db` → per-project XDG path
 /// 6. New installation: per-project XDG default
 fn resolve_db_path(
     project_root: &Path,
@@ -324,7 +324,7 @@ fn resolve_db_path(
     }
 
     // 4. Migrate from legacy project-local path
-    let legacy_path = project_root.join(".localflow").join("data.db");
+    let legacy_path = project_root.join(".senko").join("data.db");
     if legacy_path.exists() {
         copy_db_files(&legacy_path, &xdg_path)?;
         eprintln!(
@@ -396,14 +396,14 @@ fn warn_if_not_gitignored(project_root: &Path) {
             .lines()
             .any(|line| {
                 let trimmed = line.trim();
-                trimmed == ".localflow" || trimmed == ".localflow/"
+                trimmed == ".senko" || trimmed == ".senko/"
             }),
         Err(_) => false,
     };
     if !dominated {
         eprintln!(
-            "warning: .localflow/ is not in .gitignore. \
-             Add \".localflow/\" to your .gitignore to avoid committing local data."
+            "warning: .senko/ is not in .gitignore. \
+             Add \".senko/\" to your .gitignore to avoid committing local data."
         );
     }
 }
@@ -2655,9 +2655,9 @@ mod tests {
     #[test]
     fn legacy_db_upgrade_records_version() {
         let tmp = tempfile::tempdir().unwrap();
-        let localflow_dir = tmp.path().join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
-        let db_path = localflow_dir.join("data.db");
+        let senko_dir = tmp.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
+        let db_path = senko_dir.join("data.db");
         let conn = Connection::open(&db_path).unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
 
@@ -2780,9 +2780,9 @@ mod tests {
     #[test]
     fn current_schema_version_no_table() {
         let tmp = tempfile::tempdir().unwrap();
-        let localflow_dir = tmp.path().join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
-        let db_path = localflow_dir.join("data.db");
+        let senko_dir = tmp.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
+        let db_path = senko_dir.join("data.db");
         let conn = Connection::open(&db_path).unwrap();
 
         // No schema_migrations table at all

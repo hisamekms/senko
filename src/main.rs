@@ -5,22 +5,22 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
-use localflow::application::port::HookExecutor;
-use localflow::application::{ProjectService, TaskService, UserService};
-use localflow::domain::config::{Config, HookMode};
-use localflow::domain::project::CreateProjectParams;
-use localflow::domain::repository::TaskBackend;
-use localflow::domain::task::{
+use senko::application::port::HookExecutor;
+use senko::application::{ProjectService, TaskService, UserService};
+use senko::domain::config::{Config, HookMode};
+use senko::domain::project::CreateProjectParams;
+use senko::domain::repository::TaskBackend;
+use senko::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,
 };
-use localflow::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
-use localflow::infra::hook as hooks;
-use localflow::infra::http::HttpBackend;
-use localflow::infra::hook::executor::ShellHookExecutor;
-use localflow::infra::pr_verifier::GhCliPrVerifier;
-use localflow::infra::project_root::resolve_project_root;
-use localflow::infra::sqlite as db;
+use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
+use senko::infra::hook as hooks;
+use senko::infra::http::HttpBackend;
+use senko::infra::hook::executor::ShellHookExecutor;
+use senko::infra::pr_verifier::GhCliPrVerifier;
+use senko::infra::project_root::resolve_project_root;
+use senko::infra::sqlite as db;
 
 const DEFAULT_PROJECT_ID: i64 = 1;
 
@@ -34,14 +34,14 @@ fn create_backend(
     postgres_url: Option<&str>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &Config| -> Option<String> {
-        std::env::var("LOCALFLOW_API_KEY")
+        std::env::var("SENKO_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
             .or_else(|| config.backend.api_key.clone())
     };
 
-    // 1. LOCALFLOW_API_URL env var takes priority
-    if let Ok(url) = std::env::var("LOCALFLOW_API_URL") {
+    // 1. SENKO_API_URL env var takes priority
+    if let Ok(url) = std::env::var("SENKO_API_URL") {
         if !url.is_empty() {
             let config = hooks::load_config(project_root, config_path)?;
             let backend = match resolve_api_key(&config) {
@@ -65,10 +65,10 @@ fn create_backend(
     // 3. DynamoDB backend (via env var or config)
     #[cfg(feature = "dynamodb")]
     {
-        use localflow::infra::dynamodb::DynamoDbBackend;
+        use senko::infra::dynamodb::DynamoDbBackend;
 
-        let table_from_env = std::env::var("LOCALFLOW_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
-        let region_from_env = std::env::var("LOCALFLOW_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
+        let table_from_env = std::env::var("SENKO_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
+        let region_from_env = std::env::var("SENKO_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
 
         let (table, region) = match (&table_from_env, &config.backend.dynamodb) {
             (Some(t), _) => (Some(t.clone()), region_from_env),
@@ -88,13 +88,13 @@ fn create_backend(
     // 4. PostgreSQL backend (via CLI arg, env var, or config)
     #[cfg(feature = "postgres")]
     {
-        use localflow::infra::postgres::PostgresBackend;
+        use senko::infra::postgres::PostgresBackend;
 
-        // Priority: CLI --postgres-url > LOCALFLOW_POSTGRES_URL env > config.toml
+        // Priority: CLI --postgres-url > SENKO_POSTGRES_URL env > config.toml
         let url = postgres_url
             .map(|s| s.to_string())
             .or_else(|| {
-                std::env::var("LOCALFLOW_POSTGRES_URL")
+                std::env::var("SENKO_POSTGRES_URL")
                     .ok()
                     .filter(|s| !s.is_empty())
             })
@@ -151,7 +151,7 @@ fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 
 /// Resolve the project ID from CLI flag, config, or default.
 ///
-/// Priority: CLI flag / LOCALFLOW_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
+/// Priority: CLI flag / SENKO_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
 async fn resolve_project_id(
     backend: &dyn TaskBackend,
     cli_project: Option<&str>,
@@ -177,7 +177,7 @@ enum OutputFormat {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "localflow", about = "Local task management CLI", version)]
+#[command(name = "senko", about = "Local task management CLI", version)]
 struct Cli {
     /// Output format
     #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
@@ -187,7 +187,7 @@ struct Cli {
     #[arg(long)]
     project_root: Option<PathBuf>,
 
-    /// Path to config file (default: .localflow/config.toml)
+    /// Path to config file (default: .senko/config.toml)
     #[arg(long)]
     config: Option<PathBuf>,
 
@@ -199,16 +199,16 @@ struct Cli {
     #[arg(long)]
     log_dir: Option<PathBuf>,
 
-    /// Path to SQLite database file (env: LOCALFLOW_DB_PATH)
-    #[arg(long, env = "LOCALFLOW_DB_PATH")]
+    /// Path to SQLite database file (env: SENKO_DB_PATH)
+    #[arg(long, env = "SENKO_DB_PATH")]
     db_path: Option<PathBuf>,
 
-    /// PostgreSQL connection URL (env: LOCALFLOW_POSTGRES_URL)
-    #[arg(long, env = "LOCALFLOW_POSTGRES_URL")]
+    /// PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
+    #[arg(long, env = "SENKO_POSTGRES_URL")]
     postgres_url: Option<String>,
 
-    /// Project name to operate on (overrides config; env: LOCALFLOW_PROJECT)
-    #[arg(long, env = "LOCALFLOW_PROJECT")]
+    /// Project name to operate on (overrides config; env: SENKO_PROJECT)
+    #[arg(long, env = "SENKO_PROJECT")]
     project: Option<String>,
 
     #[command(subcommand)]
@@ -389,19 +389,19 @@ enum Command {
     },
     /// Start a read-only web viewer
     Web {
-        /// Port to listen on (env: LOCALFLOW_PORT, default: 3141)
+        /// Port to listen on (env: SENKO_PORT, default: 3141)
         #[arg(long)]
         port: Option<u16>,
-        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: LOCALFLOW_HOST, default: 127.0.0.1)
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
         #[arg(long)]
         host: Option<String>,
     },
     /// Start a JSON REST API server
     Serve {
-        /// Port to listen on (env: LOCALFLOW_PORT, default: 3142)
+        /// Port to listen on (env: SENKO_PORT, default: 3142)
         #[arg(long)]
         port: Option<u16>,
-        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: LOCALFLOW_HOST, default: 127.0.0.1)
+        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
         #[arg(long)]
         host: Option<String>,
     },
@@ -861,22 +861,22 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Deps { ref command } => cmd_deps(&cli, command).await,
         Command::Web { port, host } => {
             let effective_port = port
-                .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
+                .or_else(|| std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = hooks::load_config(&root, cli.config.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            localflow::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            senko::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
             let effective_port = port
-                .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
+                .or_else(|| std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = hooks::load_config(&root, cli.config.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            localflow::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            senko::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
@@ -1330,14 +1330,14 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     Ok(())
 }
 
-const CONFIG_TEMPLATE: &str = r#"# localflow configuration
-# See: https://github.com/hisamekms/localflow
+const CONFIG_TEMPLATE: &str = r#"# senko configuration
+# See: https://github.com/hisamekms/senko
 #
 # Config layering (priority high → low):
 #   1. CLI flag (--config)
-#   2. LOCALFLOW_CONFIG env var
-#   3. Project config (.localflow/config.toml)
-#   4. User config (~/.config/localflow/config.toml)
+#   2. SENKO_CONFIG env var
+#   3. Project config (.senko/config.toml)
+#   4. User config (~/.config/senko/config.toml)
 
 # Named hooks: [hooks.<event>.<name>]
 # Each hook has a `command` and optional `enabled` (default: true).
@@ -1361,10 +1361,10 @@ const CONFIG_TEMPLATE: &str = r#"# localflow configuration
 # hook_mode = "server"  # "server" (default), "client", or "both"
 
 [log]
-# dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/localflow)
+# dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/senko)
 
 [project]
-# name = "default"  # project name to operate on (overrides with --project flag or LOCALFLOW_PROJECT env)
+# name = "default"  # project name to operate on (overrides with --project flag or SENKO_PROJECT env)
 "#;
 
 async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
@@ -1487,7 +1487,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let task = if let Some(id) = task_id {
                 backend.get_task(project_id, *id).await?
             } else {
-                use localflow::domain::task::{Priority, TaskStatus};
+                use senko::domain::task::{Priority, TaskStatus};
                 Task::new(
                     0, project_id, "Sample task".into(), None,
                     Some("This is a sample task for hook testing".into()),
@@ -1577,11 +1577,11 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
 
     if init {
-        let localflow_dir = root.join(".localflow");
-        fs::create_dir_all(&localflow_dir)?;
-        let config_path = localflow_dir.join("config.toml");
+        let senko_dir = root.join(".senko");
+        fs::create_dir_all(&senko_dir)?;
+        let config_path = senko_dir.join("config.toml");
         if config_path.exists() {
-            bail!(".localflow/config.toml already exists. Remove it first to re-initialize.");
+            bail!(".senko/config.toml already exists. Remove it first to re-initialize.");
         }
         fs::write(&config_path, CONFIG_TEMPLATE)?;
         match cli.output {
@@ -1604,7 +1604,7 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&config)?);
         }
         OutputFormat::Text => {
-            println!("Configuration (.localflow/config.toml):");
+            println!("Configuration (.senko/config.toml):");
             println!("  [workflow]");
             println!(
                 "    completion_mode: {}",
@@ -1703,7 +1703,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     Ok(())
 }
 
-fn print_dod_items(items: &[localflow::domain::task::DodItem]) {
+fn print_dod_items(items: &[senko::domain::task::DodItem]) {
     for item in items {
         let mark = if item.checked() { "x" } else { " " };
         println!("  [{mark}] {}", item.content());
@@ -1783,14 +1783,14 @@ const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("dod_verifier_agent.md");
 
 /// File to install with its relative path under `.claude/` and content.
 struct InstallableFile {
-    /// Path segments under `.claude/` (e.g. `["skills", "localflow", "SKILL.md"]`)
+    /// Path segments under `.claude/` (e.g. `["skills", "senko", "SKILL.md"]`)
     segments: &'static [&'static str],
     content: &'static str,
 }
 
 const INSTALLABLE_FILES: &[InstallableFile] = &[
     InstallableFile {
-        segments: &["skills", "localflow", "SKILL.md"],
+        segments: &["skills", "senko", "SKILL.md"],
         content: SKILL_MD_CONTENT,
     },
     InstallableFile {
@@ -2095,17 +2095,17 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-    use localflow::domain::repository::{ProjectRepository, TaskRepository};
+    use senko::domain::repository::{ProjectRepository, TaskRepository};
 
     #[test]
     fn parse_add_subcommand() {
-        let cli = Cli::parse_from(["localflow", "add"]);
+        let cli = Cli::parse_from(["senko", "add"]);
         assert!(matches!(cli.command, Command::Add { .. }));
     }
 
     #[test]
     fn parse_add_with_title() {
-        let cli = Cli::parse_from(["localflow", "add", "--title", "my task"]);
+        let cli = Cli::parse_from(["senko", "add", "--title", "my task"]);
         match cli.command {
             Command::Add { title, .. } => assert_eq!(title, Some("my task".to_string())),
             _ => panic!("expected Add"),
@@ -2115,7 +2115,7 @@ mod tests {
     #[test]
     fn parse_add_with_all_flags() {
         let cli = Cli::parse_from([
-            "localflow",
+            "senko",
             "add",
             "--title",
             "task",
@@ -2177,7 +2177,7 @@ mod tests {
 
     #[test]
     fn parse_add_with_from_json() {
-        let cli = Cli::parse_from(["localflow", "add", "--from-json"]);
+        let cli = Cli::parse_from(["senko", "add", "--from-json"]);
         match cli.command {
             Command::Add {
                 from_json, title, ..
@@ -2191,7 +2191,7 @@ mod tests {
 
     #[test]
     fn parse_add_with_from_json_file() {
-        let cli = Cli::parse_from(["localflow", "add", "--from-json-file", "/tmp/task.json"]);
+        let cli = Cli::parse_from(["senko", "add", "--from-json-file", "/tmp/task.json"]);
         match cli.command {
             Command::Add {
                 from_json_file,
@@ -2258,7 +2258,7 @@ mod tests {
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "test task");
         assert_eq!(task.background(), Some("bg"));
-        assert_eq!(task.priority(), localflow::domain::task::Priority::P1);
+        assert_eq!(task.priority(), senko::domain::task::Priority::P1);
         assert_eq!(task.definition_of_done().len(), 1);
         assert_eq!(task.definition_of_done()[0].content(), "done");
         assert_eq!(task.definition_of_done()[0].checked(), false);
@@ -2318,7 +2318,7 @@ mod tests {
         let backend = db::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "file task");
-        assert_eq!(task.priority(), localflow::domain::task::Priority::P0);
+        assert_eq!(task.priority(), senko::domain::task::Priority::P0);
     }
 
     #[tokio::test]
@@ -2476,14 +2476,14 @@ mod tests {
 
     #[test]
     fn parse_list_subcommand() {
-        let cli = Cli::parse_from(["localflow", "list"]);
+        let cli = Cli::parse_from(["senko", "list"]);
         assert!(matches!(cli.command, Command::List { .. }));
     }
 
     #[test]
     fn parse_list_with_filters() {
         let cli = Cli::parse_from([
-            "localflow", "list", "--status", "todo", "--status", "in_progress",
+            "senko", "list", "--status", "todo", "--status", "in_progress",
             "--tag", "rust", "--tag", "web", "--depends-on", "3",
             "--ready",
         ]);
@@ -2505,7 +2505,7 @@ mod tests {
 
     #[test]
     fn parse_get_subcommand() {
-        let cli = Cli::parse_from(["localflow", "get", "42"]);
+        let cli = Cli::parse_from(["senko", "get", "42"]);
         match cli.command {
             Command::Get { task_id } => assert_eq!(task_id, 42),
             _ => panic!("expected Get"),
@@ -2514,13 +2514,13 @@ mod tests {
 
     #[test]
     fn parse_next_subcommand() {
-        let cli = Cli::parse_from(["localflow", "next"]);
+        let cli = Cli::parse_from(["senko", "next"]);
         assert!(matches!(cli.command, Command::Next { .. }));
     }
 
     #[test]
     fn parse_next_with_session_id() {
-        let cli = Cli::parse_from(["localflow", "next", "--session-id", "abc-123"]);
+        let cli = Cli::parse_from(["senko", "next", "--session-id", "abc-123"]);
         match cli.command {
             Command::Next { session_id, .. } => {
                 assert_eq!(session_id, Some("abc-123".to_string()));
@@ -2531,14 +2531,14 @@ mod tests {
 
     #[test]
     fn parse_edit_subcommand() {
-        let cli = Cli::parse_from(["localflow", "edit", "1"]);
+        let cli = Cli::parse_from(["senko", "edit", "1"]);
         assert!(matches!(cli.command, Command::Edit { id: 1, .. }));
     }
 
     #[test]
     fn parse_edit_with_scalar_args() {
         let cli = Cli::parse_from([
-            "localflow", "edit", "5", "--title", "new title", "--priority", "p0",
+            "senko", "edit", "5", "--title", "new title", "--priority", "p0",
         ]);
         match cli.command {
             Command::Edit {
@@ -2557,7 +2557,7 @@ mod tests {
 
     #[test]
     fn parse_ready_command() {
-        let cli = Cli::parse_from(["localflow", "ready", "3"]);
+        let cli = Cli::parse_from(["senko", "ready", "3"]);
         match cli.command {
             Command::Ready { id } => assert_eq!(id, 3),
             _ => panic!("expected Ready"),
@@ -2566,7 +2566,7 @@ mod tests {
 
     #[test]
     fn parse_start_command() {
-        let cli = Cli::parse_from(["localflow", "start", "5", "--session-id", "abc"]);
+        let cli = Cli::parse_from(["senko", "start", "5", "--session-id", "abc"]);
         match cli.command {
             Command::Start { id, session_id, .. } => {
                 assert_eq!(id, 5);
@@ -2579,7 +2579,7 @@ mod tests {
     #[test]
     fn parse_edit_with_array_args() {
         let cli = Cli::parse_from([
-            "localflow",
+            "senko",
             "edit",
             "3",
             "--add-tag",
@@ -2611,7 +2611,7 @@ mod tests {
 
     #[test]
     fn parse_edit_clear_background() {
-        let cli = Cli::parse_from(["localflow", "edit", "1", "--clear-background"]);
+        let cli = Cli::parse_from(["senko", "edit", "1", "--clear-background"]);
         match cli.command {
             Command::Edit {
                 clear_background, ..
@@ -2624,19 +2624,19 @@ mod tests {
 
     #[test]
     fn parse_complete_subcommand() {
-        let cli = Cli::parse_from(["localflow", "complete", "1"]);
+        let cli = Cli::parse_from(["senko", "complete", "1"]);
         assert!(matches!(cli.command, Command::Complete { id: 1, .. }));
     }
 
     #[test]
     fn parse_cancel_subcommand() {
-        let cli = Cli::parse_from(["localflow", "cancel", "2"]);
+        let cli = Cli::parse_from(["senko", "cancel", "2"]);
         assert!(matches!(cli.command, Command::Cancel { id: 2, .. }));
     }
 
     #[test]
     fn parse_cancel_with_reason() {
-        let cli = Cli::parse_from(["localflow", "cancel", "3", "--reason", "no longer needed"]);
+        let cli = Cli::parse_from(["senko", "cancel", "3", "--reason", "no longer needed"]);
         match cli.command {
             Command::Cancel { id, reason } => {
                 assert_eq!(id, 3);
@@ -2648,7 +2648,7 @@ mod tests {
 
     #[test]
     fn parse_cancel_without_reason() {
-        let cli = Cli::parse_from(["localflow", "cancel", "4"]);
+        let cli = Cli::parse_from(["senko", "cancel", "4"]);
         match cli.command {
             Command::Cancel { id, reason } => {
                 assert_eq!(id, 4);
@@ -2660,7 +2660,7 @@ mod tests {
 
     #[test]
     fn parse_deps_add() {
-        let cli = Cli::parse_from(["localflow", "deps", "add", "1", "--on", "2"]);
+        let cli = Cli::parse_from(["senko", "deps", "add", "1", "--on", "2"]);
         match cli.command {
             Command::Deps { command: DepsCommand::Add { task_id, on } } => {
                 assert_eq!(task_id, 1);
@@ -2672,7 +2672,7 @@ mod tests {
 
     #[test]
     fn parse_deps_remove() {
-        let cli = Cli::parse_from(["localflow", "deps", "remove", "3", "--on", "4"]);
+        let cli = Cli::parse_from(["senko", "deps", "remove", "3", "--on", "4"]);
         match cli.command {
             Command::Deps { command: DepsCommand::Remove { task_id, on } } => {
                 assert_eq!(task_id, 3);
@@ -2684,7 +2684,7 @@ mod tests {
 
     #[test]
     fn parse_deps_set() {
-        let cli = Cli::parse_from(["localflow", "deps", "set", "1", "--on", "2", "3", "4"]);
+        let cli = Cli::parse_from(["senko", "deps", "set", "1", "--on", "2", "3", "4"]);
         match cli.command {
             Command::Deps { command: DepsCommand::Set { task_id, on } } => {
                 assert_eq!(task_id, 1);
@@ -2696,7 +2696,7 @@ mod tests {
 
     #[test]
     fn parse_deps_list() {
-        let cli = Cli::parse_from(["localflow", "deps", "list", "5"]);
+        let cli = Cli::parse_from(["senko", "deps", "list", "5"]);
         match cli.command {
             Command::Deps { command: DepsCommand::List { task_id } } => {
                 assert_eq!(task_id, 5);
@@ -2707,13 +2707,13 @@ mod tests {
 
     #[test]
     fn parse_skill_install_subcommand() {
-        let cli = Cli::parse_from(["localflow", "skill-install"]);
+        let cli = Cli::parse_from(["senko", "skill-install"]);
         assert!(matches!(cli.command, Command::SkillInstall { .. }));
     }
 
     #[test]
     fn parse_skill_install_with_output_dir() {
-        let cli = Cli::parse_from(["localflow", "skill-install", "--output-dir", "/tmp/out"]);
+        let cli = Cli::parse_from(["senko", "skill-install", "--output-dir", "/tmp/out"]);
         match cli.command {
             Command::SkillInstall { output_dir, yes } => {
                 assert_eq!(output_dir, Some(PathBuf::from("/tmp/out")));
@@ -2725,7 +2725,7 @@ mod tests {
 
     #[test]
     fn parse_skill_install_without_output_dir() {
-        let cli = Cli::parse_from(["localflow", "skill-install"]);
+        let cli = Cli::parse_from(["senko", "skill-install"]);
         match cli.command {
             Command::SkillInstall { output_dir, yes } => {
                 assert!(output_dir.is_none());
@@ -2737,7 +2737,7 @@ mod tests {
 
     #[test]
     fn parse_skill_install_with_yes() {
-        let cli = Cli::parse_from(["localflow", "skill-install", "--yes"]);
+        let cli = Cli::parse_from(["senko", "skill-install", "--yes"]);
         match cli.command {
             Command::SkillInstall { output_dir, yes } => {
                 assert!(output_dir.is_none());
@@ -2796,7 +2796,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow")
+            .join("senko")
             .join("SKILL.md");
         assert!(skill_path.exists());
         let content = std::fs::read_to_string(&skill_path).unwrap();
@@ -2839,7 +2839,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow")
+            .join("senko")
             .join("SKILL.md");
         assert!(skill_path.exists());
 
@@ -2875,7 +2875,7 @@ mod tests {
         assert!(tmp.path().join(".claude").exists());
         assert!(tmp
             .path()
-            .join(".claude/skills/localflow/SKILL.md")
+            .join(".claude/skills/senko/SKILL.md")
             .exists());
         assert!(tmp
             .path()
@@ -2928,7 +2928,7 @@ mod tests {
         // Second install should succeed (files are up to date)
         skill_install(&cli, None, true).unwrap();
 
-        let skill_path = tmp.path().join(".claude/skills/localflow/SKILL.md");
+        let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         let content = std::fs::read_to_string(&skill_path).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
     }
@@ -2953,7 +2953,7 @@ mod tests {
         // First install
         skill_install(&cli, None, true).unwrap();
         // Tamper with the file
-        let skill_path = tmp.path().join(".claude/skills/localflow/SKILL.md");
+        let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         std::fs::write(&skill_path, "modified content").unwrap();
         // Reinstall with --yes should overwrite
         skill_install(&cli, None, true).unwrap();
@@ -2964,22 +2964,22 @@ mod tests {
     #[test]
     fn skill_md_covers_all_commands() {
         let commands = [
-            "localflow add",
-            "localflow list",
-            "localflow get",
-            "localflow next",
-            "localflow ready",
-            "localflow start",
-            "localflow edit",
-            "localflow complete",
-            "localflow cancel",
-            "localflow deps add",
-            "localflow deps remove",
-            "localflow deps set",
-            "localflow deps list",
-            "localflow dod check",
-            "localflow dod uncheck",
-            "localflow config",
+            "senko add",
+            "senko list",
+            "senko get",
+            "senko next",
+            "senko ready",
+            "senko start",
+            "senko edit",
+            "senko complete",
+            "senko cancel",
+            "senko deps add",
+            "senko deps remove",
+            "senko deps set",
+            "senko deps list",
+            "senko dod check",
+            "senko dod uncheck",
+            "senko config",
         ];
         for cmd in commands {
             assert!(
@@ -2991,25 +2991,25 @@ mod tests {
 
     #[test]
     fn parse_output_json() {
-        let cli = Cli::parse_from(["localflow", "--output", "json", "add"]);
+        let cli = Cli::parse_from(["senko", "--output", "json", "add"]);
         assert!(matches!(cli.output, OutputFormat::Json));
     }
 
     #[test]
     fn parse_output_json_default() {
-        let cli = Cli::parse_from(["localflow", "add"]);
+        let cli = Cli::parse_from(["senko", "add"]);
         assert!(matches!(cli.output, OutputFormat::Json));
     }
 
     #[test]
     fn parse_project_root() {
-        let cli = Cli::parse_from(["localflow", "--project-root", "/tmp/test", "add"]);
+        let cli = Cli::parse_from(["senko", "--project-root", "/tmp/test", "add"]);
         assert_eq!(cli.project_root, Some(PathBuf::from("/tmp/test")));
     }
 
     #[test]
     fn parse_no_project_root() {
-        let cli = Cli::parse_from(["localflow", "add"]);
+        let cli = Cli::parse_from(["senko", "add"]);
         assert!(cli.project_root.is_none());
     }
 }

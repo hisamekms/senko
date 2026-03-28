@@ -26,14 +26,14 @@ pub fn create_backend(
     postgres_url: Option<&str>,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
     let resolve_api_key = |config: &Config| -> Option<String> {
-        std::env::var("LOCALFLOW_API_KEY")
+        std::env::var("SENKO_API_KEY")
             .ok()
             .filter(|s| !s.is_empty())
             .or_else(|| config.backend.api_key.clone())
     };
 
-    // 1. LOCALFLOW_API_URL env var takes priority
-    if let Ok(url) = std::env::var("LOCALFLOW_API_URL") {
+    // 1. SENKO_API_URL env var takes priority
+    if let Ok(url) = std::env::var("SENKO_API_URL") {
         if !url.is_empty() {
             let config = hooks::load_config(project_root, config_path)?;
             let backend = match resolve_api_key(&config) {
@@ -59,8 +59,8 @@ pub fn create_backend(
     {
         use crate::infra::dynamodb::DynamoDbBackend;
 
-        let table_from_env = std::env::var("LOCALFLOW_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
-        let region_from_env = std::env::var("LOCALFLOW_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
+        let table_from_env = std::env::var("SENKO_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
+        let region_from_env = std::env::var("SENKO_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
 
         let (table, region) = match (&table_from_env, &config.backend.dynamodb) {
             (Some(t), _) => (Some(t.clone()), region_from_env),
@@ -82,11 +82,11 @@ pub fn create_backend(
     {
         use crate::infra::postgres::PostgresBackend;
 
-        // Priority: CLI --postgres-url > LOCALFLOW_POSTGRES_URL env > config.toml
+        // Priority: CLI --postgres-url > SENKO_POSTGRES_URL env > config.toml
         let url = postgres_url
             .map(|s| s.to_string())
             .or_else(|| {
-                std::env::var("LOCALFLOW_POSTGRES_URL")
+                std::env::var("SENKO_POSTGRES_URL")
                     .ok()
                     .filter(|s| !s.is_empty())
             })
@@ -147,7 +147,7 @@ pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 
 /// Resolve the project ID from CLI flag, config, or default.
 ///
-/// Priority: CLI flag / LOCALFLOW_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
+/// Priority: CLI flag / SENKO_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
 pub async fn resolve_project_id(
     backend: &dyn TaskBackend,
     cli_project: Option<&str>,
@@ -168,7 +168,7 @@ pub async fn resolve_project_id(
 
 /// Resolve the user ID from CLI flag, config, or default.
 ///
-/// Priority: --user / LOCALFLOW_USER env > config.toml [user] name > DEFAULT_USER_ID
+/// Priority: --user / SENKO_USER env > config.toml [user] name > DEFAULT_USER_ID
 pub async fn resolve_user_id(
     backend: &dyn TaskBackend,
     cli_user: Option<&str>,

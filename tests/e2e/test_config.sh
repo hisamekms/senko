@@ -21,7 +21,7 @@ assert_contains "$TEXT_OUT" "auto_merge: true" "text shows auto_merge"
 echo "[3] config --init creates config file"
 INIT_OUT="$(run_lf config --init)"
 assert_json_field "$INIT_OUT" '.action' "created" "init action is created"
-if [[ -f "$TEST_PROJECT_ROOT/.localflow/config.toml" ]]; then
+if [[ -f "$TEST_PROJECT_ROOT/.senko/config.toml" ]]; then
   echo "  PASS: config.toml file created"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
@@ -34,7 +34,7 @@ INIT2_OUT="$(run_lf config --init 2>&1 || true)"
 assert_contains "$INIT2_OUT" "already exists" "init fails with existing file"
 
 echo "[5] config reads custom values from config.toml"
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'EOF'
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
 [workflow]
 completion_mode = "pr_then_complete"
 auto_merge = false
@@ -52,7 +52,7 @@ assert_contains "$TEXT_CUSTOM" "pr_then_complete" "text shows custom completion_
 assert_contains "$TEXT_CUSTOM" "auto_merge: false" "text shows custom auto_merge"
 
 echo "[7] config --init text output"
-rm "$TEST_PROJECT_ROOT/.localflow/config.toml"
+rm "$TEST_PROJECT_ROOT/.senko/config.toml"
 INIT_TEXT="$(run_lf --output text config --init)"
 assert_contains "$INIT_TEXT" "Created" "text init shows Created"
 

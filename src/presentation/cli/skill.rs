@@ -11,14 +11,14 @@ pub const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("../../dod_verifier_ag
 
 /// File to install with its relative path under `.claude/` and content.
 pub struct InstallableFile {
-    /// Path segments under `.claude/` (e.g. `["skills", "localflow", "SKILL.md"]`)
+    /// Path segments under `.claude/` (e.g. `["skills", "senko", "SKILL.md"]`)
     pub segments: &'static [&'static str],
     pub content: &'static str,
 }
 
 pub const INSTALLABLE_FILES: &[InstallableFile] = &[
     InstallableFile {
-        segments: &["skills", "localflow", "SKILL.md"],
+        segments: &["skills", "senko", "SKILL.md"],
         content: SKILL_MD_CONTENT,
     },
     InstallableFile {
@@ -187,7 +187,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow")
+            .join("senko")
             .join("SKILL.md");
         assert!(skill_path.exists());
         let content = std::fs::read_to_string(&skill_path).unwrap();
@@ -231,7 +231,7 @@ mod tests {
             .path()
             .join(".claude")
             .join("skills")
-            .join("localflow")
+            .join("senko")
             .join("SKILL.md");
         assert!(skill_path.exists());
 
@@ -268,7 +268,7 @@ mod tests {
         assert!(tmp.path().join(".claude").exists());
         assert!(tmp
             .path()
-            .join(".claude/skills/localflow/SKILL.md")
+            .join(".claude/skills/senko/SKILL.md")
             .exists());
         assert!(tmp
             .path()
@@ -322,7 +322,7 @@ mod tests {
         // Second install should succeed (files are up to date)
         skill_install(&cli, None, true).unwrap();
 
-        let skill_path = tmp.path().join(".claude/skills/localflow/SKILL.md");
+        let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         let content = std::fs::read_to_string(&skill_path).unwrap();
         assert_eq!(content, SKILL_MD_CONTENT);
     }
@@ -348,7 +348,7 @@ mod tests {
         // First install
         skill_install(&cli, None, true).unwrap();
         // Tamper with the file
-        let skill_path = tmp.path().join(".claude/skills/localflow/SKILL.md");
+        let skill_path = tmp.path().join(".claude/skills/senko/SKILL.md");
         std::fs::write(&skill_path, "modified content").unwrap();
         // Reinstall with --yes should overwrite
         skill_install(&cli, None, true).unwrap();
@@ -359,22 +359,22 @@ mod tests {
     #[test]
     fn skill_md_covers_all_commands() {
         let commands = [
-            "localflow add",
-            "localflow list",
-            "localflow get",
-            "localflow next",
-            "localflow ready",
-            "localflow start",
-            "localflow edit",
-            "localflow complete",
-            "localflow cancel",
-            "localflow deps add",
-            "localflow deps remove",
-            "localflow deps set",
-            "localflow deps list",
-            "localflow dod check",
-            "localflow dod uncheck",
-            "localflow config",
+            "senko add",
+            "senko list",
+            "senko get",
+            "senko next",
+            "senko ready",
+            "senko start",
+            "senko edit",
+            "senko complete",
+            "senko cancel",
+            "senko deps add",
+            "senko deps remove",
+            "senko deps set",
+            "senko deps list",
+            "senko dod check",
+            "senko dod uncheck",
+            "senko config",
         ];
         for cmd in commands {
             assert!(

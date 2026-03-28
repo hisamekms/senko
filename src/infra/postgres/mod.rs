@@ -1349,11 +1349,11 @@ mod tests {
     use super::*;
 
     fn test_url() -> Option<String> {
-        std::env::var("LOCALFLOW_TEST_POSTGRES_URL").ok()
+        std::env::var("SENKO_TEST_POSTGRES_URL").ok()
     }
 
     async fn setup() -> PostgresBackend {
-        let url = test_url().expect("LOCALFLOW_TEST_POSTGRES_URL must be set for postgres tests");
+        let url = test_url().expect("SENKO_TEST_POSTGRES_URL must be set for postgres tests");
         let backend = PostgresBackend::new(url);
         let pool = backend.pool().await.unwrap();
 

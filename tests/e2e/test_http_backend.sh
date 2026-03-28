@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# E2E tests for HttpBackend mode: CLI commands via LOCALFLOW_API_URL
+# E2E tests for HttpBackend mode: CLI commands via SENKO_API_URL
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
@@ -10,16 +10,16 @@ PORT=$((20000 + RANDOM % 40000))
 API_URL="http://127.0.0.1:$PORT"
 
 # Start the API server in background
-"$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.localflow/data.db" serve --port "$PORT" &
+"$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 
 # Wait for server to be ready
 wait_for "API server ready" 10 "curl -sf $API_URL/api/v1/health >/dev/null"
 
-# Helper: run localflow CLI in HTTP backend mode
+# Helper: run senko CLI in HTTP backend mode
 run_http() {
-  LOCALFLOW_API_URL="$API_URL" "$LOCALFLOW" --project-root "$TEST_PROJECT_ROOT" "$@"
+  SENKO_API_URL="$API_URL" "$SENKO" --project-root "$TEST_PROJECT_ROOT" "$@"
 }
 
 echo "--- Test: HTTP Backend Mode ---"

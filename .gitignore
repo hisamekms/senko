@@ -20,5 +20,5 @@ Thumbs.db
 *.local.*
 *.local
 *.local/
-.localflow/
+.senko/
 worktrees/

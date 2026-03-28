@@ -24,8 +24,8 @@ assert_contains "$CLEAR_OUTPUT" "log" "clear output mentions log"
 
 # 3. Setup: configure a hook and trigger it to generate log entries
 echo "[3] Generate log entries via hooks"
-mkdir -p "$TEST_PROJECT_ROOT/.localflow"
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'TOML'
+mkdir -p "$TEST_PROJECT_ROOT/.senko"
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
 [hooks.on_task_added.test_hook]
 command = "true"
 enabled = true

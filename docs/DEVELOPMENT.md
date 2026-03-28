@@ -16,9 +16,9 @@ draft → todo → in_progress → completed
 
 ## Data Storage
 
-The database is stored at `<project_root>/.localflow/data.db` (auto-created).
+The database is stored at `<project_root>/.senko/data.db` (auto-created).
 
-Project root is detected by searching for `.localflow/`, `.git/`, or using the current directory.
+Project root is detected by searching for `.senko/`, `.git/`, or using the current directory.
 
 ## Testing
 

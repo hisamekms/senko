@@ -49,10 +49,10 @@ pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Resul
         // Explicit --config flag: must exist
         Some(load_config_file(path, true)?)
     } else if let Some(env_path) = env_config_path() {
-        // LOCALFLOW_CONFIG env var: must exist
+        // SENKO_CONFIG env var: must exist
         Some(load_config_file(&env_path, true)?)
     } else {
-        let default_path = project_root.join(".localflow").join("config.toml");
+        let default_path = project_root.join(".senko").join("config.toml");
         if default_path.exists() {
             Some(load_config_file(&default_path, false)?)
         } else {
@@ -74,7 +74,7 @@ pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Resul
 }
 
 /// Return the user-level config path.
-/// `$XDG_CONFIG_HOME/localflow/config.toml` or `~/.config/localflow/config.toml`
+/// `$XDG_CONFIG_HOME/senko/config.toml` or `~/.config/senko/config.toml`
 fn user_config_path() -> Option<PathBuf> {
     let config_dir = std::env::var("XDG_CONFIG_HOME")
         .map(PathBuf::from)
@@ -85,7 +85,7 @@ fn user_config_path() -> Option<PathBuf> {
                 .ok()
                 .map(|h| PathBuf::from(h).join(".config"))
         })?;
-    Some(config_dir.join("localflow").join("config.toml"))
+    Some(config_dir.join("senko").join("config.toml"))
 }
 
 /// Load user-level config if it exists.
@@ -98,9 +98,9 @@ fn load_user_config() -> Result<Option<RawConfig>> {
     Ok(Some(raw))
 }
 
-/// Return the config path from the LOCALFLOW_CONFIG env var, if set.
+/// Return the config path from the SENKO_CONFIG env var, if set.
 fn env_config_path() -> Option<PathBuf> {
-    std::env::var("LOCALFLOW_CONFIG")
+    std::env::var("SENKO_CONFIG")
         .ok()
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
@@ -148,7 +148,7 @@ fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
 
 fn apply_env_overrides(mut config: Config) -> Config {
     // Workflow settings
-    if let Ok(val) = std::env::var("LOCALFLOW_COMPLETION_MODE") {
+    if let Ok(val) = std::env::var("SENKO_COMPLETION_MODE") {
         match val.as_str() {
             "merge_then_complete" => {
                 config.workflow.completion_mode = CompletionMode::MergeThenComplete
@@ -156,29 +156,29 @@ fn apply_env_overrides(mut config: Config) -> Config {
             "pr_then_complete" => {
                 config.workflow.completion_mode = CompletionMode::PrThenComplete
             }
-            other => eprintln!("warning: unknown LOCALFLOW_COMPLETION_MODE={other}, ignoring"),
+            other => eprintln!("warning: unknown SENKO_COMPLETION_MODE={other}, ignoring"),
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_AUTO_MERGE") {
+    if let Ok(val) = std::env::var("SENKO_AUTO_MERGE") {
         match val.to_lowercase().as_str() {
             "true" | "1" | "yes" => config.workflow.auto_merge = true,
             "false" | "0" | "no" => config.workflow.auto_merge = false,
-            other => eprintln!("warning: unknown LOCALFLOW_AUTO_MERGE={other}, ignoring"),
+            other => eprintln!("warning: unknown SENKO_AUTO_MERGE={other}, ignoring"),
         }
     }
 
     // Backend settings
-    if let Ok(val) = std::env::var("LOCALFLOW_API_URL") {
+    if let Ok(val) = std::env::var("SENKO_API_URL") {
         if !val.is_empty() {
             config.backend.api_url = Some(val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_MODE") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_MODE") {
         match val.to_lowercase().as_str() {
             "server" => config.backend.hook_mode = HookMode::Server,
             "client" => config.backend.hook_mode = HookMode::Client,
             "both" => config.backend.hook_mode = HookMode::Both,
-            other => eprintln!("warning: unknown LOCALFLOW_HOOK_MODE={other}, ignoring"),
+            other => eprintln!("warning: unknown SENKO_HOOK_MODE={other}, ignoring"),
         }
     }
 
@@ -186,60 +186,60 @@ fn apply_env_overrides(mut config: Config) -> Config {
     fn insert_env_hook(map: &mut std::collections::BTreeMap<String, HookEntry>, val: String) {
         map.insert("_env".to_string(), HookEntry { command: val, enabled: true });
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_task_added, val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_READY") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_task_ready, val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_STARTED") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_task_started, val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_COMPLETED") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_task_completed, val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_TASK_CANCELED") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_task_canceled, val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_HOOK_ON_NO_ELIGIBLE_TASK") {
+    if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK") {
         if !val.is_empty() {
             insert_env_hook(&mut config.hooks.on_no_eligible_task, val);
         }
     }
 
     // User settings
-    if let Ok(val) = std::env::var("LOCALFLOW_USER") {
+    if let Ok(val) = std::env::var("SENKO_USER") {
         if !val.is_empty() {
             config.user.name = Some(val);
         }
     }
 
     // Log settings
-    if let Ok(val) = std::env::var("LOCALFLOW_LOG_DIR") {
+    if let Ok(val) = std::env::var("SENKO_LOG_DIR") {
         if !val.is_empty() {
             config.log.dir = Some(val);
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_LOG_LEVEL") {
+    if let Ok(val) = std::env::var("SENKO_LOG_LEVEL") {
         if !val.is_empty() {
             config.log.level = val;
         }
     }
-    if let Ok(val) = std::env::var("LOCALFLOW_LOG_FORMAT") {
+    if let Ok(val) = std::env::var("SENKO_LOG_FORMAT") {
         match val.to_lowercase().as_str() {
             "json" => config.log.format = LogFormat::Json,
             "pretty" => config.log.format = LogFormat::Pretty,
-            other => eprintln!("warning: unknown LOCALFLOW_LOG_FORMAT={other}, ignoring"),
+            other => eprintln!("warning: unknown SENKO_LOG_FORMAT={other}, ignoring"),
         }
     }
 
@@ -268,7 +268,7 @@ pub async fn build_event(
 }
 
 /// Return the hook log file path, optionally using a custom log directory.
-/// Priority: `log_dir` override > `$XDG_STATE_HOME/localflow` > `~/.local/state/localflow`
+/// Priority: `log_dir` override > `$XDG_STATE_HOME/senko` > `~/.local/state/senko`
 pub fn log_file_path_with_dir(log_dir: Option<&str>) -> Option<PathBuf> {
     let dir = if let Some(d) = log_dir {
         PathBuf::from(d)
@@ -282,13 +282,13 @@ pub fn log_file_path_with_dir(log_dir: Option<&str>) -> Option<PathBuf> {
                     .ok()
                     .map(|h| PathBuf::from(h).join(".local").join("state"))
             })?;
-        state_dir.join("localflow")
+        state_dir.join("senko")
     };
     Some(dir.join("hooks.log"))
 }
 
 /// Return the hook log file path following XDG Base Directory specification.
-/// `$XDG_STATE_HOME/localflow/hooks.log` (default: `~/.local/state/localflow/hooks.log`)
+/// `$XDG_STATE_HOME/senko/hooks.log` (default: `~/.local/state/senko/hooks.log`)
 pub fn log_file_path() -> Option<PathBuf> {
     log_file_path_with_dir(None)
 }
@@ -370,7 +370,7 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
 
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
-/// Results are logged to `$XDG_STATE_HOME/localflow/hooks.log`.
+/// Results are logged to `$XDG_STATE_HOME/senko/hooks.log`.
 pub async fn fire_hooks(
     config: &Config,
     event_name: &str,
@@ -521,10 +521,10 @@ mod tests {
     fn load_config_valid_toml() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let localflow_dir = dir.path().join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
+        let senko_dir = dir.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
         std::fs::write(
-            localflow_dir.join("config.toml"),
+            senko_dir.join("config.toml"),
             r#"
 [hooks.on_task_added.my-hook]
 command = "echo added"
@@ -546,9 +546,9 @@ command = "echo completed"
     fn load_config_empty_hooks() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let localflow_dir = dir.path().join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
-        std::fs::write(localflow_dir.join("config.toml"), "[hooks]\n").unwrap();
+        let senko_dir = dir.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
+        std::fs::write(senko_dir.join("config.toml"), "[hooks]\n").unwrap();
 
         let config = load_config(dir.path(), None).unwrap();
         assert!(config.hooks.on_task_added.is_empty());
@@ -782,7 +782,7 @@ command = "echo completed"
             let path = log_file_path().unwrap();
             assert_eq!(
                 path,
-                PathBuf::from("/tmp/test-xdg-state/localflow/hooks.log")
+                PathBuf::from("/tmp/test-xdg-state/senko/hooks.log")
             );
             match orig {
                 Some(v) => std::env::set_var("XDG_STATE_HOME", v),
@@ -801,7 +801,7 @@ command = "echo completed"
             let path = log_file_path().unwrap();
             assert_eq!(
                 path,
-                PathBuf::from("/tmp/test-home/.local/state/localflow/hooks.log")
+                PathBuf::from("/tmp/test-home/.local/state/senko/hooks.log")
             );
             match orig_xdg {
                 Some(v) => std::env::set_var("XDG_STATE_HOME", v),
@@ -924,10 +924,10 @@ enabled = false
     fn legacy_hook_format_rejected() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let localflow_dir = dir.path().join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
+        let senko_dir = dir.path().join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
         std::fs::write(
-            localflow_dir.join("config.toml"),
+            senko_dir.join("config.toml"),
             r#"
 [hooks]
 on_task_added = "echo added"
@@ -982,13 +982,13 @@ on_task_added = "echo added"
     fn env_override_completion_mode() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
-            std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
+            let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
+            std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_COMPLETION_MODE", v),
-                None => std::env::remove_var("LOCALFLOW_COMPLETION_MODE"),
+                Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
+                None => std::env::remove_var("SENKO_COMPLETION_MODE"),
             }
         }
     }
@@ -997,16 +997,16 @@ on_task_added = "echo added"
     fn env_override_auto_merge() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_AUTO_MERGE").ok();
-            std::env::set_var("LOCALFLOW_AUTO_MERGE", "false");
+            let orig = std::env::var("SENKO_AUTO_MERGE").ok();
+            std::env::set_var("SENKO_AUTO_MERGE", "false");
             let config = apply_env_overrides(Config::default());
             assert!(!config.workflow.auto_merge);
-            std::env::set_var("LOCALFLOW_AUTO_MERGE", "0");
+            std::env::set_var("SENKO_AUTO_MERGE", "0");
             let config = apply_env_overrides(Config::default());
             assert!(!config.workflow.auto_merge);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_AUTO_MERGE", v),
-                None => std::env::remove_var("LOCALFLOW_AUTO_MERGE"),
+                Some(v) => std::env::set_var("SENKO_AUTO_MERGE", v),
+                None => std::env::remove_var("SENKO_AUTO_MERGE"),
             }
         }
     }
@@ -1015,16 +1015,16 @@ on_task_added = "echo added"
     fn env_override_hook_mode() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_HOOK_MODE").ok();
-            std::env::set_var("LOCALFLOW_HOOK_MODE", "client");
+            let orig = std::env::var("SENKO_HOOK_MODE").ok();
+            std::env::set_var("SENKO_HOOK_MODE", "client");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.backend.hook_mode, HookMode::Client);
-            std::env::set_var("LOCALFLOW_HOOK_MODE", "both");
+            std::env::set_var("SENKO_HOOK_MODE", "both");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.backend.hook_mode, HookMode::Both);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_HOOK_MODE", v),
-                None => std::env::remove_var("LOCALFLOW_HOOK_MODE"),
+                Some(v) => std::env::set_var("SENKO_HOOK_MODE", v),
+                None => std::env::remove_var("SENKO_HOOK_MODE"),
             }
         }
     }
@@ -1033,13 +1033,13 @@ on_task_added = "echo added"
     fn env_override_api_url() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_API_URL").ok();
-            std::env::set_var("LOCALFLOW_API_URL", "http://remote:3142");
+            let orig = std::env::var("SENKO_API_URL").ok();
+            std::env::set_var("SENKO_API_URL", "http://remote:3142");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.backend.api_url, Some("http://remote:3142".to_string()));
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_API_URL", v),
-                None => std::env::remove_var("LOCALFLOW_API_URL"),
+                Some(v) => std::env::set_var("SENKO_API_URL", v),
+                None => std::env::remove_var("SENKO_API_URL"),
             }
         }
     }
@@ -1048,8 +1048,8 @@ on_task_added = "echo added"
     fn env_override_hooks_insert() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
-            std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "env-hook");
+            let orig = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
+            std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "env-hook");
             // Start with a config that already has a hook from config.toml
             let mut config = Config::default();
             config.hooks.on_task_added.insert(
@@ -1061,8 +1061,8 @@ on_task_added = "echo added"
             assert_eq!(config.hooks.on_task_added["toml-hook"].command, "toml-hook");
             assert_eq!(config.hooks.on_task_added["_env"].command, "env-hook");
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", v),
-                None => std::env::remove_var("LOCALFLOW_HOOK_ON_TASK_ADDED"),
+                Some(v) => std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", v),
+                None => std::env::remove_var("SENKO_HOOK_ON_TASK_ADDED"),
             }
         }
     }
@@ -1071,20 +1071,20 @@ on_task_added = "echo added"
     fn env_override_empty_values_ignored() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig_url = std::env::var("LOCALFLOW_API_URL").ok();
-            let orig_hook = std::env::var("LOCALFLOW_HOOK_ON_TASK_ADDED").ok();
-            std::env::set_var("LOCALFLOW_API_URL", "");
-            std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", "");
+            let orig_url = std::env::var("SENKO_API_URL").ok();
+            let orig_hook = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
+            std::env::set_var("SENKO_API_URL", "");
+            std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.backend.api_url, None);
             assert!(config.hooks.on_task_added.is_empty());
             match orig_url {
-                Some(v) => std::env::set_var("LOCALFLOW_API_URL", v),
-                None => std::env::remove_var("LOCALFLOW_API_URL"),
+                Some(v) => std::env::set_var("SENKO_API_URL", v),
+                None => std::env::remove_var("SENKO_API_URL"),
             }
             match orig_hook {
-                Some(v) => std::env::set_var("LOCALFLOW_HOOK_ON_TASK_ADDED", v),
-                None => std::env::remove_var("LOCALFLOW_HOOK_ON_TASK_ADDED"),
+                Some(v) => std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", v),
+                None => std::env::remove_var("SENKO_HOOK_ON_TASK_ADDED"),
             }
         }
     }
@@ -1093,14 +1093,14 @@ on_task_added = "echo added"
     fn load_config_no_file_with_env_overrides() {
         let _lock = ENV_MUTEX.lock().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_COMPLETION_MODE").ok();
-            std::env::set_var("LOCALFLOW_COMPLETION_MODE", "pr_then_complete");
+            let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
+            std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
             let tmp = tempfile::tempdir().unwrap();
             let config = load_config(tmp.path(), None).unwrap();
             assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_COMPLETION_MODE", v),
-                None => std::env::remove_var("LOCALFLOW_COMPLETION_MODE"),
+                Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
+                None => std::env::remove_var("SENKO_COMPLETION_MODE"),
             }
         }
     }
@@ -1150,13 +1150,13 @@ auto_merge = false
         .unwrap();
 
         unsafe {
-            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
-            std::env::set_var("LOCALFLOW_CONFIG", config_file.to_str().unwrap());
+            let orig = std::env::var("SENKO_CONFIG").ok();
+            std::env::set_var("SENKO_CONFIG", config_file.to_str().unwrap());
             let config = load_config(tmp.path(), None).unwrap();
             assert!(!config.workflow.auto_merge);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
-                None => std::env::remove_var("LOCALFLOW_CONFIG"),
+                Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                None => std::env::remove_var("SENKO_CONFIG"),
             }
         }
     }
@@ -1187,14 +1187,14 @@ auto_merge = false
         .unwrap();
 
         unsafe {
-            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
-            std::env::set_var("LOCALFLOW_CONFIG", env_config.to_str().unwrap());
+            let orig = std::env::var("SENKO_CONFIG").ok();
+            std::env::set_var("SENKO_CONFIG", env_config.to_str().unwrap());
             let config = load_config(tmp.path(), Some(&cli_config)).unwrap();
             // CLI flag should take priority over env var
             assert!(!config.workflow.auto_merge);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
-                None => std::env::remove_var("LOCALFLOW_CONFIG"),
+                Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                None => std::env::remove_var("SENKO_CONFIG"),
             }
         }
     }
@@ -1204,8 +1204,8 @@ auto_merge = false
         let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         unsafe {
-            let orig = std::env::var("LOCALFLOW_CONFIG").ok();
-            std::env::set_var("LOCALFLOW_CONFIG", "/nonexistent/path/config.toml");
+            let orig = std::env::var("SENKO_CONFIG").ok();
+            std::env::set_var("SENKO_CONFIG", "/nonexistent/path/config.toml");
             let result = load_config(tmp.path(), None);
             assert!(result.is_err());
             assert!(
@@ -1213,8 +1213,8 @@ auto_merge = false
                 "should report missing config file from env var"
             );
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_CONFIG", v),
-                None => std::env::remove_var("LOCALFLOW_CONFIG"),
+                Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                None => std::env::remove_var("SENKO_CONFIG"),
             }
         }
     }
@@ -1236,13 +1236,13 @@ auto_merge = false
     #[test]
     fn env_override_log_dir() {
         unsafe {
-            let orig = std::env::var("LOCALFLOW_LOG_DIR").ok();
-            std::env::set_var("LOCALFLOW_LOG_DIR", "/tmp/custom-logs");
+            let orig = std::env::var("SENKO_LOG_DIR").ok();
+            std::env::set_var("SENKO_LOG_DIR", "/tmp/custom-logs");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.log.dir, Some("/tmp/custom-logs".into()));
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_LOG_DIR", v),
-                None => std::env::remove_var("LOCALFLOW_LOG_DIR"),
+                Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
+                None => std::env::remove_var("SENKO_LOG_DIR"),
             }
         }
     }
@@ -1250,13 +1250,13 @@ auto_merge = false
     #[test]
     fn env_override_log_dir_empty_ignored() {
         unsafe {
-            let orig = std::env::var("LOCALFLOW_LOG_DIR").ok();
-            std::env::set_var("LOCALFLOW_LOG_DIR", "");
+            let orig = std::env::var("SENKO_LOG_DIR").ok();
+            std::env::set_var("SENKO_LOG_DIR", "");
             let config = apply_env_overrides(Config::default());
             assert_eq!(config.log.dir, None);
             match orig {
-                Some(v) => std::env::set_var("LOCALFLOW_LOG_DIR", v),
-                None => std::env::remove_var("LOCALFLOW_LOG_DIR"),
+                Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
+                None => std::env::remove_var("SENKO_LOG_DIR"),
             }
         }
     }
@@ -1265,10 +1265,10 @@ auto_merge = false
     fn log_config_deserialization() {
         let toml_str = r#"
 [log]
-dir = "/var/log/localflow"
+dir = "/var/log/senko"
 "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.log.dir, Some("/var/log/localflow".into()));
+        assert_eq!(config.log.dir, Some("/var/log/senko".into()));
     }
 
     #[test]
@@ -1368,7 +1368,7 @@ dir = "/var/log/localflow"
     fn user_config_loaded_as_fallback() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
-        let user_config_dir = tmp.path().join("user-config").join("localflow");
+        let user_config_dir = tmp.path().join("user-config").join("senko");
         std::fs::create_dir_all(&user_config_dir).unwrap();
         std::fs::write(
             user_config_dir.join("config.toml"),
@@ -1384,7 +1384,7 @@ command = "user-cmd"
 
         // Project has no config
         let project_dir = tmp.path().join("project");
-        std::fs::create_dir_all(project_dir.join(".localflow")).unwrap();
+        std::fs::create_dir_all(project_dir.join(".senko")).unwrap();
 
         unsafe {
             let orig_xdg = std::env::var("XDG_CONFIG_HOME").ok();
@@ -1406,7 +1406,7 @@ command = "user-cmd"
         let tmp = tempfile::tempdir().unwrap();
 
         // User config
-        let user_config_dir = tmp.path().join("user-config").join("localflow");
+        let user_config_dir = tmp.path().join("user-config").join("senko");
         std::fs::create_dir_all(&user_config_dir).unwrap();
         std::fs::write(
             user_config_dir.join("config.toml"),
@@ -1423,10 +1423,10 @@ command = "user-cmd"
 
         // Project config overrides some fields
         let project_dir = tmp.path().join("project");
-        let localflow_dir = project_dir.join(".localflow");
-        std::fs::create_dir_all(&localflow_dir).unwrap();
+        let senko_dir = project_dir.join(".senko");
+        std::fs::create_dir_all(&senko_dir).unwrap();
         std::fs::write(
-            localflow_dir.join("config.toml"),
+            senko_dir.join("config.toml"),
             r#"
 [workflow]
 auto_merge = true

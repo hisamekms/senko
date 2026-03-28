@@ -13,11 +13,11 @@ echo "--- Test: Hook Events ---"
 
 HOOK_LOG="$TEST_DIR/hook.log"
 
-# Initialize DB first (creates .localflow/)
+# Initialize DB first (creates .senko/)
 run_lf --output json list >/dev/null 2>&1
 
 # Configure hooks for all events (named hook format)
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
 [hooks.on_task_added.default]
 command = "cat >> $HOOK_LOG"
 
@@ -152,7 +152,7 @@ HOOK_LOG2="$TEST_DIR/hook2.log"
 
 run_lf --output json list >/dev/null 2>&1
 
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
 [hooks.on_task_completed.default]
 command = "cat >> $HOOK_LOG2"
 

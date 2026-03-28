@@ -49,8 +49,8 @@ jobs:
       - name: Create archive
         run: |
           TAG="${GITHUB_REF_NAME}"
-          ARCHIVE="localflow-${TAG}-${{ matrix.target }}.tar.gz"
-          tar -czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" localflow
+          ARCHIVE="senko-${TAG}-${{ matrix.target }}.tar.gz"
+          tar -czf "${ARCHIVE}" -C "target/${{ matrix.target }}/release" senko
           if command -v sha256sum &> /dev/null; then
             sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
           else
@@ -61,10 +61,10 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: localflow-${{ matrix.target }}
+          name: senko-${{ matrix.target }}
           path: |
-            localflow-*.tar.gz
-            localflow-*.tar.gz.sha256
+            senko-*.tar.gz
+            senko-*.tar.gz.sha256
 
   release:
     needs: build
@@ -84,4 +84,4 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${TAG}" \
             --generate-notes \
-            localflow-*.tar.gz localflow-*.tar.gz.sha256
+            senko-*.tar.gz senko-*.tar.gz.sha256

@@ -46,7 +46,7 @@ assert_contains "$JSON_ERR" '"error"' "invalid transition returns JSON error"
 
 echo "[5] JSON mode: no 'Error:' on stderr (only warnings allowed)"
 STDERR_OUT="$(run_lf --output json get 99999 2>&1 1>/dev/null || true)"
-# Filter out known warnings (e.g. .localflow gitignore warning)
+# Filter out known warnings (e.g. .senko gitignore warning)
 STDERR_ERRORS="$(echo "$STDERR_OUT" | grep -v "^warning:" || true)"
 assert_eq "" "$STDERR_ERRORS" "no Error: on stderr in JSON mode"
 

@@ -183,7 +183,7 @@ impl TaskService {
             let pr_url = task.pr_url().ok_or_else(|| {
                 anyhow::anyhow!(
                     "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
-                     Use `localflow edit {} --pr-url <url>` to set it.",
+                     Use `senko edit {} --pr-url <url>` to set it.",
                     id,
                     id
                 )

@@ -25,7 +25,7 @@ COMPLETE_OUT="$(run_lf complete "$TASK_ID")"
 assert_json_field "$COMPLETE_OUT" '.status' "completed" "default mode completes"
 
 echo "[2] pr_then_complete fails without pr_url"
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<'EOF'
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
 [workflow]
 completion_mode = "pr_then_complete"
 EOF
@@ -55,7 +55,7 @@ else
 fi
 
 echo "[5] default mode ignores pr_url (completes even with pr_url set)"
-rm "$TEST_PROJECT_ROOT/.localflow/config.toml"
+rm "$TEST_PROJECT_ROOT/.senko/config.toml"
 TASK_ID5="$(create_in_progress_task "Default with pr_url")"
 run_lf edit "$TASK_ID5" --pr-url "https://github.com/org/repo/pull/99" > /dev/null
 DEFAULT_OUT="$(run_lf complete "$TASK_ID5")"

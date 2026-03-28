@@ -1,12 +1,12 @@
 ---
 name: release
-description: "localflowのリリースを実行する。e2eテスト実行→バージョン自動判定→Cargo.toml更新→コミット→タグ作成→pushを一括で行う。Triggers on \"/release\", \"リリース\", \"リリースして\", \"release\", \"バージョンアップ\", \"新バージョン\" or similar release requests."
+description: "senkoのリリースを実行する。e2eテスト実行→バージョン自動判定→Cargo.toml更新→コミット→タグ作成→pushを一括で行う。Triggers on \"/release\", \"リリース\", \"リリースして\", \"release\", \"バージョンアップ\", \"新バージョン\" or similar release requests."
 argument-hint: "[version（省略時は自動判定）]"
 ---
 
-# Release — localflow リリーススキル
+# Release — senko リリーススキル
 
-localflow の新バージョンをリリースする。e2e テストの成功を確認してから、バージョン更新・コミット・タグ作成・push を実行する。
+senko の新バージョンをリリースする。e2e テストの成功を確認してから、バージョン更新・コミット・タグ作成・push を実行する。
 
 ## 手順
 

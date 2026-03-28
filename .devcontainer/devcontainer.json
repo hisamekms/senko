@@ -1,5 +1,5 @@
 {
-  "name": "localflow",
+  "name": "senko",
   "build": {
     "dockerfile": "Dockerfile"
   },
@@ -15,11 +15,11 @@
     "source=${localWorkspaceFolderBasename}-rust-up,target=/home/dev/.rustup,type=volume"
   ],
   "containerEnv": {
-    "MISE_TRUSTED_CONFIG_PATHS": "/workspaces/localflow"
+    "MISE_TRUSTED_CONFIG_PATHS": "/workspaces/senko"
   },
   "features": {},
-  "workspaceFolder": "/workspaces/localflow",
-  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/localflow,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspaces/senko",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/senko,type=bind,consistency=delegated",
   "postCreateCommand": "bash ./.devcontainer/post-create.sh",
   "postStartCommand": "bash ./.devcontainer/post-start.sh"
 }

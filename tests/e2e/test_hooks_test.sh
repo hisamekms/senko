@@ -19,7 +19,7 @@ TASK_ID="$(run_lf --output json add --title "Hook test task" --description "Test
 run_lf ready "$TASK_ID" >/dev/null
 
 # Configure a hook for task_ready
-cat > "$TEST_PROJECT_ROOT/.localflow/config.toml" <<EOF
+cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
 [hooks.on_task_ready.cat-hook]
 command = "cat"
 

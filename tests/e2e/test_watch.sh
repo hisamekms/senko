@@ -15,7 +15,7 @@ echo "--- Test: inline hooks ---"
 create_config() {
   local on_added="${1:-}"
   local on_completed="${2:-}"
-  local config_dir="$TEST_PROJECT_ROOT/.localflow"
+  local config_dir="$TEST_PROJECT_ROOT/.senko"
   mkdir -p "$config_dir"
   : > "$config_dir/config.toml"
   if [[ -n "$on_added" ]]; then
@@ -131,7 +131,7 @@ setup_test_env
 MARKER1="$TEST_DIR/multi_hook1.txt"
 MARKER2="$TEST_DIR/multi_hook2.txt"
 
-config_dir="$TEST_PROJECT_ROOT/.localflow"
+config_dir="$TEST_PROJECT_ROOT/.senko"
 mkdir -p "$config_dir"
 cat > "$config_dir/config.toml" <<EOF
 [hooks.on_task_added.hook1]

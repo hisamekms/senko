@@ -55,7 +55,7 @@ pub async fn serve(
         .layer(TraceLayer::new_for_http());
 
     let bind_addr_str = host
-        .or_else(|| std::env::var("LOCALFLOW_HOST").ok().filter(|v| !v.is_empty()))
+        .or_else(|| std::env::var("SENKO_HOST").ok().filter(|v| !v.is_empty()))
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
@@ -251,7 +251,7 @@ fn layout(title: &str, body: &str) -> String {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} - localflow</title>
+<title>{title} - senko</title>
 <style>
 *, *::before, *::after {{ box-sizing: border-box; }}
 body {{
@@ -348,7 +348,7 @@ pre {{ white-space: pre-wrap; word-break: break-word; }}
 <body>
 <div class="app">
   <aside class="sidebar">
-    <a href="/" class="logo">&#x1f504; <span>localflow</span></a>
+    <a href="/" class="logo">&#x1f504; <span>senko</span></a>
     <ul class="nav-links">
       <li><a href="/">&#x1f3e0; <span>Home</span></a></li>
       <li><a href="/graph">&#x1f4ca; <span>Graph</span></a></li>

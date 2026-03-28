@@ -2,7 +2,7 @@
 set -euo pipefail
 
 USER=dev
-WORKSPACE="/workspaces/localflow"
+WORKSPACE="/workspaces/senko"
 
 log() {
   printf '[post-create] %s\n' "$*"

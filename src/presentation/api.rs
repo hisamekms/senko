@@ -407,7 +407,7 @@ pub async fn serve(
         );
 
     let bind_addr_str = host
-        .or_else(|| std::env::var("LOCALFLOW_HOST").ok().filter(|v| !v.is_empty()))
+        .or_else(|| std::env::var("SENKO_HOST").ok().filter(|v| !v.is_empty()))
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()

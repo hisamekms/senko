@@ -1,8 +1,8 @@
 #!/bin/sh
 set -euo pipefail
 
-REPO="hisamekms/localflow"
-INSTALL_DIR="${LOCALFLOW_INSTALL_DIR:-$HOME/.local/bin}"
+REPO="hisamekms/senko"
+INSTALL_DIR="${SENKO_INSTALL_DIR:-$HOME/.local/bin}"
 
 # Detect OS and architecture
 OS="$(uname -s)"
@@ -47,10 +47,10 @@ else
   fi
 fi
 
-echo "Installing localflow ${TAG} for ${TARGET}..."
+echo "Installing senko ${TAG} for ${TARGET}..."
 
 # Download and extract
-ASSET="localflow-${TAG}-${TARGET}.tar.gz"
+ASSET="senko-${TAG}-${TARGET}.tar.gz"
 URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
 
 TMPDIR="$(mktemp -d)"
@@ -61,9 +61,9 @@ tar xzf "${TMPDIR}/${ASSET}" -C "${TMPDIR}"
 
 # Install
 mkdir -p "${INSTALL_DIR}"
-install -m 755 "${TMPDIR}/localflow" "${INSTALL_DIR}/localflow"
+install -m 755 "${TMPDIR}/senko" "${INSTALL_DIR}/senko"
 
-echo "Installed localflow to ${INSTALL_DIR}/localflow"
+echo "Installed senko to ${INSTALL_DIR}/senko"
 
 # Check PATH
 case ":${PATH}:" in
