@@ -9,7 +9,7 @@ use crate::models::{
     UpdateTaskParams,
 };
 
-pub fn open_db(project_root: &Path) -> Result<Connection> {
+fn open_db(project_root: &Path) -> Result<Connection> {
     let localflow_dir = project_root.join(".localflow");
     std::fs::create_dir_all(&localflow_dir)?;
 
@@ -170,7 +170,7 @@ fn migrate(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
+fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task> {
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
     let metadata_str = params
         .metadata
@@ -217,7 +217,7 @@ pub fn create_task(conn: &Connection, params: &CreateTaskParams) -> Result<Task>
     get_task(conn, task_id)
 }
 
-pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
+fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     let (title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str): (
         String, Option<String>, Option<String>, Option<String>, String, i32, Option<String>, String, String, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>, Option<String>,
     ) = conn
@@ -286,7 +286,7 @@ pub fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     })
 }
 
-pub fn ready_task(conn: &Connection, id: i64) -> Result<Task> {
+fn ready_task(conn: &Connection, id: i64) -> Result<Task> {
     let current: String = conn
         .query_row(
             "SELECT status FROM tasks WHERE id = ?1",
@@ -305,7 +305,7 @@ pub fn ready_task(conn: &Connection, id: i64) -> Result<Task> {
     get_task(conn, id)
 }
 
-pub fn start_task(
+fn start_task(
     conn: &Connection,
     id: i64,
     assignee_session_id: Option<String>,
@@ -329,7 +329,7 @@ pub fn start_task(
     get_task(conn, id)
 }
 
-pub fn complete_task(conn: &Connection, id: i64, completed_at: &str) -> Result<Task> {
+fn complete_task(conn: &Connection, id: i64, completed_at: &str) -> Result<Task> {
     let current: String = conn
         .query_row(
             "SELECT status FROM tasks WHERE id = ?1",
@@ -348,7 +348,7 @@ pub fn complete_task(conn: &Connection, id: i64, completed_at: &str) -> Result<T
     get_task(conn, id)
 }
 
-pub fn cancel_task(
+fn cancel_task(
     conn: &Connection,
     id: i64,
     canceled_at: &str,
@@ -372,7 +372,7 @@ pub fn cancel_task(
     get_task(conn, id)
 }
 
-pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
     let mut columns = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -445,7 +445,7 @@ pub fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Res
     get_task(conn, id)
 }
 
-pub fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
     // tags
     if let Some(ref values) = params.set_tags {
         conn.execute("DELETE FROM task_tags WHERE task_id = ?1", params![id])?;
@@ -585,7 +585,7 @@ fn update_content_array(
     Ok(())
 }
 
-pub fn delete_task(conn: &Connection, id: i64) -> Result<()> {
+fn delete_task(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
     if affected == 0 {
         anyhow::bail!("task not found: {id}");
@@ -593,7 +593,7 @@ pub fn delete_task(conn: &Connection, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Task>> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -653,7 +653,7 @@ pub fn list_tasks(conn: &Connection, filter: &ListTasksFilter) -> Result<Vec<Tas
     Ok(tasks)
 }
 
-pub fn next_task(conn: &Connection) -> Result<Option<Task>> {
+fn next_task(conn: &Connection) -> Result<Option<Task>> {
     let sql = "
         SELECT t.id FROM tasks t
         WHERE t.status = 'todo'
@@ -674,7 +674,7 @@ pub fn next_task(conn: &Connection) -> Result<Option<Task>> {
     }
 }
 
-pub fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
+fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
     let mut stmt = conn.prepare("SELECT status, COUNT(*) FROM tasks GROUP BY status")?;
     let rows = stmt.query_map([], |row| {
         let status: String = row.get(0)?;
@@ -689,7 +689,7 @@ pub fn task_stats(conn: &Connection) -> Result<HashMap<String, i64>> {
     Ok(stats)
 }
 
-pub fn ready_count(conn: &Connection) -> Result<i64> {
+fn ready_count(conn: &Connection) -> Result<i64> {
     let sql = "
         SELECT COUNT(*) FROM tasks t
         WHERE t.status = 'todo'
@@ -703,7 +703,7 @@ pub fn ready_count(conn: &Connection) -> Result<i64> {
     Ok(count)
 }
 
-pub fn list_ready_tasks(conn: &Connection) -> Result<Vec<Task>> {
+fn list_ready_tasks(conn: &Connection) -> Result<Vec<Task>> {
     let filter = ListTasksFilter {
         ready: true,
         ..Default::default()
@@ -737,7 +737,7 @@ fn has_cycle(conn: &Connection, task_id: i64, dep_id: i64) -> Result<bool> {
     Ok(false)
 }
 
-pub fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
+fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
     if task_id == dep_id {
         anyhow::bail!("a task cannot depend on itself");
     }
@@ -759,7 +759,7 @@ pub fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Ta
     get_task(conn, task_id)
 }
 
-pub fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
+fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
     get_task(conn, task_id).context("task not found")?;
     let affected = conn.execute(
         "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_task_id = ?2",
@@ -775,7 +775,7 @@ pub fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result
     get_task(conn, task_id)
 }
 
-pub fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
+fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
     // Self-dependency check
     for &dep_id in dep_ids {
         if dep_id == task_id {
@@ -821,7 +821,7 @@ pub fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Res
     get_task(conn, task_id)
 }
 
-pub fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
+fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     get_task(conn, task_id).context("task not found")?;
     let dep_ids = query_i64_list(
         conn,
@@ -850,11 +850,11 @@ fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
     Ok(items)
 }
 
-pub fn check_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
+fn check_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
     set_dod_checked(conn, task_id, index, true)
 }
 
-pub fn uncheck_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
+fn uncheck_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
     set_dod_checked(conn, task_id, index, false)
 }
 
