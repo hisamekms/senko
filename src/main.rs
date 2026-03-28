@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -669,9 +670,9 @@ fn run(cli: Cli) -> Result<()> {
                 .or_else(|| std::env::var("LOCALFLOW_PORT").ok().and_then(|v| v.parse().ok()))
                 .unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let _ = db::open_db(&root)?; // validate DB exists
+            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root)?);
             let rt = tokio::runtime::Runtime::new()?;
-            rt.block_on(localflow::api::serve(root, effective_port, host, cli.config.clone()))?;
+            rt.block_on(localflow::api::serve(root, effective_port, host, cli.config.clone(), backend))?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {

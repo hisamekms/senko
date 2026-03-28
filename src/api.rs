@@ -13,7 +13,6 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::backend::TaskBackend;
-use crate::db;
 use crate::hooks;
 use crate::models::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -24,6 +23,7 @@ use crate::models::{
 struct AppState {
     project_root: Arc<PathBuf>,
     config_path: Option<Arc<PathBuf>>,
+    backend: Arc<dyn TaskBackend>,
 }
 
 // --- Error handling ---
@@ -165,10 +165,12 @@ pub async fn serve(
     port: u16,
     host: Option<String>,
     config_path: Option<PathBuf>,
+    backend: Arc<dyn TaskBackend>,
 ) -> Result<()> {
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
+        backend,
     };
 
     let app = Router::new()
@@ -234,9 +236,8 @@ async fn list_tasks(
     State(state): State<AppState>,
     Query(query): Query<ListTasksQuery>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
         let statuses: Vec<TaskStatus> = query
             .status
             .iter()
@@ -249,7 +250,7 @@ async fn list_tasks(
             depends_on: query.depends_on,
             ready: query.ready.unwrap_or(false),
         };
-        let tasks = db::list_tasks(&conn, &filter).map_err(classify_error)?;
+        let tasks = backend.list_tasks(&filter).map_err(classify_error)?;
         Ok(Json(tasks))
     })
     .await
@@ -262,9 +263,9 @@ async fn create_task(
     Json(params): Json<CreateTaskParams>,
 ) -> Result<(StatusCode, Json<Task>), ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
-
         // Handle branch template expansion
         let needs_template = params
             .branch
@@ -303,8 +304,8 @@ async fn create_task(
         };
 
         // Fire hooks
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
-        hooks::fire_hooks(&config, "task_added", &task, &backend, None, None);
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        hooks::fire_hooks(&config, "task_added", &task, backend.as_ref(), None, None);
 
         Ok((StatusCode::CREATED, Json(task)))
     })
@@ -317,10 +318,9 @@ async fn get_task(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::get_task(&conn, id).map_err(classify_error)?;
+        let task = backend.get_task(id).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -333,10 +333,8 @@ async fn edit_task(
     Path(id): Path<i64>,
     Json(body): Json<EditTaskBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-
         let branch_value = if body.clear_branch {
             Some(None)
         } else {
@@ -395,9 +393,9 @@ async fn edit_task(
             remove_out_of_scope: body.remove_out_of_scope,
         };
 
-        db::update_task(&conn, id, &scalar_params).map_err(classify_error)?;
-        db::update_task_arrays(&conn, id, &array_params).map_err(classify_error)?;
-        let task = db::get_task(&conn, id).map_err(classify_error)?;
+        backend.update_task(id, &scalar_params).map_err(classify_error)?;
+        backend.update_task_arrays(id, &array_params).map_err(classify_error)?;
+        let task = backend.get_task(id).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -409,10 +407,9 @@ async fn delete_task(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        db::delete_task(&conn, id).map_err(classify_error)?;
+        backend.delete_task(id).map_err(classify_error)?;
         Ok(StatusCode::NO_CONTENT)
     })
     .await
@@ -425,16 +422,17 @@ async fn ready_task(
     Path(id): Path<i64>,
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let updated = backend.ready_task(id).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_ready",
             &updated,
-            &backend,
+            backend.as_ref(),
             Some(TaskStatus::Draft),
             None,
         );
@@ -452,20 +450,21 @@ async fn start_task(
     Json(body): Json<StartBody>,
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let task = backend.get_task(id).map_err(classify_error)?;
         let prev_status = task.status;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated =
             backend.start_task(id, body.session_id, &now).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
             &updated,
-            &backend,
+            backend.as_ref(),
             Some(prev_status),
             None,
         );
@@ -483,10 +482,11 @@ async fn complete_task(
     body: Option<Json<CompleteBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
 
         let task = backend.get_task(id).map_err(classify_error)?;
         task.status
@@ -530,7 +530,7 @@ async fn complete_task(
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated = backend.complete_task(id, &now).map_err(classify_error)?;
 
-        let unblocked = hooks::compute_unblocked(&backend, &prev_ready_ids);
+        let unblocked = hooks::compute_unblocked(backend.as_ref(), &prev_ready_ids);
         let unblocked_opt = if unblocked.is_empty() {
             None
         } else {
@@ -540,7 +540,7 @@ async fn complete_task(
             &config,
             "task_completed",
             &updated,
-            &backend,
+            backend.as_ref(),
             Some(prev_status),
             unblocked_opt,
         );
@@ -558,9 +558,10 @@ async fn cancel_task(
     body: Option<Json<CancelBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     let reason = body.and_then(|b| b.0.reason);
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let task = backend.get_task(id).map_err(classify_error)?;
         task.status
             .transition_to(TaskStatus::Canceled)
@@ -570,12 +571,12 @@ async fn cancel_task(
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let updated = backend.cancel_task(id, &now, reason).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_canceled",
             &updated,
-            &backend,
+            backend.as_ref(),
             Some(prev_status),
             None,
         );
@@ -592,9 +593,10 @@ async fn next_task(
     body: Option<Json<NextBody>>,
 ) -> Result<Json<Task>, ApiError> {
     let root = state.project_root.clone();
+    let backend = state.backend.clone();
+    let config_path = state.config_path.clone();
     let session_id = body.and_then(|b| b.0.session_id);
     tokio::task::spawn_blocking(move || {
-        let backend = db::SqliteBackend::new(&root).map_err(classify_error)?;
         let task = backend.next_task()
             .map_err(classify_error)?
             .ok_or_else(|| ApiError::NotFound("no eligible task found".to_string()))?;
@@ -604,12 +606,12 @@ async fn next_task(
         let updated =
             backend.start_task(task.id, session_id, &now).map_err(classify_error)?;
 
-        let config = hooks::load_config(&root, state.config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
+        let config = hooks::load_config(&root, config_path.as_deref().map(|p| p.as_path())).map_err(classify_error)?;
         hooks::fire_hooks(
             &config,
             "task_started",
             &updated,
-            &backend,
+            backend.as_ref(),
             Some(prev_status),
             None,
         );
@@ -625,10 +627,9 @@ async fn list_deps(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Vec<Task>>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let deps = db::list_dependencies(&conn, id).map_err(classify_error)?;
+        let deps = backend.list_dependencies(id).map_err(classify_error)?;
         Ok(Json(deps))
     })
     .await
@@ -641,10 +642,9 @@ async fn add_dep(
     Path(id): Path<i64>,
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::add_dependency(&conn, id, body.dep_id).map_err(classify_error)?;
+        let task = backend.add_dependency(id, body.dep_id).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -656,10 +656,9 @@ async fn remove_dep(
     State(state): State<AppState>,
     Path((id, dep_id)): Path<(i64, i64)>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::remove_dependency(&conn, id, dep_id).map_err(classify_error)?;
+        let task = backend.remove_dependency(id, dep_id).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -671,10 +670,9 @@ async fn check_dod(
     State(state): State<AppState>,
     Path((id, index)): Path<(i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::check_dod(&conn, id, index).map_err(classify_error)?;
+        let task = backend.check_dod(id, index).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -686,10 +684,9 @@ async fn uncheck_dod(
     State(state): State<AppState>,
     Path((id, index)): Path<(i64, usize)>,
 ) -> Result<Json<Task>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let task = db::uncheck_dod(&conn, id, index).map_err(classify_error)?;
+        let task = backend.uncheck_dod(id, index).map_err(classify_error)?;
         Ok(Json(task))
     })
     .await
@@ -713,10 +710,9 @@ async fn get_config(
 async fn get_stats(
     State(state): State<AppState>,
 ) -> Result<Json<HashMap<String, i64>>, ApiError> {
-    let root = state.project_root.clone();
+    let backend = state.backend.clone();
     tokio::task::spawn_blocking(move || {
-        let conn = db::open_db(&root).map_err(classify_error)?;
-        let stats = db::task_stats(&conn).map_err(classify_error)?;
+        let stats = backend.task_stats().map_err(classify_error)?;
         Ok(Json(stats))
     })
     .await
