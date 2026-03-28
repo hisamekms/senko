@@ -12,7 +12,8 @@
     "source=${localWorkspaceFolderBasename}-claude-code,target=/home/dev/.claude,type=volume",
     "source=${localEnv:HOME}/.local/share/chezmoi,target=/home/dev/.local/share/chezmoi,type=bind,consistency=cached",
     "source=${localWorkspaceFolderBasename}-rust,target=/home/dev/.cargo,type=volume",
-    "source=${localWorkspaceFolderBasename}-rust-up,target=/home/dev/.rustup,type=volume"
+    "source=${localWorkspaceFolderBasename}-rust-up,target=/home/dev/.rustup,type=volume",
+    "source=${localWorkspaceFolderBasename}-senko,target=/home/dev/.local/share/senko,type=volume"
   ],
   "containerEnv": {
     "MISE_TRUSTED_CONFIG_PATHS": "/workspaces/senko"
