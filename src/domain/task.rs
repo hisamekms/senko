@@ -196,6 +196,62 @@ impl Task {
         self.cancel_reason = reason;
         Ok(())
     }
+
+    /// Add a dependency, validating self-dependency. Idempotent.
+    pub fn add_dependency(&mut self, dep_id: i64) -> anyhow::Result<()> {
+        if self.id == dep_id {
+            anyhow::bail!("a task cannot depend on itself");
+        }
+        if !self.dependencies.contains(&dep_id) {
+            self.dependencies.push(dep_id);
+        }
+        Ok(())
+    }
+
+    /// Remove a dependency, validating existence.
+    pub fn remove_dependency(&mut self, dep_id: i64) -> anyhow::Result<()> {
+        let before = self.dependencies.len();
+        self.dependencies.retain(|&d| d != dep_id);
+        if self.dependencies.len() == before {
+            anyhow::bail!("dependency not found: task {} does not depend on {}", self.id, dep_id);
+        }
+        Ok(())
+    }
+
+    /// Replace all dependencies, validating no self-dependency.
+    pub fn set_dependencies(&mut self, dep_ids: &[i64]) -> anyhow::Result<()> {
+        for &dep_id in dep_ids {
+            if dep_id == self.id {
+                anyhow::bail!("a task cannot depend on itself");
+            }
+        }
+        self.dependencies = dep_ids.to_vec();
+        Ok(())
+    }
+
+    /// Check a DoD item by 1-based index.
+    pub fn check_dod(&mut self, index: usize) -> anyhow::Result<()> {
+        if index == 0 || index > self.definition_of_done.len() {
+            anyhow::bail!(
+                "DoD index {} out of range (task #{} has {} DoD item(s))",
+                index, self.id, self.definition_of_done.len()
+            );
+        }
+        self.definition_of_done[index - 1].checked = true;
+        Ok(())
+    }
+
+    /// Uncheck a DoD item by 1-based index.
+    pub fn uncheck_dod(&mut self, index: usize) -> anyhow::Result<()> {
+        if index == 0 || index > self.definition_of_done.len() {
+            anyhow::bail!(
+                "DoD index {} out of range (task #{} has {} DoD item(s))",
+                index, self.id, self.definition_of_done.len()
+            );
+        }
+        self.definition_of_done[index - 1].checked = false;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -499,5 +555,101 @@ mod tests {
     fn task_cancel_from_completed_fails() {
         let mut task = make_task(TaskStatus::Completed);
         assert!(task.cancel("2026-01-04T00:00:00Z".to_string(), None).is_err());
+    }
+
+    // --- Dependency management tests ---
+
+    #[test]
+    fn task_add_dependency() {
+        let mut task = make_task(TaskStatus::Todo);
+        assert!(task.add_dependency(2).is_ok());
+        assert_eq!(task.dependencies, vec![2]);
+    }
+
+    #[test]
+    fn task_add_dependency_self_error() {
+        let mut task = make_task(TaskStatus::Todo);
+        assert!(task.add_dependency(1).is_err());
+    }
+
+    #[test]
+    fn task_add_dependency_idempotent() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.add_dependency(2).unwrap();
+        task.add_dependency(2).unwrap();
+        assert_eq!(task.dependencies, vec![2]);
+    }
+
+    #[test]
+    fn task_remove_dependency() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.dependencies = vec![2, 3];
+        assert!(task.remove_dependency(2).is_ok());
+        assert_eq!(task.dependencies, vec![3]);
+    }
+
+    #[test]
+    fn task_remove_dependency_not_found() {
+        let mut task = make_task(TaskStatus::Todo);
+        assert!(task.remove_dependency(99).is_err());
+    }
+
+    #[test]
+    fn task_set_dependencies() {
+        let mut task = make_task(TaskStatus::Todo);
+        task.dependencies = vec![2];
+        assert!(task.set_dependencies(&[3, 4]).is_ok());
+        assert_eq!(task.dependencies, vec![3, 4]);
+    }
+
+    #[test]
+    fn task_set_dependencies_self_error() {
+        let mut task = make_task(TaskStatus::Todo);
+        assert!(task.set_dependencies(&[1, 2]).is_err());
+    }
+
+    // --- DoD operation tests ---
+
+    fn make_task_with_dod() -> Task {
+        let mut task = make_task(TaskStatus::InProgress);
+        task.definition_of_done = vec![
+            DodItem { content: "Write tests".to_string(), checked: false },
+            DodItem { content: "Update docs".to_string(), checked: false },
+        ];
+        task
+    }
+
+    #[test]
+    fn task_check_dod() {
+        let mut task = make_task_with_dod();
+        assert!(task.check_dod(1).is_ok());
+        assert!(task.definition_of_done[0].checked);
+        assert!(!task.definition_of_done[1].checked);
+    }
+
+    #[test]
+    fn task_uncheck_dod() {
+        let mut task = make_task_with_dod();
+        task.definition_of_done[0].checked = true;
+        assert!(task.uncheck_dod(1).is_ok());
+        assert!(!task.definition_of_done[0].checked);
+    }
+
+    #[test]
+    fn task_check_dod_index_zero() {
+        let mut task = make_task_with_dod();
+        assert!(task.check_dod(0).is_err());
+    }
+
+    #[test]
+    fn task_check_dod_index_out_of_range() {
+        let mut task = make_task_with_dod();
+        assert!(task.check_dod(3).is_err());
+    }
+
+    #[test]
+    fn task_check_dod_empty_list() {
+        let mut task = make_task(TaskStatus::InProgress);
+        assert!(task.check_dod(1).is_err());
     }
 }

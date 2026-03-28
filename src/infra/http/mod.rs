@@ -373,50 +373,6 @@ impl TaskRepository for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn start_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        assignee_session_id: Option<String>,
-        assignee_user_id: Option<i64>,
-        _started_at: &str,
-    ) -> Result<Task> {
-        let resp = self.auth(
-            self.client.post(self.project_url(project_id, &format!("/tasks/{id}/start")))
-                .json(&json!({ "session_id": assignee_session_id, "user_id": assignee_user_id }))
-        ).send().await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn complete_task(&self, project_id: i64, id: i64, _completed_at: &str) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
-            .json(&json!({})))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn cancel_task(&self, project_id: i64, id: i64, _canceled_at: &str, reason: Option<String>) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{id}/cancel")))
-            .json(&json!({ "reason": reason })))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let body = update_params_to_json(params);
         let resp = self.auth(self
@@ -559,21 +515,14 @@ impl TaskRepository for HttpBackend {
         read_json_or_error(resp).await
     }
 
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+    async fn save(&self, task: &Task) -> Result<()> {
         let resp = self.auth(self
             .client
-            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check"))))
+            .put(self.project_url(task.project_id, &format!("/tasks/{}", task.id)))
+            .json(task))
             .send()
             .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck"))))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
+        read_json_or_error::<Task>(resp).await?;
+        Ok(())
     }
 }

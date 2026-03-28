@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -190,29 +190,6 @@ impl DynamoDbBackend {
 
         tasks.sort_by_key(|t| t.id);
         Ok(tasks)
-    }
-
-    async fn has_cycle(&self, task_id: i64, dep_id: i64) -> Result<bool> {
-        let mut visited = HashSet::new();
-        let mut queue = VecDeque::new();
-        queue.push_back(dep_id);
-        visited.insert(dep_id);
-
-        while let Some(current) = queue.pop_front() {
-            let task = match self.get_task_internal(current).await {
-                Ok(t) => t,
-                Err(_) => continue,
-            };
-            for &d in &task.dependencies {
-                if d == task_id {
-                    return Ok(true);
-                }
-                if visited.insert(d) {
-                    queue.push_back(d);
-                }
-            }
-        }
-        Ok(false)
     }
 
     async fn get_task_internal(&self, id: i64) -> Result<Task> {
@@ -876,61 +853,6 @@ impl TaskBackend for DynamoDbBackend {
         Ok(task)
     }
 
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let mut task = self.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Todo)?;
-        task.status = TaskStatus::Todo;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn start_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        assignee_session_id: Option<String>,
-        assignee_user_id: Option<i64>,
-        started_at: &str,
-    ) -> Result<Task> {
-        let mut task = self.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::InProgress)?;
-        task.status = TaskStatus::InProgress;
-        task.assignee_session_id = assignee_session_id;
-        task.assignee_user_id = assignee_user_id;
-        task.started_at = Some(started_at.to_string());
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn complete_task(&self, project_id: i64, id: i64, completed_at: &str) -> Result<Task> {
-        let mut task = self.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Completed)?;
-        task.status = TaskStatus::Completed;
-        task.completed_at = Some(completed_at.to_string());
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn cancel_task(
-        &self,
-        project_id: i64,
-        id: i64,
-        canceled_at: &str,
-        reason: Option<String>,
-    ) -> Result<Task> {
-        let mut task = self.get_task(project_id, id).await?;
-        task.status.transition_to(TaskStatus::Canceled)?;
-        task.status = TaskStatus::Canceled;
-        task.canceled_at = Some(canceled_at.to_string());
-        task.cancel_reason = reason;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let mut task = self.get_task(project_id, id).await?;
         let mut changed = false;
@@ -1215,22 +1137,13 @@ impl TaskBackend for DynamoDbBackend {
     }
 
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        if task_id == dep_id {
-            bail!("a task cannot depend on itself");
-        }
-
         let mut task = self.get_task(project_id, task_id).await?;
         let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
 
-        if task.dependencies.contains(&dep_id) {
-            return Ok(task);
+        if !task.dependencies.contains(&dep_id) {
+            task.dependencies.push(dep_id);
         }
 
-        if self.has_cycle(task_id, dep_id).await? {
-            bail!("adding this dependency would create a cycle");
-        }
-
-        task.dependencies.push(dep_id);
         task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         self.put_task(&task).await?;
         Ok(task)
@@ -1250,30 +1163,13 @@ impl TaskBackend for DynamoDbBackend {
     }
 
     async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        if dep_ids.contains(&task_id) {
-            bail!("a task cannot depend on itself");
-        }
-
         let mut task = self.get_task(project_id, task_id).await?;
 
         for &dep_id in dep_ids {
             let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
         }
 
-        let old_deps = task.dependencies.clone();
-        task.dependencies.clear();
-        self.put_task(&task).await?;
-
-        for &dep_id in dep_ids {
-            if self.has_cycle(task_id, dep_id).await? {
-                task.dependencies = old_deps;
-                self.put_task(&task).await?;
-                bail!("adding this dependency would create a cycle");
-            }
-            task.dependencies.push(dep_id);
-            self.put_task(&task).await?;
-        }
-
+        task.dependencies = dep_ids.to_vec();
         task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         self.put_task(&task).await?;
         Ok(task)
@@ -1284,33 +1180,7 @@ impl TaskBackend for DynamoDbBackend {
         self.batch_get_tasks(&task.dependencies).await
     }
 
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        let mut task = self.get_task(project_id, task_id).await?;
-        if index == 0 || index > task.definition_of_done.len() {
-            bail!(
-                "DoD index out of range: {} (task has {} items)",
-                index,
-                task.definition_of_done.len()
-            );
-        }
-        task.definition_of_done[index - 1].checked = true;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        let mut task = self.get_task(project_id, task_id).await?;
-        if index == 0 || index > task.definition_of_done.len() {
-            bail!(
-                "DoD index out of range: {} (task has {} items)",
-                index,
-                task.definition_of_done.len()
-            );
-        }
-        task.definition_of_done[index - 1].checked = false;
-        task.updated_at = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        self.put_task(&task).await?;
-        Ok(task)
+    async fn save(&self, task: &Task) -> Result<()> {
+        self.put_task(task).await
     }
 }

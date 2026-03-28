@@ -790,93 +790,6 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     })
 }
 
-fn ready_task(conn: &Connection, id: i64) -> Result<Task> {
-    let current: String = conn
-        .query_row(
-            "SELECT status FROM tasks WHERE id = ?1",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .context("task not found")?;
-    let current_status: TaskStatus = current.parse()?;
-    current_status.transition_to(TaskStatus::Todo)?;
-
-    conn.execute(
-        "UPDATE tasks SET status = 'todo', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        rusqlite::params![id],
-    )?;
-
-    get_task(conn, id)
-}
-
-fn start_task(
-    conn: &Connection,
-    id: i64,
-    assignee_session_id: Option<String>,
-    assignee_user_id: Option<i64>,
-    started_at: &str,
-) -> Result<Task> {
-    let current: String = conn
-        .query_row(
-            "SELECT status FROM tasks WHERE id = ?1",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .context("task not found")?;
-    let current_status: TaskStatus = current.parse()?;
-    current_status.transition_to(TaskStatus::InProgress)?;
-
-    conn.execute(
-        "UPDATE tasks SET status = 'in_progress', started_at = ?2, assignee_session_id = ?3, assignee_user_id = ?4, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        rusqlite::params![id, started_at, assignee_session_id, assignee_user_id],
-    )?;
-
-    get_task(conn, id)
-}
-
-fn complete_task(conn: &Connection, id: i64, completed_at: &str) -> Result<Task> {
-    let current: String = conn
-        .query_row(
-            "SELECT status FROM tasks WHERE id = ?1",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .context("task not found")?;
-    let current_status: TaskStatus = current.parse()?;
-    current_status.transition_to(TaskStatus::Completed)?;
-
-    conn.execute(
-        "UPDATE tasks SET status = 'completed', completed_at = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        rusqlite::params![id, completed_at],
-    )?;
-
-    get_task(conn, id)
-}
-
-fn cancel_task(
-    conn: &Connection,
-    id: i64,
-    canceled_at: &str,
-    reason: Option<String>,
-) -> Result<Task> {
-    let current: String = conn
-        .query_row(
-            "SELECT status FROM tasks WHERE id = ?1",
-            rusqlite::params![id],
-            |row| row.get(0),
-        )
-        .context("task not found")?;
-    let current_status: TaskStatus = current.parse()?;
-    current_status.transition_to(TaskStatus::Canceled)?;
-
-    conn.execute(
-        "UPDATE tasks SET status = 'canceled', canceled_at = ?2, cancel_reason = ?3, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        rusqlite::params![id, canceled_at, reason],
-    )?;
-
-    get_task(conn, id)
-}
-
 fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
     let mut columns = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -1003,6 +916,60 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
         conn.execute(
             "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
             params![id],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn save_task(conn: &Connection, task: &Task) -> Result<()> {
+    let metadata_str: Option<String> = task
+        .metadata
+        .as_ref()
+        .map(|v| serde_json::to_string(v))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
+
+    conn.execute(
+        "UPDATE tasks SET
+            title = ?2, background = ?3, description = ?4, plan = ?5,
+            priority = ?6, status = ?7,
+            assignee_session_id = ?8, assignee_user_id = ?9,
+            started_at = ?10, completed_at = ?11, canceled_at = ?12, cancel_reason = ?13,
+            branch = ?14, pr_url = ?15, metadata = ?16,
+            updated_at = ?17
+        WHERE id = ?1",
+        params![
+            task.id,
+            task.title,
+            task.background,
+            task.description,
+            task.plan,
+            i32::from(task.priority),
+            task.status.to_string(),
+            task.assignee_session_id,
+            task.assignee_user_id,
+            task.started_at,
+            task.completed_at,
+            task.canceled_at,
+            task.cancel_reason,
+            task.branch,
+            task.pr_url,
+            metadata_str,
+            task.updated_at,
+        ],
+    )?;
+
+    // Sync definition_of_done
+    conn.execute(
+        "DELETE FROM task_definition_of_done WHERE task_id = ?1",
+        params![task.id],
+    )?;
+    for dod in &task.definition_of_done {
+        let checked_val: i32 = if dod.checked { 1 } else { 0 };
+        conn.execute(
+            "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES (?1, ?2, ?3)",
+            params![task.id, dod.content, checked_val],
         )?;
     }
 
@@ -1227,30 +1194,11 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
     list_tasks(conn, project_id, &filter)
 }
 
-/// Check if adding dep_id as a dependency of task_id would create a cycle.
-/// Delegates to the domain layer's generic cycle detection algorithm.
-fn has_cycle(conn: &Connection, task_id: i64, dep_id: i64) -> Result<bool> {
-    Ok(crate::domain::validator::has_cycle(task_id, dep_id, |id| {
-        query_i64_list(
-            conn,
-            "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
-            id,
-        )
-        .unwrap_or_default()
-    }))
-}
 
 fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
-    if task_id == dep_id {
-        anyhow::bail!("a task cannot depend on itself");
-    }
     // Verify both tasks exist
     get_task(conn, task_id).context("task not found")?;
     get_task(conn, dep_id).context("dependency task not found")?;
-    // Cycle check
-    if has_cycle(conn, task_id, dep_id)? {
-        anyhow::bail!("adding this dependency would create a cycle");
-    }
     conn.execute(
         "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
         params![task_id, dep_id],
@@ -1279,12 +1227,6 @@ fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Tas
 }
 
 fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-    // Self-dependency check
-    for &dep_id in dep_ids {
-        if dep_id == task_id {
-            anyhow::bail!("a task cannot depend on itself");
-        }
-    }
     // Verify task exists
     get_task(conn, task_id).context("task not found")?;
     // Verify all deps exist
@@ -1292,35 +1234,22 @@ fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<
         get_task(conn, dep_id).with_context(|| format!("dependency task not found: {}", dep_id))?;
     }
 
-    conn.execute_batch("BEGIN")?;
-
-    // Delete all existing dependencies
-    if let Err(e) = (|| -> Result<()> {
+    // Delete all existing dependencies and insert new ones
+    conn.execute(
+        "DELETE FROM task_dependencies WHERE task_id = ?1",
+        params![task_id],
+    )?;
+    for &dep_id in dep_ids {
         conn.execute(
-            "DELETE FROM task_dependencies WHERE task_id = ?1",
-            params![task_id],
+            "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
+            params![task_id, dep_id],
         )?;
-        // Insert each new dependency with cycle check
-        for &dep_id in dep_ids {
-            if has_cycle(conn, task_id, dep_id)? {
-                anyhow::bail!("adding dependency on {} would create a cycle", dep_id);
-            }
-            conn.execute(
-                "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-                params![task_id, dep_id],
-            )?;
-        }
-        Ok(())
-    })() {
-        conn.execute_batch("ROLLBACK")?;
-        return Err(e);
     }
 
     conn.execute(
         "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
         params![task_id],
     )?;
-    conn.execute_batch("COMMIT")?;
     get_task(conn, task_id)
 }
 
@@ -1351,48 +1280,6 @@ fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(items)
-}
-
-fn check_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
-    set_dod_checked(conn, task_id, index, true)
-}
-
-fn uncheck_dod(conn: &Connection, task_id: i64, index: usize) -> Result<Task> {
-    set_dod_checked(conn, task_id, index, false)
-}
-
-fn set_dod_checked(conn: &Connection, task_id: i64, index: usize, checked: bool) -> Result<Task> {
-    // Verify task exists
-    get_task(conn, task_id).context("task not found")?;
-
-    let mut stmt = conn.prepare(
-        "SELECT id FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
-    )?;
-    let ids: Vec<i64> = stmt
-        .query_map(params![task_id], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    if index == 0 || index > ids.len() {
-        anyhow::bail!(
-            "DoD index {} out of range (task #{} has {} DoD item(s))",
-            index,
-            task_id,
-            ids.len()
-        );
-    }
-
-    let row_id = ids[index - 1];
-    let checked_val: i32 = if checked { 1 } else { 0 };
-    conn.execute(
-        "UPDATE task_definition_of_done SET checked = ?1 WHERE id = ?2",
-        params![checked_val, row_id],
-    )?;
-    conn.execute(
-        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        params![task_id],
-    )?;
-
-    get_task(conn, task_id)
 }
 
 fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<String>> {
@@ -1559,37 +1446,6 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            ready_task(conn, id)
-        })
-    }
-
-    async fn start_task(&self, project_id: i64, id: i64, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: &str) -> Result<Task> {
-        let started_at = started_at.to_owned();
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            start_task(conn, id, assignee_session_id, assignee_user_id, &started_at)
-        })
-    }
-
-    async fn complete_task(&self, project_id: i64, id: i64, completed_at: &str) -> Result<Task> {
-        let completed_at = completed_at.to_owned();
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            complete_task(conn, id, &completed_at)
-        })
-    }
-
-    async fn cancel_task(&self, project_id: i64, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task> {
-        let canceled_at = canceled_at.to_owned();
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, id)?;
-            cancel_task(conn, id, &canceled_at, reason)
-        })
-    }
-
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
@@ -1663,18 +1519,9 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            check_dod(conn, task_id, index)
-        })
-    }
-
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            uncheck_dod(conn, task_id, index)
-        })
+    async fn save(&self, task: &Task) -> Result<()> {
+        let task = task.clone();
+        blocking!(self, |conn: &Connection| save_task(conn, &task))
     }
 }
 
@@ -1705,24 +1552,33 @@ mod tests {
         }
     }
 
-    /// Helper to transition a task through statuses using dedicated functions
+    /// Helper to transition a task through statuses using domain methods + save
     fn transition_to(conn: &Connection, id: i64, target: TaskStatus) {
+        let mut task = get_task(conn, id).unwrap();
         match target {
             TaskStatus::Draft => {} // already draft
             TaskStatus::Todo => {
-                ready_task(conn, id).unwrap();
+                task.ready().unwrap();
+                task.updated_at = "2025-01-01T00:00:00Z".to_string();
+                save_task(conn, &task).unwrap();
             }
             TaskStatus::InProgress => {
-                ready_task(conn, id).unwrap();
-                start_task(conn, id, None, None, "2025-01-01T00:00:00Z").unwrap();
+                task.ready().unwrap();
+                task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                task.updated_at = "2025-01-01T00:00:00Z".to_string();
+                save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
-                ready_task(conn, id).unwrap();
-                start_task(conn, id, None, None, "2025-01-01T00:00:00Z").unwrap();
-                complete_task(conn, id, "2025-01-01T00:00:00Z").unwrap();
+                task.ready().unwrap();
+                task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
+                task.updated_at = "2025-01-01T00:00:00Z".to_string();
+                save_task(conn, &task).unwrap();
             }
             TaskStatus::Canceled => {
-                cancel_task(conn, id, "2025-01-01T00:00:00Z", None).unwrap();
+                task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+                task.updated_at = "2025-01-01T00:00:00Z".to_string();
+                save_task(conn, &task).unwrap();
             }
         }
     }
@@ -1886,27 +1742,35 @@ mod tests {
     }
 
     #[test]
-    fn status_transition_validated() {
+    fn status_transition_saved() {
         let (_tmp, conn) = setup();
         let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
         assert_eq!(task.status, TaskStatus::Draft);
 
-        // draft -> in_progress should fail (must go through todo)
-        let result = start_task(&conn, task.id, None, None, "2025-01-01T00:00:00Z");
-        assert!(result.is_err());
-
-        // draft -> todo should succeed
-        let updated = ready_task(&conn, task.id).unwrap();
+        // draft -> todo via domain method + save
+        let mut task = get_task(&conn, task.id).unwrap();
+        task.ready().unwrap();
+        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::Todo);
 
-        // todo -> in_progress should succeed
-        let updated = start_task(&conn, task.id, Some("session-1".into()), None, "2025-01-01T00:00:00Z").unwrap();
+        // todo -> in_progress
+        let mut task = updated;
+        task.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::InProgress);
         assert_eq!(updated.assignee_session_id.as_deref(), Some("session-1"));
         assert_eq!(updated.started_at.as_deref(), Some("2025-01-01T00:00:00Z"));
 
-        // in_progress -> completed should succeed
-        let updated = complete_task(&conn, task.id, "2025-01-01T01:00:00Z").unwrap();
+        // in_progress -> completed
+        let mut task = updated;
+        task.complete("2025-01-01T01:00:00Z".to_string()).unwrap();
+        task.updated_at = "2025-01-01T01:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert_eq!(updated.status, TaskStatus::Completed);
         assert_eq!(updated.completed_at.as_deref(), Some("2025-01-01T01:00:00Z"));
     }
@@ -1917,20 +1781,32 @@ mod tests {
 
         // cancel from draft
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let canceled = cancel_task(&conn, t1.id, "2025-01-01T00:00:00Z", Some("reason1".into())).unwrap();
+        let mut task = get_task(&conn, t1.id).unwrap();
+        task.cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into())).unwrap();
+        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let canceled = get_task(&conn, t1.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
         assert_eq!(canceled.cancel_reason.as_deref(), Some("reason1"));
 
         // cancel from todo
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        ready_task(&conn, t2.id).unwrap();
-        let canceled = cancel_task(&conn, t2.id, "2025-01-01T00:00:00Z", None).unwrap();
+        transition_to(&conn, t2.id, TaskStatus::Todo);
+        let mut task = get_task(&conn, t2.id).unwrap();
+        task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let canceled = get_task(&conn, t2.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
 
         // cancel from in_progress
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
         transition_to(&conn, t3.id, TaskStatus::InProgress);
-        let canceled = cancel_task(&conn, t3.id, "2025-01-01T00:00:00Z", None).unwrap();
+        let mut task = get_task(&conn, t3.id).unwrap();
+        task.cancel("2025-01-01T00:00:00Z".to_string(), None).unwrap();
+        task.updated_at = "2025-01-01T00:00:00Z".to_string();
+        save_task(&conn, &task).unwrap();
+        let canceled = get_task(&conn, t3.id).unwrap();
         assert_eq!(canceled.status, TaskStatus::Canceled);
     }
 
@@ -2345,13 +2221,14 @@ mod tests {
             },
         )
         .unwrap();
-        ready_task(conn, task.id).unwrap()
+        transition_to(conn, task.id, TaskStatus::Todo);
+        get_task(conn, task.id).unwrap()
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
-        let task = make_todo(conn, title, None);
-        start_task(conn, task.id, None, None, "2025-01-01T00:00:00Z").unwrap();
-        complete_task(conn, task.id, "2025-01-01T00:00:00Z").unwrap()
+        let task = create_task(conn, 1, &default_create_params(title)).unwrap();
+        transition_to(conn, task.id, TaskStatus::Completed);
+        get_task(conn, task.id).unwrap()
     }
 
     #[test]
@@ -2377,7 +2254,7 @@ mod tests {
                 ..default_create_params("blocked")
             },
         ).unwrap();
-        ready_task(&conn, task.id).unwrap();
+        transition_to(&conn, task.id, TaskStatus::Todo);
 
         assert!(next_task(&conn, 1).unwrap().is_none());
     }
@@ -2437,7 +2314,7 @@ mod tests {
                 ..default_create_params("ready")
             },
         ).unwrap();
-        ready_task(&conn, task.id).unwrap();
+        transition_to(&conn, task.id, TaskStatus::Todo);
 
         let result = next_task(&conn, 1).unwrap().unwrap();
         assert_eq!(result.title, "ready");
@@ -2456,12 +2333,13 @@ mod tests {
     }
 
     #[test]
-    fn add_dependency_self_error() {
+    fn add_dependency_self_is_now_allowed_at_repo_level() {
+        // Self-dep validation moved to Task aggregate; repo is a pure data layer
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
+        // Self-dep insert is idempotent (INSERT OR IGNORE)
         let result = add_dependency(&conn, t1.id, t1.id);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("itself"));
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -2473,29 +2351,16 @@ mod tests {
     }
 
     #[test]
-    fn add_dependency_cycle_direct() {
+    fn add_dependency_no_cycle_check_at_repo_level() {
+        // Cycle detection moved to TaskService; repo is a pure data layer
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
         add_dependency(&conn, t1.id, t2.id).unwrap();
+        // Direct cycle: repo no longer rejects this (service layer does)
         let result = add_dependency(&conn, t2.id, t1.id);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cycle"));
-    }
-
-    #[test]
-    fn add_dependency_cycle_indirect() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
-
-        add_dependency(&conn, t1.id, t2.id).unwrap();
-        add_dependency(&conn, t2.id, t3.id).unwrap();
-        let result = add_dependency(&conn, t3.id, t1.id);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cycle"));
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -2570,21 +2435,19 @@ mod tests {
     }
 
     #[test]
-    fn set_dependencies_cycle_error_rollback() {
+    fn set_dependencies_no_cycle_check_at_repo_level() {
+        // Cycle detection moved to TaskService; repo is a pure data layer
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        // t2 -> t1
         add_dependency(&conn, t2.id, t1.id).unwrap();
-        // Try to set t1 -> [t3, t2] — t1->t2 would create cycle (t2->t1->t2)
+        // Repo no longer rejects cycles
         let result = set_dependencies(&conn, t1.id, &[t3.id, t2.id]);
-        assert!(result.is_err());
-
-        // Original state should be preserved (no deps on t1)
+        assert!(result.is_ok());
         let task = get_task(&conn, t1.id).unwrap();
-        assert!(task.dependencies.is_empty());
+        assert_eq!(task.dependencies.len(), 2);
     }
 
     #[test]
@@ -2653,7 +2516,7 @@ mod tests {
     }
 
     #[test]
-    fn check_and_uncheck_dod() {
+    fn check_and_uncheck_dod_via_save() {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
@@ -2665,44 +2528,29 @@ mod tests {
         )
         .unwrap();
 
-        // Check first item
-        let updated = check_dod(&conn, task.id, 1).unwrap();
+        // Check first item via domain method + save
+        let mut task = get_task(&conn, task.id).unwrap();
+        task.check_dod(1).unwrap();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert!(updated.definition_of_done[0].checked);
         assert!(!updated.definition_of_done[1].checked);
 
         // Check second item
-        let updated = check_dod(&conn, task.id, 2).unwrap();
+        let mut task = updated;
+        task.check_dod(2).unwrap();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert!(updated.definition_of_done[0].checked);
         assert!(updated.definition_of_done[1].checked);
 
         // Uncheck first item
-        let updated = uncheck_dod(&conn, task.id, 1).unwrap();
+        let mut task = updated;
+        task.uncheck_dod(1).unwrap();
+        save_task(&conn, &task).unwrap();
+        let updated = get_task(&conn, task.id).unwrap();
         assert!(!updated.definition_of_done[0].checked);
         assert!(updated.definition_of_done[1].checked);
-    }
-
-    #[test]
-    fn check_dod_index_out_of_range() {
-        let (_tmp, conn) = setup();
-        let task = create_task(
-            &conn,
-            1,
-            &CreateTaskParams {
-                definition_of_done: vec!["item1".to_string()],
-                ..default_create_params("t")
-            },
-        )
-        .unwrap();
-
-        assert!(check_dod(&conn, task.id, 0).is_err());
-        assert!(check_dod(&conn, task.id, 2).is_err());
-    }
-
-    #[test]
-    fn check_dod_empty_list() {
-        let (_tmp, conn) = setup();
-        let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
-        assert!(check_dod(&conn, task.id, 1).is_err());
     }
 
     // --- Migration system tests ---
@@ -2934,44 +2782,49 @@ mod tests {
     #[tokio::test]
     async fn inmem_task_lifecycle() {
         let backend = mem_backend();
-        let task = backend
+        let mut task = backend
             .create_task(1, &params("Lifecycle"))
             .await
             .unwrap();
         assert_eq!(task.status, TaskStatus::Draft);
 
-        let task = backend.ready_task(1, task.id).await.unwrap();
-        assert_eq!(task.status, TaskStatus::Todo);
+        task.ready().unwrap();
+        task.updated_at = "2026-01-01T00:00:00Z".to_string();
+        backend.save(&task).await.unwrap();
+        let task_got = backend.get_task(1, task.id).await.unwrap();
+        assert_eq!(task_got.status, TaskStatus::Todo);
 
-        let task = backend
-            .start_task(1, task.id, Some("sess-1".into()), None, "2026-01-01T00:00:00Z")
-            .await
-            .unwrap();
-        assert_eq!(task.status, TaskStatus::InProgress);
-        assert_eq!(task.assignee_session_id.as_deref(), Some("sess-1"));
-        assert!(task.started_at.is_some());
+        let mut task = task_got;
+        task.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        task.updated_at = "2026-01-01T00:00:00Z".to_string();
+        backend.save(&task).await.unwrap();
+        let task_got = backend.get_task(1, task.id).await.unwrap();
+        assert_eq!(task_got.status, TaskStatus::InProgress);
+        assert_eq!(task_got.assignee_session_id.as_deref(), Some("sess-1"));
+        assert!(task_got.started_at.is_some());
 
-        let task = backend
-            .complete_task(1, task.id, "2026-01-02T00:00:00Z")
-            .await
-            .unwrap();
-        assert_eq!(task.status, TaskStatus::Completed);
-        assert!(task.completed_at.is_some());
+        let mut task = task_got;
+        task.complete("2026-01-02T00:00:00Z".to_string()).unwrap();
+        task.updated_at = "2026-01-02T00:00:00Z".to_string();
+        backend.save(&task).await.unwrap();
+        let task_got = backend.get_task(1, task.id).await.unwrap();
+        assert_eq!(task_got.status, TaskStatus::Completed);
+        assert!(task_got.completed_at.is_some());
     }
 
     #[tokio::test]
     async fn inmem_task_cancel() {
         let backend = mem_backend();
-        let task = backend
+        let mut task = backend
             .create_task(1, &params("Cancel me"))
             .await
             .unwrap();
-        let task = backend
-            .cancel_task(1, task.id, "2026-01-01T00:00:00Z", Some("no longer needed".into()))
-            .await
-            .unwrap();
-        assert_eq!(task.status, TaskStatus::Canceled);
-        assert_eq!(task.cancel_reason.as_deref(), Some("no longer needed"));
+        task.cancel("2026-01-01T00:00:00Z".to_string(), Some("no longer needed".into())).unwrap();
+        task.updated_at = "2026-01-01T00:00:00Z".to_string();
+        backend.save(&task).await.unwrap();
+        let task_got = backend.get_task(1, task.id).await.unwrap();
+        assert_eq!(task_got.status, TaskStatus::Canceled);
+        assert_eq!(task_got.cancel_reason.as_deref(), Some("no longer needed"));
     }
 
     #[tokio::test]
@@ -3062,16 +2915,20 @@ mod tests {
     #[tokio::test]
     async fn inmem_dependencies() {
         let backend = mem_backend();
-        let t1 = backend
+        let mut t1 = backend
             .create_task(1, &params("T1"))
             .await
             .unwrap();
-        let t2 = backend
+        let mut t2 = backend
             .create_task(1, &params("T2"))
             .await
             .unwrap();
-        backend.ready_task(1, t1.id).await.unwrap();
-        backend.ready_task(1, t2.id).await.unwrap();
+        t1.ready().unwrap();
+        t1.updated_at = "2026-01-01T00:00:00Z".to_string();
+        backend.save(&t1).await.unwrap();
+        t2.ready().unwrap();
+        t2.updated_at = "2026-01-01T00:00:00Z".to_string();
+        backend.save(&t2).await.unwrap();
 
         let t2 = backend.add_dependency(1, t2.id, t1.id).await.unwrap();
         assert_eq!(t2.dependencies, vec![t1.id]);
@@ -3092,22 +2949,30 @@ mod tests {
         let backend = mem_backend();
         let mut p = params("DoD test");
         p.definition_of_done = vec!["Item A".into(), "Item B".into()];
-        let task = backend
+        let mut task = backend
             .create_task(1, &p)
             .await
             .unwrap();
         assert!(!task.definition_of_done[0].checked);
         assert!(!task.definition_of_done[1].checked);
 
-        let task = backend.check_dod(1, task.id, 1).await.unwrap();
+        task.check_dod(1).unwrap();
+        backend.save(&task).await.unwrap();
+        let task = backend.get_task(1, task.id).await.unwrap();
         assert!(task.definition_of_done[0].checked);
         assert!(!task.definition_of_done[1].checked);
 
-        let task = backend.check_dod(1, task.id, 2).await.unwrap();
+        let mut task = task;
+        task.check_dod(2).unwrap();
+        backend.save(&task).await.unwrap();
+        let task = backend.get_task(1, task.id).await.unwrap();
         assert!(task.definition_of_done[0].checked);
         assert!(task.definition_of_done[1].checked);
 
-        let task = backend.uncheck_dod(1, task.id, 1).await.unwrap();
+        let mut task = task;
+        task.uncheck_dod(1).unwrap();
+        backend.save(&task).await.unwrap();
+        let task = backend.get_task(1, task.id).await.unwrap();
         assert!(!task.definition_of_done[0].checked);
         assert!(task.definition_of_done[1].checked);
     }

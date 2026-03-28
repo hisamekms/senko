@@ -15,10 +15,6 @@ use super::user::{
 pub trait TaskRepository: Send + Sync {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
     async fn get_task(&self, project_id: i64, id: i64) -> Result<Task>;
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task>;
-    async fn start_task(&self, project_id: i64, id: i64, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: &str) -> Result<Task>;
-    async fn complete_task(&self, project_id: i64, id: i64, completed_at: &str) -> Result<Task>;
-    async fn cancel_task(&self, project_id: i64, id: i64, canceled_at: &str, reason: Option<String>) -> Result<Task>;
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task>;
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()>;
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
@@ -31,8 +27,7 @@ pub trait TaskRepository: Send + Sync {
     async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task>;
     async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task>;
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>>;
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task>;
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task>;
+    async fn save(&self, task: &Task) -> Result<()>;
 }
 
 #[async_trait]
