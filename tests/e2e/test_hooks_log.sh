@@ -9,6 +9,10 @@ source "$SCRIPT_DIR/helpers.sh"
 setup_test_env
 trap cleanup_test_env EXIT
 
+# Isolate from user-level config (e.g. ~/.config/senko/config.toml)
+export XDG_CONFIG_HOME="$TEST_DIR/xdg-config"
+mkdir -p "$XDG_CONFIG_HOME"
+
 echo "--- Test: Hooks Log ---"
 
 # 1. --path returns a file path
