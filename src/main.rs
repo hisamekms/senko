@@ -314,6 +314,9 @@ enum Command {
         clear_description: bool,
         #[arg(long)]
         plan: Option<String>,
+        /// Read plan text from file
+        #[arg(long, conflicts_with = "plan")]
+        plan_file: Option<PathBuf>,
         #[arg(long)]
         clear_plan: bool,
         #[arg(long, value_enum)]
@@ -672,6 +675,7 @@ async fn run(cli: Cli) -> Result<()> {
             ref description,
             clear_description,
             ref plan,
+            ref plan_file,
             clear_plan,
             ref priority,
             ref branch,
@@ -701,6 +705,13 @@ async fn run(cli: Cli) -> Result<()> {
             // Verify task exists (even in dry-run)
             let _task = backend.get_task(project_id, id).await?;
 
+            // Resolve effective plan: --plan-file reads from file, --plan uses inline value
+            let effective_plan = if let Some(path) = plan_file {
+                Some(std::fs::read_to_string(path)?)
+            } else {
+                plan.clone()
+            };
+
             if dry_run {
                 let mut operations = Vec::new();
                 if let Some(t) = title {
@@ -718,7 +729,7 @@ async fn run(cli: Cli) -> Result<()> {
                 }
                 if clear_plan {
                     operations.push(format!("Update task #{}: clear plan", id));
-                } else if let Some(p) = plan {
+                } else if let Some(p) = &effective_plan {
                     operations.push(format!("Update task #{}: set plan to \"{}\"", id, p));
                 }
                 if let Some(p) = priority {
@@ -775,7 +786,7 @@ async fn run(cli: Cli) -> Result<()> {
                 plan: if clear_plan {
                     Some(None)
                 } else {
-                    plan.clone().map(Some)
+                    effective_plan.map(Some)
                 },
                 priority: priority.clone(),
                 assignee_session_id: None,

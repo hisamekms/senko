@@ -973,6 +973,7 @@ pub async fn cmd_edit(
     description: &Option<String>,
     clear_description: bool,
     plan: &Option<String>,
+    plan_file: &Option<PathBuf>,
     clear_plan: bool,
     priority: &Option<Priority>,
     branch: &Option<String>,
@@ -1002,6 +1003,13 @@ pub async fn cmd_edit(
     // Verify task exists (even in dry-run)
     let _task = backend.get_task(project_id, id).await?;
 
+    // Resolve effective plan: --plan-file takes precedence over --plan (they conflict via clap)
+    let effective_plan = if let Some(path) = plan_file {
+        Some(std::fs::read_to_string(path)?)
+    } else {
+        plan.clone()
+    };
+
     if cli.dry_run {
         let mut operations = Vec::new();
         if let Some(t) = title {
@@ -1019,7 +1027,7 @@ pub async fn cmd_edit(
         }
         if clear_plan {
             operations.push(format!("Update task #{}: clear plan", id));
-        } else if let Some(p) = plan {
+        } else if let Some(p) = &effective_plan {
             operations.push(format!("Update task #{}: set plan to \"{}\"", id, p));
         }
         if let Some(p) = priority {
@@ -1076,7 +1084,7 @@ pub async fn cmd_edit(
         plan: if clear_plan {
             Some(None)
         } else {
-            plan.clone().map(Some)
+            effective_plan.map(Some)
         },
         priority: priority.clone(),
         assignee_session_id: None,

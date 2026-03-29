@@ -73,6 +73,7 @@ senko cancel <id> --reason "Reason text"  # any active → canceled
 senko edit <id> --title "New Title" --add-tag backend
 senko edit <id> --add-definition-of-done "Write unit tests"
 senko edit <id> --pr-url "https://github.com/org/repo/pull/42"
+senko edit <id> --plan-file /path/to/plan.md  # read plan from file
 
 # Definition of Done (DoD) check/uncheck (1-based index)
 senko dod check <task_id> <index>      # mark DoD item as done
@@ -319,7 +320,9 @@ Before creating the plan, run `senko config` to check the workflow configuration
 ```
 # Pre-start
 - Save this plan to the task:
-  `senko edit <id> --plan "The approved implementation plan text"`
+  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
+  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
+  3. Delete the temporary file
 - This must be done before starting implementation.
 
 # Post-completion
@@ -342,7 +345,9 @@ Before creating the plan, run `senko config` to check the workflow configuration
 ```
 # Pre-start
 - Save this plan to the task:
-  `senko edit <id> --plan "The approved implementation plan text"`
+  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
+  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
+  3. Delete the temporary file
 - This must be done before starting implementation.
 
 # Post-completion
@@ -366,7 +371,9 @@ Before creating the plan, run `senko config` to check the workflow configuration
 ```
 # Pre-start
 - Save this plan to the task:
-  `senko edit <id> --plan "The approved implementation plan text"`
+  1. Write the full approved plan text to a temporary file (e.g., `/tmp/senko-plan-<id>.md`)
+  2. Run `senko edit <id> --plan-file /tmp/senko-plan-<id>.md`
+  3. Delete the temporary file
 - This must be done before starting implementation.
 
 # Post-completion

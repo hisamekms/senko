@@ -161,6 +161,9 @@ pub enum Command {
         clear_description: bool,
         #[arg(long)]
         plan: Option<String>,
+        /// Read plan text from file
+        #[arg(long, conflicts_with = "plan")]
+        plan_file: Option<PathBuf>,
         #[arg(long)]
         clear_plan: bool,
         #[arg(long, value_enum)]
@@ -540,6 +543,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             ref description,
             clear_description,
             ref plan,
+            ref plan_file,
             clear_plan,
             ref priority,
             ref branch,
@@ -569,6 +573,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             description,
             clear_description,
             plan,
+            plan_file,
             clear_plan,
             priority,
             branch,
@@ -875,6 +880,26 @@ mod tests {
             }
             _ => panic!("expected Edit"),
         }
+    }
+
+    #[test]
+    fn parse_edit_with_plan_file() {
+        let cli = Cli::parse_from(["senko", "edit", "1", "--plan-file", "/tmp/plan.md"]);
+        match cli.command {
+            Command::Edit { plan, plan_file, .. } => {
+                assert!(plan.is_none());
+                assert_eq!(plan_file, Some(PathBuf::from("/tmp/plan.md")));
+            }
+            _ => panic!("expected Edit"),
+        }
+    }
+
+    #[test]
+    fn parse_edit_plan_file_conflicts_with_plan() {
+        let result = Cli::try_parse_from([
+            "senko", "edit", "1", "--plan", "inline", "--plan-file", "/tmp/plan.md",
+        ]);
+        assert!(result.is_err());
     }
 
     #[test]
