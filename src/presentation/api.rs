@@ -247,12 +247,10 @@ pub async fn serve(
     project_root: PathBuf,
     port: u16,
     port_is_explicit: bool,
-    host: Option<String>,
+    config: &Config,
     config_path: Option<PathBuf>,
     backend: Arc<dyn TaskBackend>,
 ) -> Result<()> {
-    let config = hooks::load_config(&project_root, config_path.as_deref())
-        .unwrap_or_default();
     bootstrap::init_tracing(&config.log);
 
     let auth_provider: Option<Arc<dyn AuthProvider>> = if config.auth.enabled {
@@ -407,10 +405,7 @@ pub async fn serve(
                 ),
         );
 
-    let bind_addr_str = host
-        .or_else(|| std::env::var("SENKO_HOST").ok().filter(|v| !v.is_empty()))
-        .or(config.web.host.clone())
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let bind_addr_str = config.effective_host();
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
         .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;

@@ -2,13 +2,13 @@ pub mod handlers;
 pub mod skill;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::domain::repository::TaskBackend;
-use crate::infra::sqlite as db;
+use crate::bootstrap::create_backend;
+use crate::domain::config::CliOverrides;
+use crate::infra::hook as hooks;
 use crate::domain::task::Priority;
 use crate::domain::user::Role;
 use crate::infra::project_root::resolve_project_root;
@@ -43,19 +43,19 @@ pub struct Cli {
     pub log_dir: Option<PathBuf>,
 
     /// Path to SQLite database file (env: SENKO_DB_PATH)
-    #[arg(long, env = "SENKO_DB_PATH")]
+    #[arg(long)]
     pub db_path: Option<PathBuf>,
 
     /// PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
-    #[arg(long, env = "SENKO_POSTGRES_URL")]
+    #[arg(long)]
     pub postgres_url: Option<String>,
 
     /// Project name to operate on (overrides config; env: SENKO_PROJECT)
-    #[arg(long, env = "SENKO_PROJECT")]
+    #[arg(long)]
     pub project: Option<String>,
 
     /// User name to operate as (overrides config; env: SENKO_USER)
-    #[arg(long, env = "SENKO_USER")]
+    #[arg(long)]
     pub user: Option<String>,
 
     #[command(subcommand)]
@@ -603,23 +603,33 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Dod { ref command } => handlers::cmd_dod(&cli, command).await,
         Command::Deps { ref command } => handlers::cmd_deps(&cli, command).await,
         Command::Web { port, host } => {
-            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
-            let port_is_explicit = port.is_some() || from_env.is_some();
-            let effective_port = port.or(from_env).unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = crate::infra::hook::load_config(&root, cli.config.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            crate::presentation::web::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
+            let mut config = hooks::load_config(&root, cli.config.as_deref())?;
+            config.apply_cli(&CliOverrides {
+                log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                port, host,
+                ..Default::default()
+            });
+            let (backend, _) = create_backend(&root, &config)?;
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3141);
+            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
-            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
-            let port_is_explicit = port.is_some() || from_env.is_some();
-            let effective_port = port.or(from_env).unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = crate::infra::hook::load_config(&root, cli.config.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            crate::presentation::api::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
+            let mut config = hooks::load_config(&root, cli.config.as_deref())?;
+            config.apply_cli(&CliOverrides {
+                log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+                port, host,
+                ..Default::default()
+            });
+            let (backend, _) = create_backend(&root, &config)?;
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3142);
+            crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {

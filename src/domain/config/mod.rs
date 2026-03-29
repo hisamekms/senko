@@ -27,6 +27,7 @@ pub struct Config {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WebConfig {
     pub host: Option<String>,
+    pub port: Option<u16>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -269,6 +270,7 @@ pub struct RawAuthConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawWebConfig {
     pub host: Option<String>,
+    pub port: Option<u16>,
 }
 
 impl RawConfig {
@@ -308,6 +310,7 @@ impl RawConfig {
             },
             web: RawWebConfig {
                 host: overlay.web.host.or(self.web.host),
+                port: overlay.web.port.or(self.web.port),
             },
         }
     }
@@ -342,6 +345,7 @@ impl RawConfig {
             storage: self.storage,
             web: WebConfig {
                 host: self.web.host,
+                port: self.web.port,
             },
         }
     }
@@ -366,5 +370,237 @@ fn merge_hooks(base: HooksConfig, overlay: HooksConfig) -> HooksConfig {
         on_task_completed: merge_map(base.on_task_completed, overlay.on_task_completed),
         on_task_canceled: merge_map(base.on_task_canceled, overlay.on_task_canceled),
         on_no_eligible_task: merge_map(base.on_no_eligible_task, overlay.on_no_eligible_task),
+    }
+}
+
+// --- CLI overrides ---
+
+#[derive(Debug, Default)]
+pub struct CliOverrides {
+    pub log_dir: Option<String>,
+    pub db_path: Option<String>,
+    pub postgres_url: Option<String>,
+    pub project: Option<String>,
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub host: Option<String>,
+}
+
+impl Config {
+    /// Apply environment variable overrides. Call after `RawConfig::resolve()`.
+    /// Priority: env > config.toml defaults.
+    pub fn apply_env(&mut self) {
+        // Workflow settings
+        if let Ok(val) = std::env::var("SENKO_COMPLETION_MODE") {
+            match val.as_str() {
+                "merge_then_complete" => {
+                    self.workflow.completion_mode = CompletionMode::MergeThenComplete
+                }
+                "pr_then_complete" => {
+                    self.workflow.completion_mode = CompletionMode::PrThenComplete
+                }
+                other => eprintln!("warning: unknown SENKO_COMPLETION_MODE={other}, ignoring"),
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_AUTO_MERGE") {
+            match val.to_lowercase().as_str() {
+                "true" | "1" | "yes" => self.workflow.auto_merge = true,
+                "false" | "0" | "no" => self.workflow.auto_merge = false,
+                other => eprintln!("warning: unknown SENKO_AUTO_MERGE={other}, ignoring"),
+            }
+        }
+
+        // Backend settings
+        if let Ok(val) = std::env::var("SENKO_API_URL") {
+            if !val.is_empty() {
+                self.backend.api_url = Some(val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_API_KEY") {
+            if !val.is_empty() {
+                self.backend.api_key = Some(val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_MODE") {
+            match val.to_lowercase().as_str() {
+                "server" => self.backend.hook_mode = HookMode::Server,
+                "client" => self.backend.hook_mode = HookMode::Client,
+                "both" => self.backend.hook_mode = HookMode::Both,
+                other => eprintln!("warning: unknown SENKO_HOOK_MODE={other}, ignoring"),
+            }
+        }
+
+        // DynamoDB settings (feature-gated)
+        #[cfg(feature = "dynamodb")]
+        {
+            if let Ok(val) = std::env::var("SENKO_DYNAMODB_TABLE") {
+                if !val.is_empty() {
+                    self.backend
+                        .dynamodb
+                        .get_or_insert_with(DynamoDbConfig::default)
+                        .table_name = Some(val);
+                }
+            }
+            if let Ok(val) = std::env::var("SENKO_DYNAMODB_REGION") {
+                if !val.is_empty() {
+                    self.backend
+                        .dynamodb
+                        .get_or_insert_with(DynamoDbConfig::default)
+                        .region = Some(val);
+                }
+            }
+        }
+
+        // PostgreSQL settings (feature-gated)
+        #[cfg(feature = "postgres")]
+        {
+            if let Ok(val) = std::env::var("SENKO_POSTGRES_URL") {
+                if !val.is_empty() {
+                    self.backend
+                        .postgres
+                        .get_or_insert_with(PostgresConfig::default)
+                        .url = Some(val);
+                }
+            }
+        }
+
+        // Hook commands (insert as named "_env" entry)
+        fn insert_env_hook(map: &mut BTreeMap<String, HookEntry>, val: String) {
+            map.insert(
+                "_env".to_string(),
+                HookEntry {
+                    command: val,
+                    enabled: true,
+                    requires_env: vec![],
+                },
+            );
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_task_added, val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_task_ready, val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_task_started, val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_task_completed, val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_task_canceled, val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK") {
+            if !val.is_empty() {
+                insert_env_hook(&mut self.hooks.on_no_eligible_task, val);
+            }
+        }
+
+        // User settings
+        if let Ok(val) = std::env::var("SENKO_USER") {
+            if !val.is_empty() {
+                self.user.name = Some(val);
+            }
+        }
+
+        // Project settings
+        if let Ok(val) = std::env::var("SENKO_PROJECT") {
+            if !val.is_empty() {
+                self.project.name = Some(val);
+            }
+        }
+
+        // Storage settings
+        if let Ok(val) = std::env::var("SENKO_DB_PATH") {
+            if !val.is_empty() {
+                self.storage.db_path = Some(val);
+            }
+        }
+
+        // Log settings
+        if let Ok(val) = std::env::var("SENKO_LOG_DIR") {
+            if !val.is_empty() {
+                self.log.dir = Some(val);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_LOG_LEVEL") {
+            if !val.is_empty() {
+                self.log.level = val;
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_LOG_FORMAT") {
+            match val.to_lowercase().as_str() {
+                "json" => self.log.format = LogFormat::Json,
+                "pretty" => self.log.format = LogFormat::Pretty,
+                other => eprintln!("warning: unknown SENKO_LOG_FORMAT={other}, ignoring"),
+            }
+        }
+
+        // Web settings
+        if let Ok(val) = std::env::var("SENKO_PORT") {
+            if let Ok(port) = val.parse::<u16>() {
+                self.web.port = Some(port);
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_HOST") {
+            if !val.is_empty() {
+                self.web.host = Some(val);
+            }
+        }
+    }
+
+    /// Apply CLI argument overrides. Call after `apply_env()`.
+    /// Priority: CLI > env > config.toml > defaults.
+    pub fn apply_cli(&mut self, overrides: &CliOverrides) {
+        if let Some(ref dir) = overrides.log_dir {
+            self.log.dir = Some(dir.clone());
+        }
+        if let Some(ref path) = overrides.db_path {
+            self.storage.db_path = Some(path.clone());
+        }
+        #[cfg(feature = "postgres")]
+        if let Some(ref url) = overrides.postgres_url {
+            self.backend
+                .postgres
+                .get_or_insert_with(PostgresConfig::default)
+                .url = Some(url.clone());
+        }
+        if let Some(ref name) = overrides.project {
+            self.project.name = Some(name.clone());
+        }
+        if let Some(ref name) = overrides.user {
+            self.user.name = Some(name.clone());
+        }
+        if let Some(port) = overrides.port {
+            self.web.port = Some(port);
+        }
+        if let Some(ref host) = overrides.host {
+            self.web.host = Some(host.clone());
+        }
+    }
+
+    pub fn web_port_or(&self, default: u16) -> u16 {
+        self.web.port.unwrap_or(default)
+    }
+
+    pub fn web_port_is_explicit(&self) -> bool {
+        self.web.port.is_some()
+    }
+
+    pub fn effective_host(&self) -> String {
+        self.web
+            .host
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string())
     }
 }

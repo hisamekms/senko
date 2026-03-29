@@ -9,10 +9,10 @@ use super::{
 };
 use crate::bootstrap::{
     create_backend, create_hook_executor, create_project_service, create_task_service,
-    create_user_service, load_config_with_overrides, resolve_project_id, resolve_user_id,
+    create_user_service, resolve_project_id, resolve_user_id,
     DEFAULT_PROJECT_ID,
 };
-use crate::domain::config::Config;
+use crate::domain::config::{CliOverrides, Config};
 use crate::infra::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
@@ -22,8 +22,21 @@ use crate::domain::task::{
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
 use crate::infra::project_root::resolve_project_root;
 
+fn build_cli_overrides(cli: &Cli) -> CliOverrides {
+    CliOverrides {
+        log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        postgres_url: cli.postgres_url.clone(),
+        project: cli.project.clone(),
+        user: cli.user.clone(),
+        ..Default::default()
+    }
+}
+
 fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
-    load_config_with_overrides(root, cli.config.as_deref(), cli.log_dir.as_deref())
+    let mut config = hooks::load_config(root, cli.config.as_deref())?;
+    config.apply_cli(&build_cli_overrides(cli));
+    Ok(config)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -44,9 +57,9 @@ pub async fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -149,9 +162,9 @@ pub async fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, _) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     let statuses = status
         .into_iter()
@@ -186,9 +199,9 @@ pub async fn cmd_list(
 
 pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, _) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task = backend.get_task(project_id, task_id).await?;
 
     match cli.output {
@@ -271,9 +284,9 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 
 pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -301,12 +314,12 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let user_id = match user_id {
         Some(id) => Some(id),
-        None => Some(resolve_user_id(&*backend, cli.user.as_deref(), &config).await?),
+        None => Some(resolve_user_id(&*backend, &config).await?),
     };
 
     if cli.dry_run {
@@ -341,12 +354,12 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
 
 pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let user_id = match user_id {
         Some(id) => Some(id),
-        None => Some(resolve_user_id(&*backend, cli.user.as_deref(), &config).await?),
+        None => Some(resolve_user_id(&*backend, &config).await?),
     };
 
     if cli.dry_run {
@@ -410,9 +423,9 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
 
 pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -440,9 +453,9 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
 
 pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -828,8 +841,8 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config(cli, &root)?;
-            let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
-            let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+            let (backend, _) = create_backend(&root, &config)?;
+            let project_id = resolve_project_id(&*backend, &config).await?;
 
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
@@ -996,9 +1009,9 @@ pub async fn cmd_edit(
     remove_out_of_scope: &[String],
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&project_root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &project_root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, _) = create_backend(&project_root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     // Verify task exists (even in dry-run)
     let _task = backend.get_task(project_id, id).await?;
@@ -1169,9 +1182,9 @@ pub async fn cmd_edit(
 
 pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
 
     match command {
@@ -1232,9 +1245,9 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
 
 pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config(cli, &root)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
 
     match command {
@@ -1300,7 +1313,8 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
 
 pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -1355,7 +1369,8 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 
 pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let user_service = create_user_service(backend);
 
     match action {
@@ -1412,7 +1427,8 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {

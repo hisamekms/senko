@@ -10,9 +10,7 @@ use serde::Serialize;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::domain::config::{
-    CompletionMode, Config, HookEntry, HookMode, LogFormat, RawConfig,
-};
+use crate::domain::config::{Config, HookEntry, RawConfig};
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
@@ -68,8 +66,9 @@ pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Resul
     };
 
     // 4. Resolve to final Config and apply env overrides
-    let config = merged_raw.resolve();
-    Ok(apply_env_overrides(config))
+    let mut config = merged_raw.resolve();
+    config.apply_env();
+    Ok(config)
 }
 
 /// Return the user-level config path.
@@ -143,106 +142,6 @@ fn detect_legacy_hook_format(content: &str, path: &Path) -> Result<()> {
         }
     }
     Ok(())
-}
-
-fn apply_env_overrides(mut config: Config) -> Config {
-    // Workflow settings
-    if let Ok(val) = std::env::var("SENKO_COMPLETION_MODE") {
-        match val.as_str() {
-            "merge_then_complete" => {
-                config.workflow.completion_mode = CompletionMode::MergeThenComplete
-            }
-            "pr_then_complete" => {
-                config.workflow.completion_mode = CompletionMode::PrThenComplete
-            }
-            other => eprintln!("warning: unknown SENKO_COMPLETION_MODE={other}, ignoring"),
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_AUTO_MERGE") {
-        match val.to_lowercase().as_str() {
-            "true" | "1" | "yes" => config.workflow.auto_merge = true,
-            "false" | "0" | "no" => config.workflow.auto_merge = false,
-            other => eprintln!("warning: unknown SENKO_AUTO_MERGE={other}, ignoring"),
-        }
-    }
-
-    // Backend settings
-    if let Ok(val) = std::env::var("SENKO_API_URL") {
-        if !val.is_empty() {
-            config.backend.api_url = Some(val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_MODE") {
-        match val.to_lowercase().as_str() {
-            "server" => config.backend.hook_mode = HookMode::Server,
-            "client" => config.backend.hook_mode = HookMode::Client,
-            "both" => config.backend.hook_mode = HookMode::Both,
-            other => eprintln!("warning: unknown SENKO_HOOK_MODE={other}, ignoring"),
-        }
-    }
-
-    // Hook commands (insert as named "_env" entry)
-    fn insert_env_hook(map: &mut std::collections::BTreeMap<String, HookEntry>, val: String) {
-        map.insert("_env".to_string(), HookEntry { command: val, enabled: true, requires_env: vec![] });
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_task_added, val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_READY") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_task_ready, val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_STARTED") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_task_started, val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_COMPLETED") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_task_completed, val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_CANCELED") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_task_canceled, val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_HOOK_ON_NO_ELIGIBLE_TASK") {
-        if !val.is_empty() {
-            insert_env_hook(&mut config.hooks.on_no_eligible_task, val);
-        }
-    }
-
-    // User settings
-    if let Ok(val) = std::env::var("SENKO_USER") {
-        if !val.is_empty() {
-            config.user.name = Some(val);
-        }
-    }
-
-    // Log settings
-    if let Ok(val) = std::env::var("SENKO_LOG_DIR") {
-        if !val.is_empty() {
-            config.log.dir = Some(val);
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_LOG_LEVEL") {
-        if !val.is_empty() {
-            config.log.level = val;
-        }
-    }
-    if let Ok(val) = std::env::var("SENKO_LOG_FORMAT") {
-        match val.to_lowercase().as_str() {
-            "json" => config.log.format = LogFormat::Json,
-            "pretty" => config.log.format = LogFormat::Pretty,
-            other => eprintln!("warning: unknown SENKO_LOG_FORMAT={other}, ignoring"),
-        }
-    }
-
-    config
 }
 
 pub async fn build_event(
@@ -543,7 +442,9 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::config::{HooksConfig, RawLogConfig, RawWorkflowConfig};
+    use crate::domain::config::{
+        CompletionMode, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
+    };
     use crate::infra::sqlite::SqliteBackend;
     use crate::domain::repository::{ProjectRepository, TaskRepository};
     use std::sync::Mutex;
@@ -1258,7 +1159,8 @@ on_task_added = "echo added"
         unsafe {
             let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
             std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
             match orig {
                 Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
@@ -1273,10 +1175,12 @@ on_task_added = "echo added"
         unsafe {
             let orig = std::env::var("SENKO_AUTO_MERGE").ok();
             std::env::set_var("SENKO_AUTO_MERGE", "false");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert!(!config.workflow.auto_merge);
             std::env::set_var("SENKO_AUTO_MERGE", "0");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert!(!config.workflow.auto_merge);
             match orig {
                 Some(v) => std::env::set_var("SENKO_AUTO_MERGE", v),
@@ -1291,10 +1195,12 @@ on_task_added = "echo added"
         unsafe {
             let orig = std::env::var("SENKO_HOOK_MODE").ok();
             std::env::set_var("SENKO_HOOK_MODE", "client");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.backend.hook_mode, HookMode::Client);
             std::env::set_var("SENKO_HOOK_MODE", "both");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.backend.hook_mode, HookMode::Both);
             match orig {
                 Some(v) => std::env::set_var("SENKO_HOOK_MODE", v),
@@ -1309,7 +1215,8 @@ on_task_added = "echo added"
         unsafe {
             let orig = std::env::var("SENKO_API_URL").ok();
             std::env::set_var("SENKO_API_URL", "http://remote:3142");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.backend.api_url, Some("http://remote:3142".to_string()));
             match orig {
                 Some(v) => std::env::set_var("SENKO_API_URL", v),
@@ -1330,7 +1237,7 @@ on_task_added = "echo added"
                 "toml-hook".to_string(),
                 HookEntry { command: "toml-hook".into(), enabled: true, requires_env: vec![] },
             );
-            let config = apply_env_overrides(config);
+            config.apply_env();
             assert_eq!(config.hooks.on_task_added.len(), 2);
             assert_eq!(config.hooks.on_task_added["toml-hook"].command, "toml-hook");
             assert_eq!(config.hooks.on_task_added["_env"].command, "env-hook");
@@ -1349,7 +1256,8 @@ on_task_added = "echo added"
             let orig_hook = std::env::var("SENKO_HOOK_ON_TASK_ADDED").ok();
             std::env::set_var("SENKO_API_URL", "");
             std::env::set_var("SENKO_HOOK_ON_TASK_ADDED", "");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.backend.api_url, None);
             assert!(config.hooks.on_task_added.is_empty());
             match orig_url {
@@ -1520,7 +1428,8 @@ auto_merge = false
         unsafe {
             let orig = std::env::var("SENKO_LOG_DIR").ok();
             std::env::set_var("SENKO_LOG_DIR", "/tmp/custom-logs");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.log.dir, Some("/tmp/custom-logs".into()));
             match orig {
                 Some(v) => std::env::set_var("SENKO_LOG_DIR", v),
@@ -1534,7 +1443,8 @@ auto_merge = false
         unsafe {
             let orig = std::env::var("SENKO_LOG_DIR").ok();
             std::env::set_var("SENKO_LOG_DIR", "");
-            let config = apply_env_overrides(Config::default());
+            let mut config = Config::default();
+            config.apply_env();
             assert_eq!(config.log.dir, None);
             match orig {
                 Some(v) => std::env::set_var("SENKO_LOG_DIR", v),

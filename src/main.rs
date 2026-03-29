@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use senko::application::port::HookExecutor;
 use senko::application::{ProjectService, TaskService, UserService};
-use senko::domain::config::{Config, HookEntry, HookMode};
+use senko::domain::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
 use senko::domain::repository::TaskBackend;
 use senko::domain::task::{
@@ -24,98 +24,75 @@ use senko::infra::sqlite as db;
 
 const DEFAULT_PROJECT_ID: i64 = 1;
 
-/// Create the appropriate backend based on env var / config.
+/// Create the appropriate backend based on config (env + CLI already applied).
 /// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
 fn create_backend(
     project_root: &std::path::Path,
-    config_path: Option<&std::path::Path>,
-    db_path: Option<&std::path::Path>,
-    #[cfg_attr(not(feature = "postgres"), allow(unused_variables))]
-    postgres_url: Option<&str>,
+    config: &Config,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
-    let resolve_api_key = |config: &Config| -> Option<String> {
-        std::env::var("SENKO_API_KEY")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| config.backend.api_key.clone())
-    };
-
-    // 1. SENKO_API_URL env var takes priority
-    if let Ok(url) = std::env::var("SENKO_API_URL") {
-        if !url.is_empty() {
-            let config = hooks::load_config(project_root, config_path)?;
-            let backend = match resolve_api_key(&config) {
-                Some(key) => HttpBackend::with_api_key(&url, key),
-                None => HttpBackend::new(&url),
-            };
-            return Ok((Arc::new(backend), true));
-        }
-    }
-
-    // 2. config.toml [backend] api_url
-    let config = hooks::load_config(project_root, config_path)?;
+    // 1. HTTP backend (api_url from env or config.toml)
     if let Some(ref url) = config.backend.api_url {
-        let backend = match resolve_api_key(&config) {
-            Some(key) => HttpBackend::with_api_key(url, key),
+        let backend = match config.backend.api_key.as_ref() {
+            Some(key) => HttpBackend::with_api_key(url, key.clone()),
             None => HttpBackend::new(url),
         };
         return Ok((Arc::new(backend), true));
     }
 
-    // 3. DynamoDB backend (via env var or config)
+    // 2. DynamoDB backend
     #[cfg(feature = "dynamodb")]
     {
         use senko::infra::dynamodb::DynamoDbBackend;
 
-        let table_from_env = std::env::var("SENKO_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
-        let region_from_env = std::env::var("SENKO_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
-
-        let (table, region) = match (&table_from_env, &config.backend.dynamodb) {
-            (Some(t), _) => (Some(t.clone()), region_from_env),
-            (None, Some(ddb_config)) => {
-                let table = ddb_config.table_name.clone();
-                let region = region_from_env.or_else(|| ddb_config.region.clone());
-                (table, region)
+        if let Some(ref ddb_config) = config.backend.dynamodb {
+            if let Some(ref table_name) = ddb_config.table_name {
+                return Ok((
+                    Arc::new(DynamoDbBackend::new(
+                        table_name.clone(),
+                        ddb_config.region.clone(),
+                    )),
+                    false,
+                ));
             }
-            _ => (None, None),
-        };
-
-        if let Some(table_name) = table {
-            return Ok((Arc::new(DynamoDbBackend::new(table_name, region)), false));
         }
     }
 
-    // 4. PostgreSQL backend (via CLI arg, env var, or config)
+    // 3. PostgreSQL backend
     #[cfg(feature = "postgres")]
     {
         use senko::infra::postgres::PostgresBackend;
 
-        // Priority: CLI --postgres-url > SENKO_POSTGRES_URL env > config.toml
-        let url = postgres_url
-            .map(|s| s.to_string())
-            .or_else(|| {
-                std::env::var("SENKO_POSTGRES_URL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            })
-            .or_else(|| {
-                config.backend.postgres.as_ref().and_then(|pg| pg.url.clone())
-            });
-
-        if let Some(database_url) = url {
-            return Ok((Arc::new(PostgresBackend::new(database_url)), false));
+        if let Some(ref pg_config) = config.backend.postgres {
+            if let Some(ref database_url) = pg_config.url {
+                return Ok((Arc::new(PostgresBackend::new(database_url.clone())), false));
+            }
         }
     }
 
-    // 5. Default: SqliteBackend
-    Ok((Arc::new(db::SqliteBackend::new(project_root, db_path, config.storage.db_path.as_deref())?), false))
+    // 4. Default: SqliteBackend
+    Ok((
+        Arc::new(db::SqliteBackend::new(
+            project_root,
+            None,
+            config.storage.db_path.as_deref(),
+        )?),
+        false,
+    ))
+}
+
+fn build_cli_overrides(cli: &Cli) -> CliOverrides {
+    CliOverrides {
+        log_dir: cli.log_dir.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        db_path: cli.db_path.as_ref().map(|p| p.to_string_lossy().into_owned()),
+        postgres_url: cli.postgres_url.clone(),
+        project: cli.project.clone(),
+        ..Default::default()
+    }
 }
 
 fn load_config_with_cli(root: &std::path::Path, cli: &Cli) -> Result<Config> {
     let mut config = hooks::load_config(root, cli.config.as_deref())?;
-    if let Some(ref d) = cli.log_dir {
-        config.log.dir = Some(d.to_string_lossy().into_owned());
-    }
+    config.apply_cli(&build_cli_overrides(cli));
     Ok(config)
 }
 
@@ -154,11 +131,9 @@ fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
 /// Priority: CLI flag / SENKO_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
 async fn resolve_project_id(
     backend: &dyn TaskBackend,
-    cli_project: Option<&str>,
     config: &Config,
 ) -> Result<i64> {
-    let name = cli_project.or(config.project.name.as_deref());
-    match name {
+    match config.project.name.as_deref() {
         Some(n) => {
             let project = backend
                 .get_project_by_name(n)
@@ -200,15 +175,15 @@ struct Cli {
     log_dir: Option<PathBuf>,
 
     /// Path to SQLite database file (env: SENKO_DB_PATH)
-    #[arg(long, env = "SENKO_DB_PATH")]
+    #[arg(long)]
     db_path: Option<PathBuf>,
 
     /// PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
-    #[arg(long, env = "SENKO_POSTGRES_URL")]
+    #[arg(long)]
     postgres_url: Option<String>,
 
     /// Project name to operate on (overrides config; env: SENKO_PROJECT)
-    #[arg(long, env = "SENKO_PROJECT")]
+    #[arg(long)]
     project: Option<String>,
 
     #[command(subcommand)]
@@ -698,9 +673,9 @@ async fn run(cli: Cli) -> Result<()> {
             ref remove_out_of_scope,
         } => {
             let project_root = resolve_project_root(cli.project_root.as_deref())?;
-            let (backend, _) = create_backend(&project_root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
             let config = load_config_with_cli(&project_root, &cli)?;
-            let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+            let (backend, _) = create_backend(&project_root, &config)?;
+            let project_id = resolve_project_id(&*backend, &config).await?;
 
             // Verify task exists (even in dry-run)
             let _task = backend.get_task(project_id, id).await?;
@@ -872,24 +847,24 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Cancel { id, ref reason } => cmd_cancel(&cli, id, reason.clone()).await,
         Command::Dod { ref command } => cmd_dod(&cli, command).await,
         Command::Deps { ref command } => cmd_deps(&cli, command).await,
-        Command::Web { port, host } => {
-            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
-            let port_is_explicit = port.is_some() || from_env.is_some();
-            let effective_port = port.or(from_env).unwrap_or(3141);
+        Command::Web { port, ref host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = hooks::load_config(&root, cli.config.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            senko::presentation::web::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
+            let mut config = load_config_with_cli(&root, &cli)?;
+            config.apply_cli(&CliOverrides { port, host: host.clone(), ..Default::default() });
+            let (backend, _) = create_backend(&root, &config)?;
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3141);
+            senko::presentation::web::serve(root, effective_port, port_is_explicit, &config, backend).await?;
             Ok(())
         }
-        Command::Serve { port, host } => {
-            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
-            let port_is_explicit = port.is_some() || from_env.is_some();
-            let effective_port = port.or(from_env).unwrap_or(3142);
+        Command::Serve { port, ref host } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
-            let config = hooks::load_config(&root, cli.config.as_deref())?;
-            let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            senko::presentation::api::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
+            let mut config = load_config_with_cli(&root, &cli)?;
+            config.apply_cli(&CliOverrides { port, host: host.clone(), ..Default::default() });
+            let (backend, _) = create_backend(&root, &config)?;
+            let port_is_explicit = config.web_port_is_explicit();
+            let effective_port = config.web_port_or(3142);
+            senko::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
@@ -922,9 +897,9 @@ async fn cmd_add(
     from_json_file: Option<PathBuf>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     let params = if from_json {
         let mut buf = String::new();
@@ -1027,9 +1002,9 @@ async fn cmd_list(
     ready: bool,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, _) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     let statuses = status
         .into_iter()
@@ -1064,9 +1039,9 @@ async fn cmd_list(
 
 async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, _) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task = backend.get_task(project_id, task_id).await?;
 
     match cli.output {
@@ -1149,9 +1124,9 @@ async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
 
 async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -1179,9 +1154,9 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
 
 async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -1215,9 +1190,9 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
 
 async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let hook_executor = create_hook_executor(config, using_http);
@@ -1280,9 +1255,9 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
 
 async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -1310,9 +1285,9 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
 
 async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
         let task = backend.get_task(project_id, id).await?;
@@ -1451,8 +1426,8 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
 
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = load_config_with_cli(&root, cli)?;
-            let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
-            let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+            let (backend, _) = create_backend(&root, &config)?;
+            let project_id = resolve_project_id(&*backend, &config).await?;
 
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
@@ -1867,9 +1842,9 @@ fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
 
     match command {
@@ -1930,9 +1905,9 @@ fn print_dod_items(items: &[senko::domain::task::DodItem]) {
 
 async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, using_http) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
     let config = load_config_with_cli(&root, cli)?;
-    let project_id = resolve_project_id(&*backend, cli.project.as_deref(), &config).await?;
+    let (backend, using_http) = create_backend(&root, &config)?;
+    let project_id = resolve_project_id(&*backend, &config).await?;
     let task_service = create_task_service(backend, &config, using_http);
 
     match command {
@@ -2123,7 +2098,8 @@ fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool) -> Result<()
 
 async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {
@@ -2178,7 +2154,8 @@ async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
 
 async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let user_service = create_user_service(backend);
 
     match action {
@@ -2235,7 +2212,8 @@ async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 
 async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
-    let (backend, _) = create_backend(&root, cli.config.as_deref(), cli.db_path.as_deref(), cli.postgres_url.as_deref())?;
+    let config = load_config_with_cli(&root, cli)?;
+    let (backend, _) = create_backend(&root, &config)?;
     let project_service = create_project_service(backend);
 
     match action {

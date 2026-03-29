@@ -12,9 +12,9 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
+use crate::domain::config::Config;
 use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
-use crate::infra::hook as hooks;
 use crate::domain::task::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
@@ -31,15 +31,12 @@ struct ListQuery {
 }
 
 pub async fn serve(
-    project_root: PathBuf,
+    _project_root: PathBuf,
     port: u16,
     port_is_explicit: bool,
-    host: Option<String>,
-    config_path: Option<PathBuf>,
+    config: &Config,
     backend: Arc<dyn TaskBackend>,
 ) -> Result<()> {
-    let config = hooks::load_config(&project_root, config_path.as_deref())
-        .unwrap_or_default();
     bootstrap::init_tracing(&config.log);
 
     let state = AppState {
@@ -53,10 +50,7 @@ pub async fn serve(
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    let bind_addr_str = host
-        .or_else(|| std::env::var("SENKO_HOST").ok().filter(|v| !v.is_empty()))
-        .or(config.web.host)
-        .unwrap_or_else(|| "127.0.0.1".to_string());
+    let bind_addr_str = config.effective_host();
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
         .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;

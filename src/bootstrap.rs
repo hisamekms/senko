@@ -8,7 +8,6 @@ use crate::application::port::HookExecutor;
 use crate::application::{ProjectService, TaskService, UserService};
 use crate::domain::repository::TaskBackend;
 use crate::domain::config::{Config, HookMode, LogConfig, LogFormat};
-use crate::infra::hook as hooks;
 use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::pr_verifier::GhCliPrVerifier;
@@ -16,103 +15,60 @@ use crate::infra::pr_verifier::GhCliPrVerifier;
 pub const DEFAULT_PROJECT_ID: i64 = 1;
 pub const DEFAULT_USER_ID: i64 = 1;
 
-/// Create the appropriate backend based on env var / config.
+/// Create the appropriate backend based on config (env + CLI already applied).
 /// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.
 pub fn create_backend(
     project_root: &Path,
-    config_path: Option<&Path>,
-    db_path: Option<&Path>,
-    #[cfg_attr(not(feature = "postgres"), allow(unused_variables))]
-    postgres_url: Option<&str>,
+    config: &Config,
 ) -> Result<(Arc<dyn TaskBackend>, bool)> {
-    let resolve_api_key = |config: &Config| -> Option<String> {
-        std::env::var("SENKO_API_KEY")
-            .ok()
-            .filter(|s| !s.is_empty())
-            .or_else(|| config.backend.api_key.clone())
-    };
-
-    // 1. SENKO_API_URL env var takes priority
-    if let Ok(url) = std::env::var("SENKO_API_URL") {
-        if !url.is_empty() {
-            let config = hooks::load_config(project_root, config_path)?;
-            let backend = match resolve_api_key(&config) {
-                Some(key) => HttpBackend::with_api_key(&url, key),
-                None => HttpBackend::new(&url),
-            };
-            return Ok((Arc::new(backend), true));
-        }
-    }
-
-    // 2. config.toml [backend] api_url
-    let config = hooks::load_config(project_root, config_path)?;
+    // 1. HTTP backend (api_url from env or config.toml)
     if let Some(ref url) = config.backend.api_url {
-        let backend = match resolve_api_key(&config) {
-            Some(key) => HttpBackend::with_api_key(url, key),
+        let backend = match config.backend.api_key.as_ref() {
+            Some(key) => HttpBackend::with_api_key(url, key.clone()),
             None => HttpBackend::new(url),
         };
         return Ok((Arc::new(backend), true));
     }
 
-    // 3. DynamoDB backend (via env var or config)
+    // 2. DynamoDB backend
     #[cfg(feature = "dynamodb")]
     {
         use crate::infra::dynamodb::DynamoDbBackend;
 
-        let table_from_env = std::env::var("SENKO_DYNAMODB_TABLE").ok().filter(|s| !s.is_empty());
-        let region_from_env = std::env::var("SENKO_DYNAMODB_REGION").ok().filter(|s| !s.is_empty());
-
-        let (table, region) = match (&table_from_env, &config.backend.dynamodb) {
-            (Some(t), _) => (Some(t.clone()), region_from_env),
-            (None, Some(ddb_config)) => {
-                let table = ddb_config.table_name.clone();
-                let region = region_from_env.or_else(|| ddb_config.region.clone());
-                (table, region)
+        if let Some(ref ddb_config) = config.backend.dynamodb {
+            if let Some(ref table_name) = ddb_config.table_name {
+                return Ok((
+                    Arc::new(DynamoDbBackend::new(
+                        table_name.clone(),
+                        ddb_config.region.clone(),
+                    )),
+                    false,
+                ));
             }
-            _ => (None, None),
-        };
-
-        if let Some(table_name) = table {
-            return Ok((Arc::new(DynamoDbBackend::new(table_name, region)), false));
         }
     }
 
-    // 4. PostgreSQL backend (via CLI arg, env var, or config)
+    // 3. PostgreSQL backend
     #[cfg(feature = "postgres")]
     {
         use crate::infra::postgres::PostgresBackend;
 
-        // Priority: CLI --postgres-url > SENKO_POSTGRES_URL env > config.toml
-        let url = postgres_url
-            .map(|s| s.to_string())
-            .or_else(|| {
-                std::env::var("SENKO_POSTGRES_URL")
-                    .ok()
-                    .filter(|s| !s.is_empty())
-            })
-            .or_else(|| {
-                config.backend.postgres.as_ref().and_then(|pg| pg.url.clone())
-            });
-
-        if let Some(database_url) = url {
-            return Ok((Arc::new(PostgresBackend::new(database_url)), false));
+        if let Some(ref pg_config) = config.backend.postgres {
+            if let Some(ref database_url) = pg_config.url {
+                return Ok((Arc::new(PostgresBackend::new(database_url.clone())), false));
+            }
         }
     }
 
-    // 5. Default: SqliteBackend
-    Ok((Arc::new(crate::infra::sqlite::SqliteBackend::new(project_root, db_path, config.storage.db_path.as_deref())?), false))
-}
-
-pub fn load_config_with_overrides(
-    root: &Path,
-    config_path: Option<&Path>,
-    log_dir: Option<&Path>,
-) -> Result<Config> {
-    let mut config = hooks::load_config(root, config_path)?;
-    if let Some(d) = log_dir {
-        config.log.dir = Some(d.to_string_lossy().into_owned());
-    }
-    Ok(config)
+    // 4. Default: SqliteBackend
+    Ok((
+        Arc::new(crate::infra::sqlite::SqliteBackend::new(
+            project_root,
+            None,
+            config.storage.db_path.as_deref(),
+        )?),
+        false,
+    ))
 }
 
 pub fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
@@ -145,16 +101,12 @@ pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
     UserService::new(backend)
 }
 
-/// Resolve the project ID from CLI flag, config, or default.
-///
-/// Priority: CLI flag / SENKO_PROJECT env > config.toml [project] name > DEFAULT_PROJECT_ID
+/// Resolve the project ID from config (CLI > env > config.toml already applied).
 pub async fn resolve_project_id(
     backend: &dyn TaskBackend,
-    cli_project: Option<&str>,
     config: &Config,
 ) -> Result<i64> {
-    let name = cli_project.or(config.project.name.as_deref());
-    match name {
+    match config.project.name.as_deref() {
         Some(n) => {
             let project = backend
                 .get_project_by_name(n)
@@ -166,16 +118,12 @@ pub async fn resolve_project_id(
     }
 }
 
-/// Resolve the user ID from CLI flag, config, or default.
-///
-/// Priority: --user / SENKO_USER env > config.toml [user] name > DEFAULT_USER_ID
+/// Resolve the user ID from config (CLI > env > config.toml already applied).
 pub async fn resolve_user_id(
     backend: &dyn TaskBackend,
-    cli_user: Option<&str>,
     config: &Config,
 ) -> Result<i64> {
-    let name = cli_user.or(config.user.name.as_deref());
-    match name {
+    match config.user.name.as_deref() {
         Some(n) => {
             let user = backend
                 .get_user_by_username(n)
