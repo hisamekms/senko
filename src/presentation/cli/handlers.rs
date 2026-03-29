@@ -13,6 +13,7 @@ use crate::bootstrap::{
     DEFAULT_PROJECT_ID,
 };
 use crate::domain::config::{CliOverrides, Config};
+use crate::bootstrap::resolve_backend_info;
 use crate::infra::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
@@ -139,7 +140,7 @@ pub async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let task = task_service.create_task(project_id, &params).await?;
 
     match cli.output {
@@ -297,7 +298,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.ready_task(project_id, id).await?;
 
     match cli.output {
@@ -337,7 +338,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
 
     match cli.output {
@@ -363,7 +364,8 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
     };
 
     if cli.dry_run {
-        let hook_executor = create_hook_executor(config, using_http);
+        let backend_info = resolve_backend_info(&config, &root);
+        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info);
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -387,7 +389,8 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
     // HttpBackend's next_task() already starts the task atomically,
     // so we handle the using_http case separately to avoid a redundant start_task call.
     if using_http {
-        let hook_executor = create_hook_executor(config, using_http);
+        let backend_info = resolve_backend_info(&config, &root);
+        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info);
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -406,7 +409,7 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         return Ok(());
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
@@ -436,7 +439,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
@@ -469,7 +472,7 @@ pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.cancel_task(project_id, id, reason).await?;
 
     match cli.output {
@@ -844,6 +847,8 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let (backend, _) = create_backend(&root, &config)?;
             let project_id = resolve_project_id(&*backend, &config).await?;
 
+            let backend_info = resolve_backend_info(&config, &root);
+
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
                 let stats = backend.task_stats(project_id).await.unwrap_or_default();
@@ -855,7 +860,12 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                     stats,
                     ready_count,
                 };
-                let json = serde_json::to_string_pretty(&event)?;
+                let envelope = hooks::HookEnvelope {
+                    runtime: hooks::RuntimeMode::Cli,
+                    backend: backend_info,
+                    event,
+                };
+                let json = serde_json::to_string_pretty(&envelope)?;
 
                 if *dry_run {
                     println!("{json}");
@@ -869,7 +879,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                     return Ok(());
                 }
 
-                let compact_json = serde_json::to_string(&event)?;
+                let compact_json = serde_json::to_string(&envelope)?;
                 for (i, cmd) in commands.iter().enumerate() {
                     if commands.len() > 1 {
                         eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
@@ -903,7 +913,12 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             };
 
             let event = hooks::build_event(event_name, &task, &*backend, None, None).await;
-            let json = serde_json::to_string_pretty(&event)?;
+            let envelope = hooks::HookEnvelope {
+                runtime: hooks::RuntimeMode::Cli,
+                backend: backend_info,
+                event,
+            };
+            let json = serde_json::to_string_pretty(&envelope)?;
 
             if *dry_run {
                 println!("{json}");
@@ -918,7 +933,7 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 return Ok(());
             }
 
-            let compact_json = serde_json::to_string(&event)?;
+            let compact_json = serde_json::to_string(&envelope)?;
             for (i, cmd) in commands.iter().enumerate() {
                 if commands.len() > 1 {
                     eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
@@ -1185,7 +1200,7 @@ pub async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1248,7 +1263,7 @@ pub async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let config = load_config(cli, &root)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
 
     match command {
         DepsCommand::Add { task_id, on } => {

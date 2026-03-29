@@ -30,24 +30,33 @@ command = "echo hook1"
 command = "echo hook2"
 EOF
 
-# 1. dry-run: should output event JSON without executing hooks
-echo "[1] dry-run outputs event JSON"
+# 1. dry-run: should output envelope JSON without executing hooks
+echo "[1] dry-run outputs envelope JSON"
 DRY_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" --dry-run 2>/dev/null)"
-DRY_EVENT="$(echo "$DRY_OUTPUT" | jq -r '.event')"
-DRY_TASK_ID="$(echo "$DRY_OUTPUT" | jq -r '.task.id')"
+DRY_EVENT="$(echo "$DRY_OUTPUT" | jq -r '.event.event')"
+DRY_TASK_ID="$(echo "$DRY_OUTPUT" | jq -r '.event.task.id')"
 assert_eq "task_ready" "$DRY_EVENT" "dry-run event field"
 assert_eq "$TASK_ID" "$DRY_TASK_ID" "dry-run task id"
+
+# 1b. dry-run: envelope includes runtime and backend
+echo "[1b] dry-run includes runtime and backend"
+DRY_RUNTIME="$(echo "$DRY_OUTPUT" | jq -r '.runtime')"
+DRY_BACKEND_TYPE="$(echo "$DRY_OUTPUT" | jq -r '.backend.type')"
+assert_eq "cli" "$DRY_RUNTIME" "dry-run runtime field"
+assert_eq "sqlite" "$DRY_BACKEND_TYPE" "dry-run backend type"
+HAS_DB_PATH="$(echo "$DRY_OUTPUT" | jq '.backend | has("db_file_path")')"
+assert_eq "true" "$HAS_DB_PATH" "dry-run backend has db_file_path"
 
 # 2. dry-run without task_id: should use sample task
 echo "[2] dry-run without task_id uses sample task"
 SAMPLE_OUTPUT="$(run_lf hooks test task_added --dry-run 2>/dev/null)"
-SAMPLE_TITLE="$(echo "$SAMPLE_OUTPUT" | jq -r '.task.title')"
+SAMPLE_TITLE="$(echo "$SAMPLE_OUTPUT" | jq -r '.event.task.title')"
 assert_eq "Sample task" "$SAMPLE_TITLE" "sample task title"
 
-# 3. hooks test with real execution: stdout should show task JSON (cat hook)
+# 3. hooks test with real execution: stdout should show envelope JSON (cat hook)
 echo "[3] sync execution outputs to stdout"
 EXEC_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" 2>/dev/null)"
-EXEC_EVENT="$(echo "$EXEC_OUTPUT" | jq -r '.event')"
+EXEC_EVENT="$(echo "$EXEC_OUTPUT" | jq -r '.event.event')"
 assert_eq "task_ready" "$EXEC_EVENT" "sync execution event"
 
 # 4. exit code is displayed on stderr
@@ -76,12 +85,20 @@ echo "[8] task state unchanged"
 STATUS_AFTER="$(run_lf get "$TASK_ID" | jq -r '.status')"
 assert_eq "todo" "$STATUS_AFTER" "task status unchanged"
 
-# 9. dry-run includes stats and ready_count
+# 9. dry-run includes stats and ready_count inside event
 echo "[9] dry-run includes stats"
 STATS_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" --dry-run 2>/dev/null)"
-HAS_STATS="$(echo "$STATS_OUTPUT" | jq 'has("stats")')"
-HAS_READY="$(echo "$STATS_OUTPUT" | jq 'has("ready_count")')"
+HAS_STATS="$(echo "$STATS_OUTPUT" | jq '.event | has("stats")')"
+HAS_READY="$(echo "$STATS_OUTPUT" | jq '.event | has("ready_count")')"
 assert_eq "true" "$HAS_STATS" "dry-run has stats"
 assert_eq "true" "$HAS_READY" "dry-run has ready_count"
+
+# 10. no_eligible_task dry-run includes envelope
+echo "[10] no_eligible_task dry-run includes envelope"
+NO_TASK_OUTPUT="$(run_lf hooks test no_eligible_task --dry-run 2>/dev/null)"
+NO_TASK_RUNTIME="$(echo "$NO_TASK_OUTPUT" | jq -r '.runtime')"
+NO_TASK_EVENT="$(echo "$NO_TASK_OUTPUT" | jq -r '.event.event')"
+assert_eq "cli" "$NO_TASK_RUNTIME" "no_eligible_task runtime"
+assert_eq "no_eligible_task" "$NO_TASK_EVENT" "no_eligible_task event name"
 
 test_summary

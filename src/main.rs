@@ -16,6 +16,7 @@ use senko::domain::task::{
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
 use senko::infra::hook as hooks;
+use senko::infra::hook::{RuntimeMode, BackendInfo};
 use senko::infra::http::HttpBackend;
 use senko::infra::hook::executor::ShellHookExecutor;
 use senko::infra::pr_verifier::GhCliPrVerifier;
@@ -103,17 +104,37 @@ fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
     }
 }
 
-fn create_hook_executor(config: Config, using_http: bool) -> Arc<dyn HookExecutor> {
+fn resolve_backend_info(config: &Config, project_root: &std::path::Path) -> BackendInfo {
+    if let Some(ref url) = config.backend.api_url {
+        return BackendInfo::Http { api_url: url.clone() };
+    }
+    #[cfg(feature = "dynamodb")]
+    if config.backend.dynamodb.as_ref().and_then(|d| d.table_name.as_ref()).is_some() {
+        return BackendInfo::Dynamodb;
+    }
+    #[cfg(feature = "postgres")]
+    if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
+        return BackendInfo::Postgresql;
+    }
+    let db_path = config.storage.db_path.as_deref()
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| project_root.join(".senko").join("db.sqlite").display().to_string());
+    BackendInfo::Sqlite { db_file_path: db_path }
+}
+
+fn create_hook_executor(config: Config, using_http: bool, runtime_mode: RuntimeMode, backend_info: BackendInfo) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
-    Arc::new(ShellHookExecutor::new(config, should_fire))
+    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info))
 }
 
 fn create_task_service(
     backend: Arc<dyn TaskBackend>,
     config: &Config,
     using_http: bool,
+    project_root: &std::path::Path,
 ) -> TaskService {
-    let hooks = create_hook_executor(config.clone(), using_http);
+    let backend_info = resolve_backend_info(config, project_root);
+    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info);
     let pr_verifier = Arc::new(GhCliPrVerifier);
     TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
 }
@@ -979,7 +1000,7 @@ async fn cmd_add(
         return print_dry_run(&cli.output, &DryRunOperation { command: "add".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let task = task_service.create_task(project_id, &params).await?;
 
     match cli.output {
@@ -1137,7 +1158,7 @@ async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "ready".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.ready_task(project_id, id).await?;
 
     match cli.output {
@@ -1173,7 +1194,7 @@ async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Opti
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.start_task(project_id, id, session_id, user_id).await?;
 
     match cli.output {
@@ -1195,7 +1216,8 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
     let project_id = resolve_project_id(&*backend, &config).await?;
 
     if cli.dry_run {
-        let hook_executor = create_hook_executor(config, using_http);
+        let backend_info = resolve_backend_info(&config, &root);
+        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info);
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -1219,7 +1241,8 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
     // HttpBackend's next_task() already starts the task atomically,
     // so we handle the using_http case separately to avoid a redundant start_task call.
     if using_http {
-        let hook_executor = create_hook_executor(config, using_http);
+        let backend_info = resolve_backend_info(&config, &root);
+        let hook_executor = create_hook_executor(config, using_http, RuntimeMode::Cli, backend_info);
         let task = match backend.next_task(project_id).await? {
             Some(t) => t,
             None => {
@@ -1238,7 +1261,7 @@ async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -
         return Ok(());
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.next_task(project_id, session_id, user_id).await?;
 
     match cli.output {
@@ -1268,7 +1291,7 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
@@ -1301,7 +1324,7 @@ async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "cancel".into(), operations });
     }
 
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
     let updated = task_service.cancel_task(project_id, id, reason).await?;
 
     match cli.output {
@@ -1428,6 +1451,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let config = load_config_with_cli(&root, cli)?;
             let (backend, _) = create_backend(&root, &config)?;
             let project_id = resolve_project_id(&*backend, &config).await?;
+            let backend_info = resolve_backend_info(&config, &root);
 
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
@@ -1440,7 +1464,12 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                     stats,
                     ready_count,
                 };
-                let json = serde_json::to_string_pretty(&event)?;
+                let envelope = hooks::HookEnvelope {
+                    runtime: RuntimeMode::Cli,
+                    backend: backend_info,
+                    event,
+                };
+                let json = serde_json::to_string_pretty(&envelope)?;
 
                 if *dry_run {
                     println!("{json}");
@@ -1454,7 +1483,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                     return Ok(());
                 }
 
-                let compact_json = serde_json::to_string(&event)?;
+                let compact_json = serde_json::to_string(&envelope)?;
                 for (i, cmd) in commands.iter().enumerate() {
                     if commands.len() > 1 {
                         eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
@@ -1488,7 +1517,12 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             };
 
             let event = hooks::build_event(event_name, &task, &*backend, None, None).await;
-            let json = serde_json::to_string_pretty(&event)?;
+            let envelope = hooks::HookEnvelope {
+                runtime: RuntimeMode::Cli,
+                backend: backend_info,
+                event,
+            };
+            let json = serde_json::to_string_pretty(&envelope)?;
 
             if *dry_run {
                 println!("{json}");
@@ -1503,7 +1537,7 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 return Ok(());
             }
 
-            let compact_json = serde_json::to_string(&event)?;
+            let compact_json = serde_json::to_string(&envelope)?;
             for (i, cmd) in commands.iter().enumerate() {
                 if commands.len() > 1 {
                     eprintln!("--- hook {}/{}: {} ---", i + 1, commands.len(), cmd);
@@ -1845,7 +1879,7 @@ async fn cmd_dod(cli: &Cli, command: &DodCommand) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
 
     match command {
         DodCommand::Check { task_id, index } => {
@@ -1908,7 +1942,7 @@ async fn cmd_deps(cli: &Cli, command: &DepsCommand) -> Result<()> {
     let config = load_config_with_cli(&root, cli)?;
     let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task_service = create_task_service(backend, &config, using_http);
+    let task_service = create_task_service(backend, &config, using_http, &root);
 
     match command {
         DepsCommand::Add { task_id, on } => {

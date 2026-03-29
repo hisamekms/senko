@@ -20,6 +20,7 @@ use crate::auth::{
 use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
 use crate::infra::hook as hooks;
+use crate::infra::hook::RuntimeMode;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::domain::config::Config;
 use crate::domain::project::CreateProjectParams;
@@ -262,7 +263,8 @@ pub async fn serve(
     };
 
     // Server always fires hooks (should_fire = true)
-    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true));
+    let backend_info = bootstrap::resolve_backend_info(config, &project_root);
+    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true, RuntimeMode::Api, backend_info));
     let pr_verifier = Arc::new(GhCliPrVerifier);
     let task_service = Arc::new(TaskService::new(
         backend.clone(),

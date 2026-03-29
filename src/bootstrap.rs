@@ -10,6 +10,7 @@ use crate::domain::repository::TaskBackend;
 use crate::domain::config::{Config, HookMode, LogConfig, LogFormat};
 use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
+use crate::infra::hook::{RuntimeMode, BackendInfo};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
 pub const DEFAULT_PROJECT_ID: i64 = 1;
@@ -78,17 +79,44 @@ pub fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
     }
 }
 
-pub fn create_hook_executor(config: Config, using_http: bool) -> Arc<dyn HookExecutor> {
+/// Resolve the backend info from config for hook envelope metadata.
+/// Mirrors the priority logic of `create_backend`.
+pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {
+    if let Some(ref url) = config.backend.api_url {
+        return BackendInfo::Http { api_url: url.clone() };
+    }
+    #[cfg(feature = "dynamodb")]
+    if config.backend.dynamodb.as_ref().and_then(|d| d.table_name.as_ref()).is_some() {
+        return BackendInfo::Dynamodb;
+    }
+    #[cfg(feature = "postgres")]
+    if config.backend.postgres.as_ref().and_then(|p| p.url.as_ref()).is_some() {
+        return BackendInfo::Postgresql;
+    }
+    let db_path = config.storage.db_path.as_deref()
+        .map(|p| p.to_string())
+        .unwrap_or_else(|| project_root.join(".senko").join("db.sqlite").display().to_string());
+    BackendInfo::Sqlite { db_file_path: db_path }
+}
+
+pub fn create_hook_executor(
+    config: Config,
+    using_http: bool,
+    runtime_mode: RuntimeMode,
+    backend_info: BackendInfo,
+) -> Arc<dyn HookExecutor> {
     let should_fire = should_fire_client_hooks(&config, using_http);
-    Arc::new(ShellHookExecutor::new(config, should_fire))
+    Arc::new(ShellHookExecutor::new(config, should_fire, runtime_mode, backend_info))
 }
 
 pub fn create_task_service(
     backend: Arc<dyn TaskBackend>,
     config: &Config,
     using_http: bool,
+    project_root: &Path,
 ) -> TaskService {
-    let hooks = create_hook_executor(config.clone(), using_http);
+    let backend_info = resolve_backend_info(config, project_root);
+    let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info);
     let pr_verifier = Arc::new(GhCliPrVerifier);
     TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
 }

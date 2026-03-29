@@ -14,6 +14,29 @@ use crate::domain::config::{Config, HookEntry, RawConfig};
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeMode {
+    Cli,
+    Api,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum BackendInfo {
+    Sqlite { db_file_path: String },
+    Postgresql,
+    Dynamodb,
+    Http { api_url: String },
+}
+
+#[derive(Debug, Serialize)]
+pub struct HookEnvelope<T: Serialize> {
+    pub runtime: RuntimeMode,
+    pub backend: BackendInfo,
+    pub event: T,
+}
+
 #[derive(Debug, Serialize)]
 pub struct HookEvent {
     pub event_id: String,
@@ -62,9 +85,22 @@ struct HookLogEntry {
     #[serde(skip_serializing_if = "Option::is_none")]
     exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    runtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    backend: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stderr: Option<String>,
+}
+
+impl RuntimeMode {
+    fn as_str(&self) -> &str {
+        match self {
+            RuntimeMode::Cli => "cli",
+            RuntimeMode::Api => "api",
+        }
+    }
 }
 
 impl HookLogEntry {
@@ -80,6 +116,8 @@ impl HookLogEntry {
             task_id: None,
             message: None,
             exit_code: None,
+            runtime: None,
+            backend: None,
             stdout: None,
             stderr: None,
         }
@@ -117,6 +155,16 @@ impl HookLogEntry {
 
     fn with_exit_code(mut self, v: Option<i32>) -> Self {
         self.exit_code = v;
+        self
+    }
+
+    fn with_runtime(mut self, v: &str) -> Self {
+        self.runtime = Some(v.to_owned());
+        self
+    }
+
+    fn with_backend(mut self, v: &BackendInfo) -> Self {
+        self.backend = serde_json::to_value(v).ok();
         self
     }
 }
@@ -443,21 +491,30 @@ pub async fn fire_hooks(
     backend: &dyn TaskBackend,
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
+    runtime_mode: &RuntimeMode,
+    backend_info: &BackendInfo,
 ) {
     let entries = config.hooks.entries_for_event(event_name);
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
     let event = build_event(event_name, task, backend, from_status, unblocked).await;
-    let json = match serde_json::to_string(&event) {
+    let envelope = HookEnvelope {
+        runtime: runtime_mode.clone(),
+        backend: backend_info.clone(),
+        event,
+    };
+    let json = match serde_json::to_string(&envelope) {
         Ok(j) => j,
         Err(e) => {
             let msg = format!("hook error: failed to serialize event: {e}");
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
                 let entry = HookLogEntry::new("ERROR", "hook_error")
-                    .with_event_id(&event.event_id)
+                    .with_event_id(&envelope.event.event_id)
                     .with_event(event_name)
                     .with_task_id(Some(task.id()))
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
                     .with_message(&msg);
                 log_to_file(p, &entry);
             }
@@ -468,9 +525,11 @@ pub async fn fire_hooks(
     // Always log event_fired, even with 0 hooks
     if let Some(ref p) = log_path {
         let entry = HookLogEntry::new("INFO", "event_fired")
-            .with_event_id(&event.event_id)
+            .with_event_id(&envelope.event.event_id)
             .with_event(event_name)
-            .with_task_id(Some(task.id()));
+            .with_task_id(Some(task.id()))
+            .with_runtime(runtime_mode.as_str())
+            .with_backend(backend_info);
         log_to_file(p, &entry);
     }
 
@@ -488,11 +547,13 @@ pub async fn fire_hooks(
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
                 let entry = HookLogEntry::new("WARN", "hook_skipped")
-                    .with_event_id(&event.event_id)
+                    .with_event_id(&envelope.event.event_id)
                     .with_event(event_name)
                     .with_hook(name)
                     .with_command(&hook_entry.command)
                     .with_task_id(Some(task.id()))
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
                     .with_message(&msg);
                 log_to_file(p, &entry);
             }
@@ -501,7 +562,7 @@ pub async fn fire_hooks(
         execute_hook(
             &hook_entry.command,
             event_name,
-            &event.event_id,
+            &envelope.event.event_id,
             name,
             Some(task.id()),
             &json,
@@ -511,7 +572,13 @@ pub async fn fire_hooks(
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
-pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend, project_id: i64) {
+pub async fn fire_no_eligible_task_hooks(
+    config: &Config,
+    backend: &dyn TaskBackend,
+    project_id: i64,
+    runtime_mode: &RuntimeMode,
+    backend_info: &BackendInfo,
+) {
     let entries = config.hooks.entries_for_event("no_eligible_task");
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
@@ -524,16 +591,23 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
         stats,
         ready_count,
     };
+    let envelope = HookEnvelope {
+        runtime: runtime_mode.clone(),
+        backend: backend_info.clone(),
+        event,
+    };
 
-    let json = match serde_json::to_string(&event) {
+    let json = match serde_json::to_string(&envelope) {
         Ok(j) => j,
         Err(e) => {
             let msg = format!("hook error: failed to serialize event: {e}");
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
                 let entry = HookLogEntry::new("ERROR", "hook_error")
-                    .with_event_id(&event.event_id)
+                    .with_event_id(&envelope.event.event_id)
                     .with_event("no_eligible_task")
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
                     .with_message(&msg);
                 log_to_file(p, &entry);
             }
@@ -544,8 +618,10 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
     // Always log event_fired, even with 0 hooks
     if let Some(ref p) = log_path {
         let entry = HookLogEntry::new("INFO", "event_fired")
-            .with_event_id(&event.event_id)
-            .with_event("no_eligible_task");
+            .with_event_id(&envelope.event.event_id)
+            .with_event("no_eligible_task")
+            .with_runtime(runtime_mode.as_str())
+            .with_backend(backend_info);
         log_to_file(p, &entry);
     }
 
@@ -563,10 +639,12 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
                 let entry = HookLogEntry::new("WARN", "hook_skipped")
-                    .with_event_id(&event.event_id)
+                    .with_event_id(&envelope.event.event_id)
                     .with_event("no_eligible_task")
                     .with_hook(name)
                     .with_command(&hook_entry.command)
+                    .with_runtime(runtime_mode.as_str())
+                    .with_backend(backend_info)
                     .with_message(&msg);
                 log_to_file(p, &entry);
             }
@@ -575,7 +653,7 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
         execute_hook(
             &hook_entry.command,
             "no_eligible_task",
-            &event.event_id,
+            &envelope.event.event_id,
             name,
             None,
             &json,
@@ -937,7 +1015,7 @@ command = "echo completed"
             None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
-        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
+        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
 
         // Give child processes a moment to complete
         std::thread::sleep(std::time::Duration::from_millis(200));
@@ -959,7 +1037,7 @@ command = "echo completed"
             vec![], vec![], vec![], vec![], vec![],
         );
         // Should not panic
-        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
+        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
     }
 
     #[test]
@@ -1154,7 +1232,7 @@ command = "echo completed"
             vec![], vec![], vec![], vec![], vec![],
         );
 
-        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
+        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
 
         let log_path = dir.path().join("hooks.log");
         let content = std::fs::read_to_string(&log_path).unwrap();
@@ -1162,6 +1240,9 @@ command = "echo completed"
         assert_eq!(line["type"], "event_fired");
         assert_eq!(line["event"], "task_added");
         assert_eq!(line["task_id"], 1);
+        assert_eq!(line["runtime"], "cli");
+        assert_eq!(line["backend"]["type"], "sqlite");
+        assert_eq!(line["backend"]["db_file_path"], "test.db");
     }
 
     #[tokio::test]
@@ -1179,13 +1260,85 @@ command = "echo completed"
 
         let (_db_dir, backend) = setup_db();
 
-        fire_no_eligible_task_hooks(&config, &backend, 1).await;
+        fire_no_eligible_task_hooks(&config, &backend, 1, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
 
         let log_path = dir.path().join("hooks.log");
         let content = std::fs::read_to_string(&log_path).unwrap();
         let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
         assert_eq!(line["type"], "event_fired");
         assert_eq!(line["event"], "no_eligible_task");
+        assert_eq!(line["runtime"], "cli");
+        assert_eq!(line["backend"]["type"], "sqlite");
+        assert_eq!(line["backend"]["db_file_path"], "test.db");
+    }
+
+    #[tokio::test]
+    async fn envelope_serialization() {
+        let (_dir, backend) = setup_db();
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+        let event = build_event("task_added", &task, &backend, None, None).await;
+        let envelope = HookEnvelope {
+            runtime: RuntimeMode::Cli,
+            backend: BackendInfo::Sqlite { db_file_path: "/tmp/test.db".into() },
+            event,
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["runtime"], "cli");
+        assert_eq!(v["backend"]["type"], "sqlite");
+        assert_eq!(v["backend"]["db_file_path"], "/tmp/test.db");
+        assert_eq!(v["event"]["event"], "task_added");
+        assert_eq!(v["event"]["task"]["id"], 1);
+    }
+
+    #[test]
+    fn envelope_no_eligible_task_serialization() {
+        let event = NoEligibleTaskEvent {
+            event_id: "test-id".into(),
+            event: "no_eligible_task".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            stats: HashMap::new(),
+            ready_count: 0,
+        };
+        let envelope = HookEnvelope {
+            runtime: RuntimeMode::Api,
+            backend: BackendInfo::Http { api_url: "http://localhost:8080".into() },
+            event,
+        };
+        let json = serde_json::to_string(&envelope).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["runtime"], "api");
+        assert_eq!(v["backend"]["type"], "http");
+        assert_eq!(v["backend"]["api_url"], "http://localhost:8080");
+        assert_eq!(v["event"]["event"], "no_eligible_task");
+    }
+
+    #[test]
+    fn backend_info_serialization_variants() {
+        let sqlite = BackendInfo::Sqlite { db_file_path: "/path/db.sqlite".into() };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&sqlite).unwrap()).unwrap();
+        assert_eq!(v["type"], "sqlite");
+        assert_eq!(v["db_file_path"], "/path/db.sqlite");
+
+        let pg = BackendInfo::Postgresql;
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&pg).unwrap()).unwrap();
+        assert_eq!(v["type"], "postgresql");
+
+        let ddb = BackendInfo::Dynamodb;
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&ddb).unwrap()).unwrap();
+        assert_eq!(v["type"], "dynamodb");
+
+        let http = BackendInfo::Http { api_url: "http://example.com".into() };
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&http).unwrap()).unwrap();
+        assert_eq!(v["type"], "http");
+        assert_eq!(v["api_url"], "http://example.com");
     }
 
     #[test]
@@ -1496,15 +1649,19 @@ on_task_added = "echo added"
             None, None, None, None, None, None, None,
             vec![], vec![], vec![], vec![], vec![],
         );
-        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
+        fire_hooks(&config, "task_added", &task, &backend, None, None, &RuntimeMode::Cli, &BackendInfo::Sqlite { db_file_path: "test.db".into() }).await;
 
         std::thread::sleep(std::time::Duration::from_millis(200));
 
         let content = std::fs::read_to_string(&output_file).unwrap();
         let json: serde_json::Value = serde_json::from_str(&content).unwrap();
-        assert_eq!(json["event"], "task_added");
-        assert_eq!(json["task"]["id"], 42);
-        assert_eq!(json["task"]["title"], "Hook stdin test");
+        // Envelope wraps the event
+        assert_eq!(json["runtime"], "cli");
+        assert_eq!(json["backend"]["type"], "sqlite");
+        assert_eq!(json["backend"]["db_file_path"], "test.db");
+        assert_eq!(json["event"]["event"], "task_added");
+        assert_eq!(json["event"]["task"]["id"], 42);
+        assert_eq!(json["event"]["task"]["title"], "Hook stdin test");
     }
 
     #[test]
