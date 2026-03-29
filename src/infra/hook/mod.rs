@@ -552,6 +552,26 @@ mod tests {
     /// `std::env::set_var` is not thread-safe, so env-var tests must not run concurrently.
     static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
+    /// Run a closure with `XDG_CONFIG_HOME` pointed to an empty temp dir,
+    /// preventing user-level config from leaking into tests.
+    /// Returns the closure's return value. The temp dir is cleaned up on drop.
+    fn with_isolated_user_config<F, R>(f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe {
+            let orig = std::env::var("XDG_CONFIG_HOME").ok();
+            std::env::set_var("XDG_CONFIG_HOME", tmp.path());
+            let result = f();
+            match orig {
+                Some(v) => std::env::set_var("XDG_CONFIG_HOME", v),
+                None => std::env::remove_var("XDG_CONFIG_HOME"),
+            }
+            result
+        }
+    }
+
     fn setup_db() -> (tempfile::TempDir, SqliteBackend) {
         let dir = tempfile::tempdir().unwrap();
         let backend = SqliteBackend::new(dir.path(), Some(&dir.path().join("data.db")), None).unwrap();
@@ -561,48 +581,54 @@ mod tests {
     #[test]
     fn load_config_missing_file() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let config = load_config(dir.path(), None).unwrap();
-        assert!(config.hooks.on_task_added.is_empty());
-        assert!(config.hooks.on_task_completed.is_empty());
+        with_isolated_user_config(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let config = load_config(dir.path(), None).unwrap();
+            assert!(config.hooks.on_task_added.is_empty());
+            assert!(config.hooks.on_task_completed.is_empty());
+        });
     }
 
     #[test]
     fn load_config_valid_toml() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let senko_dir = dir.path().join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(
-            senko_dir.join("config.toml"),
-            r#"
+        with_isolated_user_config(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let senko_dir = dir.path().join(".senko");
+            std::fs::create_dir_all(&senko_dir).unwrap();
+            std::fs::write(
+                senko_dir.join("config.toml"),
+                r#"
 [hooks.on_task_added.my-hook]
 command = "echo added"
 
 [hooks.on_task_completed.my-hook]
 command = "echo completed"
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        let config = load_config(dir.path(), None).unwrap();
-        assert_eq!(config.hooks.on_task_added.len(), 1);
-        assert_eq!(config.hooks.on_task_added["my-hook"].command, "echo added");
-        assert_eq!(config.hooks.on_task_completed.len(), 1);
-        assert_eq!(config.hooks.on_task_completed["my-hook"].command, "echo completed");
+            let config = load_config(dir.path(), None).unwrap();
+            assert_eq!(config.hooks.on_task_added.len(), 1);
+            assert_eq!(config.hooks.on_task_added["my-hook"].command, "echo added");
+            assert_eq!(config.hooks.on_task_completed.len(), 1);
+            assert_eq!(config.hooks.on_task_completed["my-hook"].command, "echo completed");
+        });
     }
 
     #[test]
     fn load_config_empty_hooks() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let senko_dir = dir.path().join(".senko");
-        std::fs::create_dir_all(&senko_dir).unwrap();
-        std::fs::write(senko_dir.join("config.toml"), "[hooks]\n").unwrap();
+        with_isolated_user_config(|| {
+            let dir = tempfile::tempdir().unwrap();
+            let senko_dir = dir.path().join(".senko");
+            std::fs::create_dir_all(&senko_dir).unwrap();
+            std::fs::write(senko_dir.join("config.toml"), "[hooks]\n").unwrap();
 
-        let config = load_config(dir.path(), None).unwrap();
-        assert!(config.hooks.on_task_added.is_empty());
-        assert!(config.hooks.on_task_completed.is_empty());
+            let config = load_config(dir.path(), None).unwrap();
+            assert!(config.hooks.on_task_added.is_empty());
+            assert!(config.hooks.on_task_completed.is_empty());
+        });
     }
 
     #[tokio::test]
@@ -1340,17 +1366,19 @@ on_task_added = "echo added"
     #[test]
     fn load_config_no_file_with_env_overrides() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
-            std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
-            let tmp = tempfile::tempdir().unwrap();
-            let config = load_config(tmp.path(), None).unwrap();
-            assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
-                None => std::env::remove_var("SENKO_COMPLETION_MODE"),
+        with_isolated_user_config(|| {
+            unsafe {
+                let orig = std::env::var("SENKO_COMPLETION_MODE").ok();
+                std::env::set_var("SENKO_COMPLETION_MODE", "pr_then_complete");
+                let tmp = tempfile::tempdir().unwrap();
+                let config = load_config(tmp.path(), None).unwrap();
+                assert_eq!(config.workflow.completion_mode, CompletionMode::PrThenComplete);
+                match orig {
+                    Some(v) => std::env::set_var("SENKO_COMPLETION_MODE", v),
+                    None => std::env::remove_var("SENKO_COMPLETION_MODE"),
+                }
             }
-        }
+        });
     }
 
     #[test]
@@ -1386,85 +1414,91 @@ auto_merge = false
     #[test]
     fn load_config_env_var_path() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        let config_file = tmp.path().join("env-config.toml");
-        std::fs::write(
-            &config_file,
-            r#"
+        with_isolated_user_config(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            let config_file = tmp.path().join("env-config.toml");
+            std::fs::write(
+                &config_file,
+                r#"
 [workflow]
 auto_merge = false
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", config_file.to_str().unwrap());
-            let config = load_config(tmp.path(), None).unwrap();
-            assert!(!config.workflow.auto_merge);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
+            unsafe {
+                let orig = std::env::var("SENKO_CONFIG").ok();
+                std::env::set_var("SENKO_CONFIG", config_file.to_str().unwrap());
+                let config = load_config(tmp.path(), None).unwrap();
+                assert!(!config.workflow.auto_merge);
+                match orig {
+                    Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                    None => std::env::remove_var("SENKO_CONFIG"),
+                }
             }
-        }
+        });
     }
 
     #[test]
     fn load_config_explicit_overrides_env_var() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
+        with_isolated_user_config(|| {
+            let tmp = tempfile::tempdir().unwrap();
 
-        let env_config = tmp.path().join("env-config.toml");
-        std::fs::write(
-            &env_config,
-            r#"
+            let env_config = tmp.path().join("env-config.toml");
+            std::fs::write(
+                &env_config,
+                r#"
 [workflow]
 auto_merge = true
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        let cli_config = tmp.path().join("cli-config.toml");
-        std::fs::write(
-            &cli_config,
-            r#"
+            let cli_config = tmp.path().join("cli-config.toml");
+            std::fs::write(
+                &cli_config,
+                r#"
 [workflow]
 auto_merge = false
 "#,
-        )
-        .unwrap();
+            )
+            .unwrap();
 
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", env_config.to_str().unwrap());
-            let config = load_config(tmp.path(), Some(&cli_config)).unwrap();
-            // CLI flag should take priority over env var
-            assert!(!config.workflow.auto_merge);
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
+            unsafe {
+                let orig = std::env::var("SENKO_CONFIG").ok();
+                std::env::set_var("SENKO_CONFIG", env_config.to_str().unwrap());
+                let config = load_config(tmp.path(), Some(&cli_config)).unwrap();
+                // CLI flag should take priority over env var
+                assert!(!config.workflow.auto_merge);
+                match orig {
+                    Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                    None => std::env::remove_var("SENKO_CONFIG"),
+                }
             }
-        }
+        });
     }
 
     #[test]
     fn load_config_env_var_not_found() {
         let _lock = ENV_MUTEX.lock().unwrap();
-        let tmp = tempfile::tempdir().unwrap();
-        unsafe {
-            let orig = std::env::var("SENKO_CONFIG").ok();
-            std::env::set_var("SENKO_CONFIG", "/nonexistent/path/config.toml");
-            let result = load_config(tmp.path(), None);
-            assert!(result.is_err());
-            assert!(
-                result.unwrap_err().to_string().contains("config file not found"),
-                "should report missing config file from env var"
-            );
-            match orig {
-                Some(v) => std::env::set_var("SENKO_CONFIG", v),
-                None => std::env::remove_var("SENKO_CONFIG"),
+        with_isolated_user_config(|| {
+            let tmp = tempfile::tempdir().unwrap();
+            unsafe {
+                let orig = std::env::var("SENKO_CONFIG").ok();
+                std::env::set_var("SENKO_CONFIG", "/nonexistent/path/config.toml");
+                let result = load_config(tmp.path(), None);
+                assert!(result.is_err());
+                assert!(
+                    result.unwrap_err().to_string().contains("config file not found"),
+                    "should report missing config file from env var"
+                );
+                match orig {
+                    Some(v) => std::env::set_var("SENKO_CONFIG", v),
+                    None => std::env::remove_var("SENKO_CONFIG"),
+                }
             }
-        }
+        });
     }
 
     #[test]
