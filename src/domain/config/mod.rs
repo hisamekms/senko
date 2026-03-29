@@ -20,6 +20,13 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub web: WebConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct WebConfig {
+    pub host: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -226,6 +233,8 @@ pub struct RawConfig {
     pub auth: RawAuthConfig,
     #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub web: RawWebConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -255,6 +264,11 @@ pub struct RawLogConfig {
 #[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawAuthConfig {
     pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawWebConfig {
+    pub host: Option<String>,
 }
 
 impl RawConfig {
@@ -292,6 +306,9 @@ impl RawConfig {
             storage: StorageConfig {
                 db_path: overlay.storage.db_path.or(self.storage.db_path),
             },
+            web: RawWebConfig {
+                host: overlay.web.host.or(self.web.host),
+            },
         }
     }
 
@@ -323,6 +340,9 @@ impl RawConfig {
                 enabled: self.auth.enabled.unwrap_or(false),
             },
             storage: self.storage,
+            web: WebConfig {
+                host: self.web.host,
+            },
         }
     }
 }

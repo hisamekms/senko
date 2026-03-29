@@ -479,6 +479,9 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 [user]
 # name = "default"  # user name to operate as (overrides with --user flag or SENKO_USER env)
+
+[web]
+# host = "127.0.0.1"  # bind address for `senko web` / `senko serve` (default: 127.0.0.1, env: SENKO_HOST)
 "#;
 
 pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {

@@ -409,6 +409,7 @@ pub async fn serve(
 
     let bind_addr_str = host
         .or_else(|| std::env::var("SENKO_HOST").ok().filter(|v| !v.is_empty()))
+        .or(config.web.host.clone())
         .unwrap_or_else(|| "127.0.0.1".to_string());
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
