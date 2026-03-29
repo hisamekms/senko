@@ -1164,6 +1164,30 @@ command = "echo completed"
         assert_eq!(line["task_id"], 1);
     }
 
+    #[tokio::test]
+    async fn event_fired_logged_for_no_eligible_task() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().to_str().unwrap().to_string();
+
+        let config = Config {
+            log: crate::domain::config::LogConfig {
+                dir: Some(log_dir.clone()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let (_db_dir, backend) = setup_db();
+
+        fire_no_eligible_task_hooks(&config, &backend, 1).await;
+
+        let log_path = dir.path().join("hooks.log");
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["type"], "event_fired");
+        assert_eq!(line["event"], "no_eligible_task");
+    }
+
     #[test]
     fn parse_named_hooks() {
         let toml_str = r#"
