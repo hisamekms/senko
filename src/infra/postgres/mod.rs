@@ -170,32 +170,32 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     .map(|r| r.get("depends_on_task_id"))
     .collect();
 
-    Ok(Task {
+    Ok(Task::new(
         id,
-        project_id: row.get("project_id"),
-        title: row.get("title"),
-        background: row.get("background"),
-        description: row.get("description"),
-        plan: row.get("plan"),
+        row.get("project_id"),
+        row.get("title"),
+        row.get("background"),
+        row.get("description"),
+        row.get("plan"),
         priority,
         status,
-        assignee_session_id: row.get("assignee_session_id"),
-        assignee_user_id: row.get("assignee_user_id"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        started_at: row.get("started_at"),
-        completed_at: row.get("completed_at"),
-        canceled_at: row.get("canceled_at"),
-        cancel_reason: row.get("cancel_reason"),
-        branch: row.get("branch"),
-        pr_url: row.get("pr_url"),
+        row.get("assignee_session_id"),
+        row.get("assignee_user_id"),
+        row.get("created_at"),
+        row.get("updated_at"),
+        row.get("started_at"),
+        row.get("completed_at"),
+        row.get("canceled_at"),
+        row.get("cancel_reason"),
+        row.get("branch"),
+        row.get("pr_url"),
         metadata,
         definition_of_done,
         in_scope,
         out_of_scope,
         tags,
         dependencies,
-    })
+    ))
 }
 
 async fn verify_task_project(pool: &PgPool, project_id: i64, task_id: i64) -> Result<()> {
@@ -226,12 +226,12 @@ impl ProjectRepository for PostgresBackend {
         .bind(&params.description)
         .fetch_one(pool)
         .await?;
-        Ok(Project {
-            id: row.get("id"),
-            name: params.name.clone(),
-            description: params.description.clone(),
-            created_at: row.get("created_at"),
-        })
+        Ok(Project::new(
+            row.get("id"),
+            params.name.clone(),
+            params.description.clone(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_project(&self, id: i64) -> Result<Project> {
@@ -241,12 +241,12 @@ impl ProjectRepository for PostgresBackend {
             .fetch_optional(pool)
             .await?
             .context("project not found")?;
-        Ok(Project {
+        Ok(Project::new(
             id,
-            name: row.get("name"),
-            description: row.get("description"),
-            created_at: row.get("created_at"),
-        })
+            row.get("name"),
+            row.get("description"),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
@@ -257,12 +257,12 @@ impl ProjectRepository for PostgresBackend {
                 .fetch_optional(pool)
                 .await?
                 .context("project not found")?;
-        Ok(Project {
-            id: row.get("id"),
-            name: name.to_string(),
-            description: row.get("description"),
-            created_at: row.get("created_at"),
-        })
+        Ok(Project::new(
+            row.get("id"),
+            name.to_string(),
+            row.get("description"),
+            row.get("created_at"),
+        ))
     }
 
     async fn list_projects(&self) -> Result<Vec<Project>> {
@@ -273,12 +273,12 @@ impl ProjectRepository for PostgresBackend {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|r| Project {
-                id: r.get("id"),
-                name: r.get("name"),
-                description: r.get("description"),
-                created_at: r.get("created_at"),
-            })
+            .map(|r| Project::new(
+                r.get("id"),
+                r.get("name"),
+                r.get("description"),
+                r.get("created_at"),
+            ))
             .collect())
     }
 
@@ -318,13 +318,13 @@ impl ProjectRepository for PostgresBackend {
         .bind(&params.email)
         .fetch_one(pool)
         .await?;
-        Ok(User {
-            id: row.get("id"),
-            username: params.username.clone(),
-            display_name: params.display_name.clone(),
-            email: params.email.clone(),
-            created_at: row.get("created_at"),
-        })
+        Ok(User::new(
+            row.get("id"),
+            params.username.clone(),
+            params.display_name.clone(),
+            params.email.clone(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user(&self, id: i64) -> Result<User> {
@@ -336,13 +336,13 @@ impl ProjectRepository for PostgresBackend {
         .fetch_optional(pool)
         .await?
         .context("user not found")?;
-        Ok(User {
+        Ok(User::new(
             id,
-            username: row.get("username"),
-            display_name: row.get("display_name"),
-            email: row.get("email"),
-            created_at: row.get("created_at"),
-        })
+            row.get("username"),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
@@ -354,13 +354,13 @@ impl ProjectRepository for PostgresBackend {
         .fetch_optional(pool)
         .await?
         .context("user not found")?;
-        Ok(User {
-            id: row.get("id"),
-            username: username.to_string(),
-            display_name: row.get("display_name"),
-            email: row.get("email"),
-            created_at: row.get("created_at"),
-        })
+        Ok(User::new(
+            row.get("id"),
+            username.to_string(),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
     }
 
     async fn list_users(&self) -> Result<Vec<User>> {
@@ -371,13 +371,13 @@ impl ProjectRepository for PostgresBackend {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|r| User {
-                id: r.get("id"),
-                username: r.get("username"),
-                display_name: r.get("display_name"),
-                email: r.get("email"),
-                created_at: r.get("created_at"),
-            })
+            .map(|r| User::new(
+                r.get("id"),
+                r.get("username"),
+                r.get("display_name"),
+                r.get("email"),
+                r.get("created_at"),
+            ))
             .collect())
     }
 
@@ -409,13 +409,13 @@ impl ProjectRepository for PostgresBackend {
         .bind(params.role.to_string())
         .fetch_one(pool)
         .await?;
-        Ok(ProjectMember {
-            id: row.get("id"),
+        Ok(ProjectMember::new(
+            row.get("id"),
             project_id,
-            user_id: params.user_id,
-            role: params.role,
-            created_at: row.get("created_at"),
-        })
+            params.user_id,
+            params.role,
+            row.get("created_at"),
+        ))
     }
 
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
@@ -449,13 +449,13 @@ impl ProjectRepository for PostgresBackend {
                 let role: Role = role_str
                     .parse()
                     .map_err(|e| anyhow::anyhow!("invalid role in database: {e}"))?;
-                Ok(ProjectMember {
-                    id: r.get("id"),
+                Ok(ProjectMember::new(
+                    r.get("id"),
                     project_id,
-                    user_id: r.get("user_id"),
+                    r.get("user_id"),
                     role,
-                    created_at: r.get("created_at"),
-                })
+                    r.get("created_at"),
+                ))
             })
             .collect()
     }
@@ -472,13 +472,13 @@ impl ProjectRepository for PostgresBackend {
         .context("project member not found")?;
         let role_str: String = row.get("role");
         let role: Role = role_str.parse()?;
-        Ok(ProjectMember {
-            id: row.get("id"),
+        Ok(ProjectMember::new(
+            row.get("id"),
             project_id,
             user_id,
             role,
-            created_at: row.get("created_at"),
-        })
+            row.get("created_at"),
+        ))
     }
 
     async fn update_member_role(
@@ -521,14 +521,14 @@ impl ProjectRepository for PostgresBackend {
         .fetch_one(pool)
         .await?;
 
-        Ok(ApiKeyWithSecret {
-            id: row.get("id"),
+        Ok(ApiKeyWithSecret::new(
+            row.get("id"),
             user_id,
-            key: new_key.raw_key.clone(),
-            key_prefix: new_key.key_prefix.clone(),
-            name: name.to_string(),
-            created_at: row.get("created_at"),
-        })
+            new_key.raw_key.clone(),
+            new_key.key_prefix.clone(),
+            name.to_string(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user_by_api_key(&self, key: &str) -> Result<User> {
@@ -562,14 +562,14 @@ impl ProjectRepository for PostgresBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| ApiKey {
-                id: r.get("id"),
-                user_id: r.get("user_id"),
-                key_prefix: r.get("key_prefix"),
-                name: r.get("name"),
-                created_at: r.get("created_at"),
-                last_used_at: r.get("last_used_at"),
-            })
+            .map(|r| ApiKey::new(
+                r.get("id"),
+                r.get("user_id"),
+                r.get("key_prefix"),
+                r.get("name"),
+                r.get("created_at"),
+                r.get("last_used_at"),
+            ))
             .collect())
     }
 

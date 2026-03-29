@@ -319,7 +319,7 @@ impl TaskService {
         // Verify dep exists
         let _ = self.backend.get_task(project_id, dep_id).await?;
         // Domain validation (self-dep check, consumed)
-        let _ = task.add_dependency(dep_id, None)?;
+        let _ = task.add_dependency(dep_id, None).map(|(_, events)| events)?;
 
         // Cycle detection
         let backend = self.backend.clone();
@@ -362,7 +362,7 @@ impl TaskService {
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         // Domain validation (self-dep check, consumed)
-        let _ = task.set_dependencies(dep_ids, None)?;
+        let _ = task.set_dependencies(dep_ids, None).map(|(_, events)| events)?;
 
         // Verify all deps exist
         for &dep_id in dep_ids {

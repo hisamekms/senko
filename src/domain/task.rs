@@ -4,6 +4,20 @@ use std::str::FromStr;
 use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 
+/// Domain event emitted by Task aggregate methods.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TaskEvent {
+    Readied,
+    Started,
+    Completed,
+    Canceled,
+    DependencyAdded { dep_id: i64 },
+    DependencyRemoved { dep_id: i64 },
+    DependenciesSet { dep_ids: Vec<i64> },
+    DodChecked { index: usize },
+    DodUnchecked { index: usize },
+}
+
 /// A task that became eligible (ready) after another task was completed.
 #[derive(Debug, Serialize, Clone)]
 pub struct UnblockedTask {
@@ -510,29 +524,27 @@ impl Task {
 
     // --- Aggregate methods ---
 
-    /// Transition: Draft -> Todo. Returns (new_task, previous_status).
-    pub fn ready(mut self, now: String) -> anyhow::Result<(Task, TaskStatus)> {
-        let prev = self.status;
+    /// Transition: Draft -> Todo.
+    pub fn ready(mut self, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::Todo)?;
         self.updated_at = now;
-        Ok((self, prev))
+        Ok((self, vec![TaskEvent::Readied]))
     }
 
-    /// Transition: Todo -> InProgress. Returns (new_task, previous_status).
-    pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String) -> anyhow::Result<(Task, TaskStatus)> {
-        let prev = self.status;
+    /// Transition: Todo -> InProgress.
+    pub fn start(mut self, assignee_session_id: Option<String>, assignee_user_id: Option<i64>, started_at: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::InProgress)?;
         self.assignee_session_id = assignee_session_id;
         self.assignee_user_id = assignee_user_id;
         self.updated_at = started_at.clone();
         self.started_at = Some(started_at);
-        Ok((self, prev))
+        Ok((self, vec![TaskEvent::Started]))
     }
 
-    /// Transition: InProgress -> Completed. Returns (new_task, previous_status).
+    /// Transition: InProgress -> Completed.
     ///
     /// Validates that all DoD items are checked before allowing completion.
-    pub fn complete(mut self, completed_at: String) -> anyhow::Result<(Task, TaskStatus)> {
+    pub fn complete(mut self, completed_at: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         let unchecked_count = self.definition_of_done.iter().filter(|d| !d.checked).count();
         if unchecked_count > 0 {
             anyhow::bail!(
@@ -541,25 +553,23 @@ impl Task {
                 unchecked_count
             );
         }
-        let prev = self.status;
         self.status = self.status.transition_to(TaskStatus::Completed)?;
         self.updated_at = completed_at.clone();
         self.completed_at = Some(completed_at);
-        Ok((self, prev))
+        Ok((self, vec![TaskEvent::Completed]))
     }
 
-    /// Transition: active -> Canceled. Returns (new_task, previous_status).
-    pub fn cancel(mut self, canceled_at: String, reason: Option<String>) -> anyhow::Result<(Task, TaskStatus)> {
-        let prev = self.status;
+    /// Transition: active -> Canceled.
+    pub fn cancel(mut self, canceled_at: String, reason: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::Canceled)?;
         self.updated_at = canceled_at.clone();
         self.canceled_at = Some(canceled_at);
         self.cancel_reason = reason;
-        Ok((self, prev))
+        Ok((self, vec![TaskEvent::Canceled]))
     }
 
-    /// Add a dependency, validating self-dependency. Idempotent.
-    pub fn add_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<Task> {
+    /// Add a dependency, validating self-dependency. Idempotent (no event if already present).
+    pub fn add_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if self.id == dep_id {
             anyhow::bail!("a task cannot depend on itself");
         }
@@ -568,12 +578,14 @@ impl Task {
             if let Some(now) = now {
                 self.updated_at = now;
             }
+            Ok((self, vec![TaskEvent::DependencyAdded { dep_id }]))
+        } else {
+            Ok((self, vec![]))
         }
-        Ok(self)
     }
 
     /// Remove a dependency, validating existence.
-    pub fn remove_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<Task> {
+    pub fn remove_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         let before = self.dependencies.len();
         self.dependencies.retain(|&d| d != dep_id);
         if self.dependencies.len() == before {
@@ -582,11 +594,11 @@ impl Task {
         if let Some(now) = now {
             self.updated_at = now;
         }
-        Ok(self)
+        Ok((self, vec![TaskEvent::DependencyRemoved { dep_id }]))
     }
 
     /// Replace all dependencies, validating no self-dependency.
-    pub fn set_dependencies(mut self, dep_ids: &[i64], now: Option<String>) -> anyhow::Result<Task> {
+    pub fn set_dependencies(mut self, dep_ids: &[i64], now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         for &dep_id in dep_ids {
             if dep_id == self.id {
                 anyhow::bail!("a task cannot depend on itself");
@@ -596,11 +608,11 @@ impl Task {
         if let Some(now) = now {
             self.updated_at = now;
         }
-        Ok(self)
+        Ok((self, vec![TaskEvent::DependenciesSet { dep_ids: dep_ids.to_vec() }]))
     }
 
     /// Check a DoD item by 1-based index.
-    pub fn check_dod(mut self, index: usize, now: String) -> anyhow::Result<Task> {
+    pub fn check_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             anyhow::bail!(
                 "DoD index {} out of range (task #{} has {} DoD item(s))",
@@ -609,11 +621,11 @@ impl Task {
         }
         self.definition_of_done[index - 1].checked = true;
         self.updated_at = now;
-        Ok(self)
+        Ok((self, vec![TaskEvent::DodChecked { index }]))
     }
 
     /// Uncheck a DoD item by 1-based index.
-    pub fn uncheck_dod(mut self, index: usize, now: String) -> anyhow::Result<Task> {
+    pub fn uncheck_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
             anyhow::bail!(
                 "DoD index {} out of range (task #{} has {} DoD item(s))",
@@ -622,7 +634,7 @@ impl Task {
         }
         self.definition_of_done[index - 1].checked = false;
         self.updated_at = now;
-        Ok(self)
+        Ok((self, vec![TaskEvent::DodUnchecked { index }]))
     }
 }
 
@@ -849,8 +861,8 @@ mod tests {
     #[test]
     fn task_ready_from_draft() {
         let task = make_task(TaskStatus::Draft);
-        let (task, prev) = task.ready("2026-01-02T00:00:00Z".to_string()).unwrap();
-        assert_eq!(prev, TaskStatus::Draft);
+        let (task, events) = task.ready("2026-01-02T00:00:00Z".to_string()).unwrap();
+        assert_eq!(events, vec![TaskEvent::Readied]);
         assert_eq!(task.status(), TaskStatus::Todo);
         assert_eq!(task.updated_at(), "2026-01-02T00:00:00Z");
     }
@@ -864,8 +876,8 @@ mod tests {
     #[test]
     fn task_start_from_todo() {
         let task = make_task(TaskStatus::Todo);
-        let (task, prev) = task.start(Some("session-1".to_string()), None, "2026-01-02T00:00:00Z".to_string()).unwrap();
-        assert_eq!(prev, TaskStatus::Todo);
+        let (task, events) = task.start(Some("session-1".to_string()), None, "2026-01-02T00:00:00Z".to_string()).unwrap();
+        assert_eq!(events, vec![TaskEvent::Started]);
         assert_eq!(task.status(), TaskStatus::InProgress);
         assert_eq!(task.assignee_session_id(), Some("session-1"));
         assert_eq!(task.started_at(), Some("2026-01-02T00:00:00Z"));
@@ -881,8 +893,8 @@ mod tests {
     #[test]
     fn task_complete_from_in_progress() {
         let task = make_task(TaskStatus::InProgress);
-        let (task, prev) = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap();
-        assert_eq!(prev, TaskStatus::InProgress);
+        let (task, events) = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap();
+        assert_eq!(events, vec![TaskEvent::Completed]);
         assert_eq!(task.status(), TaskStatus::Completed);
         assert_eq!(task.completed_at(), Some("2026-01-03T00:00:00Z"));
         assert_eq!(task.updated_at(), "2026-01-03T00:00:00Z");
@@ -904,8 +916,8 @@ mod tests {
     #[test]
     fn task_complete_with_all_dod_checked() {
         let task = make_task_with_dod();
-        let task = task.check_dod(1, "2026-01-03T00:00:00Z".to_string()).unwrap();
-        let task = task.check_dod(2, "2026-01-03T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.check_dod(1, "2026-01-03T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.check_dod(2, "2026-01-03T00:00:00Z".to_string()).unwrap();
         let (task, _) = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap();
         assert_eq!(task.status(), TaskStatus::Completed);
     }
@@ -913,8 +925,8 @@ mod tests {
     #[test]
     fn task_cancel_from_draft() {
         let task = make_task(TaskStatus::Draft);
-        let (task, prev) = task.cancel("2026-01-04T00:00:00Z".to_string(), Some("not needed".to_string())).unwrap();
-        assert_eq!(prev, TaskStatus::Draft);
+        let (task, events) = task.cancel("2026-01-04T00:00:00Z".to_string(), Some("not needed".to_string())).unwrap();
+        assert_eq!(events, vec![TaskEvent::Canceled]);
         assert_eq!(task.status(), TaskStatus::Canceled);
         assert_eq!(task.canceled_at(), Some("2026-01-04T00:00:00Z"));
         assert_eq!(task.cancel_reason(), Some("not needed"));
@@ -924,7 +936,8 @@ mod tests {
     #[test]
     fn task_cancel_from_in_progress() {
         let task = make_task(TaskStatus::InProgress);
-        let (task, _) = task.cancel("2026-01-04T00:00:00Z".to_string(), None).unwrap();
+        let (task, events) = task.cancel("2026-01-04T00:00:00Z".to_string(), None).unwrap();
+        assert_eq!(events, vec![TaskEvent::Canceled]);
         assert_eq!(task.status(), TaskStatus::Canceled);
         assert_eq!(task.updated_at(), "2026-01-04T00:00:00Z");
     }
@@ -940,8 +953,9 @@ mod tests {
     #[test]
     fn task_add_dependency() {
         let task = make_task(TaskStatus::Todo);
-        let task = task.add_dependency(2, None).unwrap();
+        let (task, events) = task.add_dependency(2, None).unwrap();
         assert_eq!(task.dependencies(), &[2]);
+        assert_eq!(events, vec![TaskEvent::DependencyAdded { dep_id: 2 }]);
     }
 
     #[test]
@@ -953,18 +967,21 @@ mod tests {
     #[test]
     fn task_add_dependency_idempotent() {
         let task = make_task(TaskStatus::Todo);
-        let task = task.add_dependency(2, None).unwrap();
-        let task = task.add_dependency(2, None).unwrap();
+        let (task, events) = task.add_dependency(2, None).unwrap();
+        assert_eq!(events.len(), 1);
+        let (task, events) = task.add_dependency(2, None).unwrap();
+        assert!(events.is_empty());
         assert_eq!(task.dependencies(), &[2]);
     }
 
     #[test]
     fn task_remove_dependency() {
         let task = make_task(TaskStatus::Todo);
-        let task = task.add_dependency(2, None).unwrap();
-        let task = task.add_dependency(3, None).unwrap();
-        let task = task.remove_dependency(2, None).unwrap();
+        let (task, _) = task.add_dependency(2, None).unwrap();
+        let (task, _) = task.add_dependency(3, None).unwrap();
+        let (task, events) = task.remove_dependency(2, None).unwrap();
         assert_eq!(task.dependencies(), &[3]);
+        assert_eq!(events, vec![TaskEvent::DependencyRemoved { dep_id: 2 }]);
     }
 
     #[test]
@@ -976,9 +993,10 @@ mod tests {
     #[test]
     fn task_set_dependencies() {
         let task = make_task(TaskStatus::Todo);
-        let task = task.add_dependency(2, None).unwrap();
-        let task = task.set_dependencies(&[3, 4], None).unwrap();
+        let (task, _) = task.add_dependency(2, None).unwrap();
+        let (task, events) = task.set_dependencies(&[3, 4], None).unwrap();
         assert_eq!(task.dependencies(), &[3, 4]);
+        assert_eq!(events, vec![TaskEvent::DependenciesSet { dep_ids: vec![3, 4] }]);
     }
 
     #[test]
@@ -1006,10 +1024,11 @@ mod tests {
     #[test]
     fn task_check_dod() {
         let task = make_task_with_dod();
-        let task = task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
+        let (task, events) = task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
         assert_eq!(task.updated_at(), "2026-01-05T00:00:00Z");
+        assert_eq!(events, vec![TaskEvent::DodChecked { index: 1 }]);
     }
 
     #[test]
@@ -1025,9 +1044,10 @@ mod tests {
             ],
             vec![], vec![], vec![], vec![],
         );
-        let task = task.uncheck_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
+        let (task, events) = task.uncheck_dod(1, "2026-01-05T00:00:00Z".to_string()).unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert_eq!(task.updated_at(), "2026-01-05T00:00:00Z");
+        assert_eq!(events, vec![TaskEvent::DodUnchecked { index: 1 }]);
     }
 
     #[test]
