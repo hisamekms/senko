@@ -127,10 +127,7 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| DodItem {
-        content: r.get("content"),
-        checked: r.get::<i32, _>("checked") != 0,
-    })
+    .map(|r| DodItem::new(r.get("content"), r.get::<i32, _>("checked") != 0))
     .collect();
 
     let in_scope: Vec<String> =
@@ -170,32 +167,32 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     .map(|r| r.get("depends_on_task_id"))
     .collect();
 
-    Ok(Task {
+    Ok(Task::new(
         id,
-        project_id: row.get("project_id"),
-        title: row.get("title"),
-        background: row.get("background"),
-        description: row.get("description"),
-        plan: row.get("plan"),
+        row.get("project_id"),
+        row.get("title"),
+        row.get("background"),
+        row.get("description"),
+        row.get("plan"),
         priority,
         status,
-        assignee_session_id: row.get("assignee_session_id"),
-        assignee_user_id: row.get("assignee_user_id"),
-        created_at: row.get("created_at"),
-        updated_at: row.get("updated_at"),
-        started_at: row.get("started_at"),
-        completed_at: row.get("completed_at"),
-        canceled_at: row.get("canceled_at"),
-        cancel_reason: row.get("cancel_reason"),
-        branch: row.get("branch"),
-        pr_url: row.get("pr_url"),
+        row.get("assignee_session_id"),
+        row.get("assignee_user_id"),
+        row.get("created_at"),
+        row.get("updated_at"),
+        row.get("started_at"),
+        row.get("completed_at"),
+        row.get("canceled_at"),
+        row.get("cancel_reason"),
+        row.get("branch"),
+        row.get("pr_url"),
         metadata,
         definition_of_done,
         in_scope,
         out_of_scope,
         tags,
         dependencies,
-    })
+    ))
 }
 
 async fn verify_task_project(pool: &PgPool, project_id: i64, task_id: i64) -> Result<()> {
@@ -226,12 +223,12 @@ impl ProjectRepository for PostgresBackend {
         .bind(&params.description)
         .fetch_one(pool)
         .await?;
-        Ok(Project {
-            id: row.get("id"),
-            name: params.name.clone(),
-            description: params.description.clone(),
-            created_at: row.get("created_at"),
-        })
+        Ok(Project::new(
+            row.get("id"),
+            params.name.clone(),
+            params.description.clone(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_project(&self, id: i64) -> Result<Project> {
@@ -241,12 +238,12 @@ impl ProjectRepository for PostgresBackend {
             .fetch_optional(pool)
             .await?
             .context("project not found")?;
-        Ok(Project {
+        Ok(Project::new(
             id,
-            name: row.get("name"),
-            description: row.get("description"),
-            created_at: row.get("created_at"),
-        })
+            row.get("name"),
+            row.get("description"),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
@@ -257,12 +254,12 @@ impl ProjectRepository for PostgresBackend {
                 .fetch_optional(pool)
                 .await?
                 .context("project not found")?;
-        Ok(Project {
-            id: row.get("id"),
-            name: name.to_string(),
-            description: row.get("description"),
-            created_at: row.get("created_at"),
-        })
+        Ok(Project::new(
+            row.get("id"),
+            name.to_string(),
+            row.get("description"),
+            row.get("created_at"),
+        ))
     }
 
     async fn list_projects(&self) -> Result<Vec<Project>> {
@@ -273,12 +270,12 @@ impl ProjectRepository for PostgresBackend {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|r| Project {
-                id: r.get("id"),
-                name: r.get("name"),
-                description: r.get("description"),
-                created_at: r.get("created_at"),
-            })
+            .map(|r| Project::new(
+                r.get("id"),
+                r.get("name"),
+                r.get("description"),
+                r.get("created_at"),
+            ))
             .collect())
     }
 
@@ -318,13 +315,13 @@ impl ProjectRepository for PostgresBackend {
         .bind(&params.email)
         .fetch_one(pool)
         .await?;
-        Ok(User {
-            id: row.get("id"),
-            username: params.username.clone(),
-            display_name: params.display_name.clone(),
-            email: params.email.clone(),
-            created_at: row.get("created_at"),
-        })
+        Ok(User::new(
+            row.get("id"),
+            params.username.clone(),
+            params.display_name.clone(),
+            params.email.clone(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user(&self, id: i64) -> Result<User> {
@@ -336,13 +333,13 @@ impl ProjectRepository for PostgresBackend {
         .fetch_optional(pool)
         .await?
         .context("user not found")?;
-        Ok(User {
+        Ok(User::new(
             id,
-            username: row.get("username"),
-            display_name: row.get("display_name"),
-            email: row.get("email"),
-            created_at: row.get("created_at"),
-        })
+            row.get("username"),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
@@ -354,13 +351,13 @@ impl ProjectRepository for PostgresBackend {
         .fetch_optional(pool)
         .await?
         .context("user not found")?;
-        Ok(User {
-            id: row.get("id"),
-            username: username.to_string(),
-            display_name: row.get("display_name"),
-            email: row.get("email"),
-            created_at: row.get("created_at"),
-        })
+        Ok(User::new(
+            row.get("id"),
+            username.to_string(),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
     }
 
     async fn list_users(&self) -> Result<Vec<User>> {
@@ -371,13 +368,13 @@ impl ProjectRepository for PostgresBackend {
                 .await?;
         Ok(rows
             .into_iter()
-            .map(|r| User {
-                id: r.get("id"),
-                username: r.get("username"),
-                display_name: r.get("display_name"),
-                email: r.get("email"),
-                created_at: r.get("created_at"),
-            })
+            .map(|r| User::new(
+                r.get("id"),
+                r.get("username"),
+                r.get("display_name"),
+                r.get("email"),
+                r.get("created_at"),
+            ))
             .collect())
     }
 
@@ -409,13 +406,13 @@ impl ProjectRepository for PostgresBackend {
         .bind(params.role.to_string())
         .fetch_one(pool)
         .await?;
-        Ok(ProjectMember {
-            id: row.get("id"),
+        Ok(ProjectMember::new(
+            row.get("id"),
             project_id,
-            user_id: params.user_id,
-            role: params.role,
-            created_at: row.get("created_at"),
-        })
+            params.user_id,
+            params.role,
+            row.get("created_at"),
+        ))
     }
 
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
@@ -449,13 +446,13 @@ impl ProjectRepository for PostgresBackend {
                 let role: Role = role_str
                     .parse()
                     .map_err(|e| anyhow::anyhow!("invalid role in database: {e}"))?;
-                Ok(ProjectMember {
-                    id: r.get("id"),
+                Ok(ProjectMember::new(
+                    r.get("id"),
                     project_id,
-                    user_id: r.get("user_id"),
+                    r.get("user_id"),
                     role,
-                    created_at: r.get("created_at"),
-                })
+                    r.get("created_at"),
+                ))
             })
             .collect()
     }
@@ -472,13 +469,13 @@ impl ProjectRepository for PostgresBackend {
         .context("project member not found")?;
         let role_str: String = row.get("role");
         let role: Role = role_str.parse()?;
-        Ok(ProjectMember {
-            id: row.get("id"),
+        Ok(ProjectMember::new(
+            row.get("id"),
             project_id,
             user_id,
             role,
-            created_at: row.get("created_at"),
-        })
+            row.get("created_at"),
+        ))
     }
 
     async fn update_member_role(
@@ -521,14 +518,14 @@ impl ProjectRepository for PostgresBackend {
         .fetch_one(pool)
         .await?;
 
-        Ok(ApiKeyWithSecret {
-            id: row.get("id"),
+        Ok(ApiKeyWithSecret::new(
+            row.get("id"),
             user_id,
-            key: new_key.raw_key.clone(),
-            key_prefix: new_key.key_prefix.clone(),
-            name: name.to_string(),
-            created_at: row.get("created_at"),
-        })
+            new_key.raw_key.clone(),
+            new_key.key_prefix.clone(),
+            name.to_string(),
+            row.get("created_at"),
+        ))
     }
 
     async fn get_user_by_api_key(&self, key: &str) -> Result<User> {
@@ -562,14 +559,14 @@ impl ProjectRepository for PostgresBackend {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| ApiKey {
-                id: r.get("id"),
-                user_id: r.get("user_id"),
-                key_prefix: r.get("key_prefix"),
-                name: r.get("name"),
-                created_at: r.get("created_at"),
-                last_used_at: r.get("last_used_at"),
-            })
+            .map(|r| ApiKey::new(
+                r.get("id"),
+                r.get("user_id"),
+                r.get("key_prefix"),
+                r.get("name"),
+                r.get("created_at"),
+                r.get("last_used_at"),
+            ))
             .collect())
     }
 
@@ -1238,8 +1235,7 @@ impl TaskRepository for PostgresBackend {
     async fn save(&self, task: &Task) -> Result<()> {
         let pool = self.pool().await?;
         let metadata_str: Option<String> = task
-            .metadata
-            .as_ref()
+            .metadata()
             .map(|v| serde_json::to_string(v))
             .transpose()
             .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
@@ -1256,38 +1252,38 @@ impl TaskRepository for PostgresBackend {
                 updated_at = $17
             WHERE id = $1",
         )
-        .bind(task.id)
-        .bind(&task.title)
-        .bind(&task.background)
-        .bind(&task.description)
-        .bind(&task.plan)
-        .bind(i32::from(task.priority))
-        .bind(task.status.to_string())
-        .bind(&task.assignee_session_id)
-        .bind(task.assignee_user_id)
-        .bind(&task.started_at)
-        .bind(&task.completed_at)
-        .bind(&task.canceled_at)
-        .bind(&task.cancel_reason)
-        .bind(&task.branch)
-        .bind(&task.pr_url)
+        .bind(task.id())
+        .bind(task.title())
+        .bind(task.background())
+        .bind(task.description())
+        .bind(task.plan())
+        .bind(i32::from(task.priority()))
+        .bind(task.status().to_string())
+        .bind(task.assignee_session_id())
+        .bind(task.assignee_user_id())
+        .bind(task.started_at())
+        .bind(task.completed_at())
+        .bind(task.canceled_at())
+        .bind(task.cancel_reason())
+        .bind(task.branch())
+        .bind(task.pr_url())
         .bind(&metadata_str)
-        .bind(&task.updated_at)
+        .bind(task.updated_at())
         .execute(&mut *tx)
         .await?;
 
         // Sync definition_of_done
         sqlx::query("DELETE FROM task_definition_of_done WHERE task_id = $1")
-            .bind(task.id)
+            .bind(task.id())
             .execute(&mut *tx)
             .await?;
-        for dod in &task.definition_of_done {
-            let checked_val: i32 = if dod.checked { 1 } else { 0 };
+        for dod in task.definition_of_done() {
+            let checked_val: i32 = if dod.checked() { 1 } else { 0 };
             sqlx::query(
                 "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES ($1, $2, $3)",
             )
-            .bind(task.id)
-            .bind(&dod.content)
+            .bind(task.id())
+            .bind(dod.content())
             .bind(checked_val)
             .execute(&mut *tx)
             .await?;
@@ -1412,13 +1408,13 @@ mod tests {
         }
         let backend = setup().await;
         let task = backend.create_task(1, &params("Test task")).await.unwrap();
-        assert_eq!(task.title, "Test task");
-        assert_eq!(task.status, TaskStatus::Draft);
-        assert_eq!(task.priority, Priority::P2);
+        assert_eq!(task.title(), "Test task");
+        assert_eq!(task.status(), TaskStatus::Draft);
+        assert_eq!(task.priority(), Priority::P2);
 
-        let fetched = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(fetched.id, task.id);
-        assert_eq!(fetched.title, "Test task");
+        let fetched = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(fetched.id(), task.id());
+        assert_eq!(fetched.title(), "Test task");
     }
 
     #[tokio::test]
@@ -1428,28 +1424,26 @@ mod tests {
         }
         let backend = setup().await;
 
-        let mut task = backend.create_task(1, &params("Lifecycle test")).await.unwrap();
-        assert_eq!(task.status, TaskStatus::Draft);
+        let task = backend.create_task(1, &params("Lifecycle test")).await.unwrap();
+        assert_eq!(task.status(), TaskStatus::Draft);
 
         // Draft → Todo
-        task.ready().unwrap();
+        let (task, _) = task.ready(now_utc()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task.status, TaskStatus::Todo);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task.status(), TaskStatus::Todo);
 
         // Todo → InProgress
-        let mut task = task;
-        task.start(None, None, now_utc()).unwrap();
+        let (task, _) = task.start(None, None, now_utc()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task.status, TaskStatus::InProgress);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task.status(), TaskStatus::InProgress);
 
         // InProgress → Completed
-        let mut task = task;
-        task.complete(now_utc()).unwrap();
+        let (task, _) = task.complete(now_utc()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task.status, TaskStatus::Completed);
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task.status(), TaskStatus::Completed);
     }
 
     #[tokio::test]
@@ -1464,11 +1458,11 @@ mod tests {
         p.tags = vec!["backend".to_string(), "postgres".to_string()];
 
         let task = backend.create_task(1, &p).await.unwrap();
-        assert_eq!(task.definition_of_done.len(), 2);
-        assert_eq!(task.definition_of_done[0].content, "Write tests");
-        assert!(!task.definition_of_done[0].checked);
-        assert_eq!(task.tags.len(), 2);
-        assert!(task.tags.contains(&"backend".to_string()));
+        assert_eq!(task.definition_of_done().len(), 2);
+        assert_eq!(task.definition_of_done()[0].content(), "Write tests");
+        assert!(!task.definition_of_done()[0].checked());
+        assert_eq!(task.tags().len(), 2);
+        assert!(task.tags().contains(&"backend".to_string()));
     }
 
     #[tokio::test]
@@ -1481,15 +1475,15 @@ mod tests {
         let t1 = backend.create_task(1, &params("Task 1")).await.unwrap();
         let t2 = backend.create_task(1, &params("Task 2")).await.unwrap();
 
-        let t2 = backend.add_dependency(1, t2.id, t1.id).await.unwrap();
-        assert_eq!(t2.dependencies, vec![t1.id]);
+        let t2 = backend.add_dependency(1, t2.id(), t1.id()).await.unwrap();
+        assert_eq!(t2.dependencies(), vec![t1.id()]);
 
-        let deps = backend.list_dependencies(1, t2.id).await.unwrap();
+        let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
         assert_eq!(deps.len(), 1);
-        assert_eq!(deps[0].id, t1.id);
+        assert_eq!(deps[0].id(), t1.id());
 
-        let t2 = backend.remove_dependency(1, t2.id, t1.id).await.unwrap();
-        assert!(t2.dependencies.is_empty());
+        let t2 = backend.remove_dependency(1, t2.id(), t1.id()).await.unwrap();
+        assert!(t2.dependencies().is_empty());
     }
 
     #[tokio::test]
@@ -1499,8 +1493,8 @@ mod tests {
         }
         let backend = setup().await;
 
-        let mut t1 = backend.create_task(1, &params("Todo task")).await.unwrap();
-        t1.ready().unwrap();
+        let t1 = backend.create_task(1, &params("Todo task")).await.unwrap();
+        let (t1, _) = t1.ready(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
         let _t2 = backend.create_task(1, &params("Draft task")).await.unwrap();
@@ -1511,7 +1505,7 @@ mod tests {
         };
         let tasks = backend.list_tasks(1, &filter).await.unwrap();
         assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].title, "Todo task");
+        assert_eq!(tasks[0].title(), "Todo task");
     }
 
     #[tokio::test]
@@ -1525,13 +1519,13 @@ mod tests {
         let next = backend.next_task(1).await.unwrap();
         assert!(next.is_none());
 
-        let mut t1 = backend.create_task(1, &params("High priority")).await.unwrap();
-        t1.ready().unwrap();
+        let t1 = backend.create_task(1, &params("High priority")).await.unwrap();
+        let (t1, _) = t1.ready(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
         let next = backend.next_task(1).await.unwrap();
         assert!(next.is_some());
-        assert_eq!(next.unwrap().title, "High priority");
+        assert_eq!(next.unwrap().title(), "High priority");
     }
 
     #[tokio::test]
@@ -1548,18 +1542,18 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(project.name, "test-project");
+        assert_eq!(project.name(), "test-project");
 
-        let fetched = backend.get_project(project.id).await.unwrap();
-        assert_eq!(fetched.name, "test-project");
+        let fetched = backend.get_project(project.id()).await.unwrap();
+        assert_eq!(fetched.name(), "test-project");
 
         let by_name = backend.get_project_by_name("test-project").await.unwrap();
-        assert_eq!(by_name.id, project.id);
+        assert_eq!(by_name.id(), project.id());
 
         let all = backend.list_projects().await.unwrap();
-        assert!(all.len() >= 2); // default + test-project
+        assert!(all.len() >= 2);
 
-        backend.delete_project(project.id).await.unwrap();
+        backend.delete_project(project.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1577,15 +1571,15 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(user.username, "testuser");
+        assert_eq!(user.username(), "testuser");
 
-        let fetched = backend.get_user(user.id).await.unwrap();
-        assert_eq!(fetched.username, "testuser");
+        let fetched = backend.get_user(user.id()).await.unwrap();
+        assert_eq!(fetched.username(), "testuser");
 
         let by_name = backend.get_user_by_username("testuser").await.unwrap();
-        assert_eq!(by_name.id, user.id);
+        assert_eq!(by_name.id(), user.id());
 
-        backend.delete_user(user.id).await.unwrap();
+        backend.delete_user(user.id()).await.unwrap();
     }
 
     #[tokio::test]
@@ -1599,7 +1593,7 @@ mod tests {
         let updated = backend
             .update_task(
                 1,
-                task.id,
+                task.id(),
                 &UpdateTaskParams {
                     title: Some("Updated".to_string()),
                     description: Some("A description".to_string()),
@@ -1608,8 +1602,8 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(updated.title, "Updated");
-        assert_eq!(updated.description.as_deref(), Some("A description"));
+        assert_eq!(updated.title(), "Updated");
+        assert_eq!(updated.description(), Some("A description"));
     }
 
     #[tokio::test]
@@ -1624,7 +1618,7 @@ mod tests {
         backend
             .update_task_arrays(
                 1,
-                task.id,
+                task.id(),
                 &UpdateTaskArrayParams {
                     add_tags: vec!["tag1".to_string(), "tag2".to_string()],
                     add_definition_of_done: vec!["DoD item".to_string()],
@@ -1634,10 +1628,10 @@ mod tests {
             .await
             .unwrap();
 
-        let task = backend.get_task(1, task.id).await.unwrap();
-        assert_eq!(task.tags.len(), 2);
-        assert_eq!(task.definition_of_done.len(), 1);
-        assert_eq!(task.definition_of_done[0].content, "DoD item");
+        let task = backend.get_task(1, task.id()).await.unwrap();
+        assert_eq!(task.tags().len(), 2);
+        assert_eq!(task.definition_of_done().len(), 1);
+        assert_eq!(task.definition_of_done()[0].content(), "DoD item");
     }
 
     #[tokio::test]
