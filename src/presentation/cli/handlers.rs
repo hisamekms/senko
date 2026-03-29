@@ -548,6 +548,216 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
     Ok(())
 }
 
+// --- Doctor command ---
+
+#[derive(Debug, serde::Serialize)]
+struct DoctorReport {
+    hooks: Vec<HookDiagnostic>,
+    has_errors: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HookDiagnostic {
+    event: String,
+    name: String,
+    command: String,
+    checks: Vec<CheckResult>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct CheckResult {
+    check: String,
+    target: String,
+    status: CheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum CheckStatus {
+    Ok,
+    Error,
+}
+
+/// Expand leading `~` to the user's home directory.
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    } else if path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return home;
+        }
+    }
+    path.to_string()
+}
+
+/// Extract the script path from a hook command string, if it looks like a file path.
+/// Returns None for shell builtins or commands without path separators.
+fn extract_script_path(command: &str) -> Option<String> {
+    let first_token = command.split_whitespace().next()?;
+    let expanded = expand_tilde(first_token);
+    if expanded.contains('/') || expanded.starts_with('.') {
+        Some(expanded)
+    } else {
+        None
+    }
+}
+
+fn run_hook_checks(entry: &crate::domain::config::HookEntry) -> Vec<CheckResult> {
+    let mut checks = Vec::new();
+
+    // Check requires_env
+    for var in &entry.requires_env {
+        let (status, message) = if std::env::var(var).is_ok() {
+            (CheckStatus::Ok, None)
+        } else {
+            (CheckStatus::Error, Some(format!("{var} is not set")))
+        };
+        checks.push(CheckResult {
+            check: "env_var".to_string(),
+            target: var.clone(),
+            status,
+            message,
+        });
+    }
+
+    // Check script existence and permissions
+    if let Some(script_path) = extract_script_path(&entry.command) {
+        let path = std::path::Path::new(&script_path);
+        if path.exists() {
+            checks.push(CheckResult {
+                check: "script_exists".to_string(),
+                target: script_path.clone(),
+                status: CheckStatus::Ok,
+                message: None,
+            });
+
+            // Check execute permission
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let is_executable = path
+                    .metadata()
+                    .map(|m| m.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false);
+                let (status, message) = if is_executable {
+                    (CheckStatus::Ok, None)
+                } else {
+                    (CheckStatus::Error, Some("not executable".to_string()))
+                };
+                checks.push(CheckResult {
+                    check: "script_executable".to_string(),
+                    target: script_path,
+                    status,
+                    message,
+                });
+            }
+        } else {
+            checks.push(CheckResult {
+                check: "script_exists".to_string(),
+                target: script_path,
+                status: CheckStatus::Error,
+                message: Some("file not found".to_string()),
+            });
+        }
+    }
+
+    checks
+}
+
+pub fn cmd_doctor(cli: &Cli) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
+
+    let events = [
+        ("on_task_added", &config.hooks.on_task_added),
+        ("on_task_ready", &config.hooks.on_task_ready),
+        ("on_task_started", &config.hooks.on_task_started),
+        ("on_task_completed", &config.hooks.on_task_completed),
+        ("on_task_canceled", &config.hooks.on_task_canceled),
+        ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
+    ];
+
+    let mut diagnostics = Vec::new();
+    for (event_name, hook_map) in &events {
+        for (name, entry) in *hook_map {
+            if !entry.enabled {
+                continue;
+            }
+            let checks = run_hook_checks(entry);
+            diagnostics.push(HookDiagnostic {
+                event: event_name.to_string(),
+                name: name.clone(),
+                command: entry.command.clone(),
+                checks,
+            });
+        }
+    }
+
+    let has_errors = diagnostics
+        .iter()
+        .any(|d| d.checks.iter().any(|c| c.status == CheckStatus::Error));
+
+    let report = DoctorReport {
+        hooks: diagnostics,
+        has_errors,
+    };
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Text => {
+            println!("Hook diagnostics");
+            println!("================");
+            if report.hooks.is_empty() {
+                println!("\nNo hooks configured.");
+            } else {
+                for diag in &report.hooks {
+                    println!("\n[{}] {}", diag.event, diag.name);
+                    println!("  command: {}", diag.command);
+                    for check in &diag.checks {
+                        let icon = match check.status {
+                            CheckStatus::Ok => "\u{2713}",
+                            CheckStatus::Error => "\u{2717}",
+                        };
+                        let label = match check.check.as_str() {
+                            "env_var" => format!("env {}", check.target),
+                            "script_exists" => format!("script exists: {}", check.target),
+                            "script_executable" => format!("script executable: {}", check.target),
+                            _ => check.target.clone(),
+                        };
+                        match &check.message {
+                            Some(msg) => println!("  [{icon}] {label} — {msg}"),
+                            None => println!("  [{icon}] {label}"),
+                        }
+                    }
+                }
+            }
+            let error_count: usize = report
+                .hooks
+                .iter()
+                .flat_map(|d| &d.checks)
+                .filter(|c| c.status == CheckStatus::Error)
+                .count();
+            if error_count > 0 {
+                println!("\nResult: {error_count} issue(s) found");
+            } else {
+                println!("\nResult: all checks passed");
+            }
+        }
+    }
+
+    if has_errors {
+        std::process::exit(1);
+    }
+
+    Ok(())
+}
+
 pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
     match command {
         HooksCommand::Log {
@@ -1543,5 +1753,146 @@ mod tests {
         let backend = crate::infra::sqlite::SqliteBackend::new(tmp.path(), Some(&tmp.path().join("data.db")), None).unwrap();
         let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
         assert_eq!(task.title(), "json out");
+    }
+
+    // --- Doctor tests ---
+
+    #[test]
+    fn expand_tilde_with_home() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(super::expand_tilde("~/foo/bar.sh"), format!("{home}/foo/bar.sh"));
+    }
+
+    #[test]
+    fn expand_tilde_no_tilde() {
+        assert_eq!(super::expand_tilde("/usr/bin/script.sh"), "/usr/bin/script.sh");
+    }
+
+    #[test]
+    fn extract_script_path_absolute() {
+        assert_eq!(
+            super::extract_script_path("/usr/bin/my-hook.sh arg1 arg2"),
+            Some("/usr/bin/my-hook.sh".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_script_path_tilde() {
+        let home = std::env::var("HOME").unwrap();
+        assert_eq!(
+            super::extract_script_path("~/hooks/run.sh --verbose"),
+            Some(format!("{home}/hooks/run.sh"))
+        );
+    }
+
+    #[test]
+    fn extract_script_path_relative() {
+        assert_eq!(
+            super::extract_script_path("./scripts/hook.sh"),
+            Some("./scripts/hook.sh".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_script_path_bare_command() {
+        // No path separator → not a file path
+        assert_eq!(super::extract_script_path("echo hello"), None);
+    }
+
+    #[test]
+    fn run_hook_checks_env_missing() {
+        let entry = crate::domain::config::HookEntry {
+            command: "echo test".to_string(),
+            enabled: true,
+            requires_env: vec!["SENKO_DOCTOR_TEST_NONEXISTENT_VAR_12345".to_string()],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].check, "env_var");
+        assert_eq!(checks[0].status, super::CheckStatus::Error);
+    }
+
+    #[test]
+    fn run_hook_checks_env_set() {
+        unsafe { std::env::set_var("SENKO_DOCTOR_TEST_VAR_OK", "1"); }
+        let entry = crate::domain::config::HookEntry {
+            command: "echo test".to_string(),
+            enabled: true,
+            requires_env: vec!["SENKO_DOCTOR_TEST_VAR_OK".to_string()],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].status, super::CheckStatus::Ok);
+        unsafe { std::env::remove_var("SENKO_DOCTOR_TEST_VAR_OK"); }
+    }
+
+    #[test]
+    fn run_hook_checks_script_not_found() {
+        let entry = crate::domain::config::HookEntry {
+            command: "/nonexistent/path/hook.sh".to_string(),
+            enabled: true,
+            requires_env: vec![],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].check, "script_exists");
+        assert_eq!(checks[0].status, super::CheckStatus::Error);
+    }
+
+    #[test]
+    fn run_hook_checks_script_exists_and_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh\necho ok").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let entry = crate::domain::config::HookEntry {
+            command: script.to_str().unwrap().to_string(),
+            enabled: true,
+            requires_env: vec![],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].check, "script_exists");
+        assert_eq!(checks[0].status, super::CheckStatus::Ok);
+        assert_eq!(checks[1].check, "script_executable");
+        assert_eq!(checks[1].status, super::CheckStatus::Ok);
+    }
+
+    #[test]
+    fn run_hook_checks_script_not_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let script = tmp.path().join("hook.sh");
+        std::fs::write(&script, "#!/bin/sh\necho ok").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        let entry = crate::domain::config::HookEntry {
+            command: script.to_str().unwrap().to_string(),
+            enabled: true,
+            requires_env: vec![],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].check, "script_exists");
+        assert_eq!(checks[0].status, super::CheckStatus::Ok);
+        assert_eq!(checks[1].check, "script_executable");
+        assert_eq!(checks[1].status, super::CheckStatus::Error);
+    }
+
+    #[test]
+    fn run_hook_checks_bare_command_no_file_checks() {
+        let entry = crate::domain::config::HookEntry {
+            command: "echo hello world".to_string(),
+            enabled: true,
+            requires_env: vec![],
+        };
+        let checks = super::run_hook_checks(&entry);
+        assert!(checks.is_empty());
     }
 }

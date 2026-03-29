@@ -266,6 +266,8 @@ pub enum Command {
         #[command(subcommand)]
         command: HooksCommand,
     },
+    /// Check hook configuration for issues
+    Doctor,
     /// Show or initialize workflow configuration
     #[command(name = "config")]
     Config {
@@ -616,6 +618,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             skill::skill_install(&cli, output_dir.clone(), yes)
         }
         Command::Hooks { ref command } => handlers::cmd_hooks(&cli, command).await,
+        Command::Doctor => handlers::cmd_doctor(&cli),
         Command::Config { init } => handlers::cmd_config(&cli, init),
         Command::Project { ref action } => handlers::cmd_project(&cli, action).await,
         Command::User { ref action } => handlers::cmd_user(&cli, action).await,
