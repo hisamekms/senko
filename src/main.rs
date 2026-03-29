@@ -7,7 +7,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use senko::application::port::HookExecutor;
 use senko::application::{ProjectService, TaskService, UserService};
-use senko::domain::config::{Config, HookMode};
+use senko::domain::config::{Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
 use senko::domain::repository::TaskBackend;
 use senko::domain::task::{
@@ -419,6 +419,8 @@ enum Command {
         #[command(subcommand)]
         command: HooksCommand,
     },
+    /// Check hook configuration for issues
+    Doctor,
     /// Show or initialize workflow configuration
     #[command(name = "config")]
     Config {
@@ -883,6 +885,7 @@ async fn run(cli: Cli) -> Result<()> {
             skill_install(&cli, output_dir.clone(), yes)
         }
         Command::Hooks { ref command } => cmd_hooks(&cli, command).await,
+        Command::Doctor => cmd_doctor(&cli),
         Command::Config { init } => cmd_config(&cli, init),
         Command::Project { ref action } => cmd_project(&cli, action).await,
         Command::User { ref action } => cmd_user(&cli, action).await,
@@ -1571,6 +1574,210 @@ fn hooks_log_follow(log_path: &std::path::Path) -> Result<()> {
             }
         }
     }
+}
+
+// --- Doctor command ---
+
+#[derive(Debug, serde::Serialize)]
+struct DoctorReport {
+    hooks: Vec<HookDiagnostic>,
+    has_errors: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct HookDiagnostic {
+    event: String,
+    name: String,
+    command: String,
+    checks: Vec<DoctorCheckResult>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct DoctorCheckResult {
+    check: String,
+    target: String,
+    status: DoctorCheckStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+enum DoctorCheckStatus {
+    Ok,
+    Error,
+}
+
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = std::env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    } else if path == "~" {
+        if let Ok(home) = std::env::var("HOME") {
+            return home;
+        }
+    }
+    path.to_string()
+}
+
+fn extract_script_path(command: &str) -> Option<String> {
+    let first_token = command.split_whitespace().next()?;
+    let expanded = expand_tilde(first_token);
+    if expanded.contains('/') || expanded.starts_with('.') {
+        Some(expanded)
+    } else {
+        None
+    }
+}
+
+fn run_hook_checks(entry: &HookEntry) -> Vec<DoctorCheckResult> {
+    let mut checks = Vec::new();
+
+    for var in &entry.requires_env {
+        let (status, message) = if std::env::var(var).is_ok() {
+            (DoctorCheckStatus::Ok, None)
+        } else {
+            (DoctorCheckStatus::Error, Some(format!("{var} is not set")))
+        };
+        checks.push(DoctorCheckResult {
+            check: "env_var".to_string(),
+            target: var.clone(),
+            status,
+            message,
+        });
+    }
+
+    if let Some(script_path) = extract_script_path(&entry.command) {
+        let path = std::path::Path::new(&script_path);
+        if path.exists() {
+            checks.push(DoctorCheckResult {
+                check: "script_exists".to_string(),
+                target: script_path.clone(),
+                status: DoctorCheckStatus::Ok,
+                message: None,
+            });
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let is_executable = path
+                    .metadata()
+                    .map(|m| m.permissions().mode() & 0o111 != 0)
+                    .unwrap_or(false);
+                let (status, message) = if is_executable {
+                    (DoctorCheckStatus::Ok, None)
+                } else {
+                    (DoctorCheckStatus::Error, Some("not executable".to_string()))
+                };
+                checks.push(DoctorCheckResult {
+                    check: "script_executable".to_string(),
+                    target: script_path,
+                    status,
+                    message,
+                });
+            }
+        } else {
+            checks.push(DoctorCheckResult {
+                check: "script_exists".to_string(),
+                target: script_path,
+                status: DoctorCheckStatus::Error,
+                message: Some("file not found".to_string()),
+            });
+        }
+    }
+
+    checks
+}
+
+fn cmd_doctor(cli: &Cli) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = hooks::load_config(&root, cli.config.as_deref())?;
+
+    let events = [
+        ("on_task_added", &config.hooks.on_task_added),
+        ("on_task_ready", &config.hooks.on_task_ready),
+        ("on_task_started", &config.hooks.on_task_started),
+        ("on_task_completed", &config.hooks.on_task_completed),
+        ("on_task_canceled", &config.hooks.on_task_canceled),
+        ("on_no_eligible_task", &config.hooks.on_no_eligible_task),
+    ];
+
+    let mut diagnostics = Vec::new();
+    for (event_name, hook_map) in &events {
+        for (name, entry) in *hook_map {
+            if !entry.enabled {
+                continue;
+            }
+            let checks = run_hook_checks(entry);
+            diagnostics.push(HookDiagnostic {
+                event: event_name.to_string(),
+                name: name.clone(),
+                command: entry.command.clone(),
+                checks,
+            });
+        }
+    }
+
+    let has_errors = diagnostics
+        .iter()
+        .any(|d| d.checks.iter().any(|c| c.status == DoctorCheckStatus::Error));
+
+    let report = DoctorReport {
+        hooks: diagnostics,
+        has_errors,
+    };
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        OutputFormat::Text => {
+            println!("Hook diagnostics");
+            println!("================");
+            if report.hooks.is_empty() {
+                println!("\nNo hooks configured.");
+            } else {
+                for diag in &report.hooks {
+                    println!("\n[{}] {}", diag.event, diag.name);
+                    println!("  command: {}", diag.command);
+                    for check in &diag.checks {
+                        let icon = match check.status {
+                            DoctorCheckStatus::Ok => "\u{2713}",
+                            DoctorCheckStatus::Error => "\u{2717}",
+                        };
+                        let label = match check.check.as_str() {
+                            "env_var" => format!("env {}", check.target),
+                            "script_exists" => format!("script exists: {}", check.target),
+                            "script_executable" => format!("script executable: {}", check.target),
+                            _ => check.target.clone(),
+                        };
+                        match &check.message {
+                            Some(msg) => println!("  [{icon}] {label} — {msg}"),
+                            None => println!("  [{icon}] {label}"),
+                        }
+                    }
+                }
+            }
+            let error_count: usize = report
+                .hooks
+                .iter()
+                .flat_map(|d| &d.checks)
+                .filter(|c| c.status == DoctorCheckStatus::Error)
+                .count();
+            if error_count > 0 {
+                println!("\nResult: {error_count} issue(s) found");
+            } else {
+                println!("\nResult: all checks passed");
+            }
+        }
+    }
+
+    if has_errors {
+        std::process::exit(1);
+    }
+
+    Ok(())
 }
 
 fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
