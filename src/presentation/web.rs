@@ -34,6 +34,7 @@ struct ListQuery {
 pub async fn serve(
     project_root: PathBuf,
     port: u16,
+    port_is_explicit: bool,
     host: Option<String>,
     config_path: Option<PathBuf>,
     backend: Arc<dyn TaskBackend>,
@@ -60,18 +61,19 @@ pub async fn serve(
     let bind_ip: std::net::IpAddr = bind_addr_str
         .parse()
         .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;
-    let addr = std::net::SocketAddr::new(bind_ip, port);
+
+    let (listener, actual_port) = super::bind_with_retry(bind_ip, port, port_is_explicit).await?;
+
     if bind_ip.is_unspecified() {
         let device_ip = get_local_ip()
             .map(|ip| ip.to_string())
             .unwrap_or_else(|| "0.0.0.0".to_string());
-        tracing::info!(port, "Listening on http://localhost:{port}");
-        tracing::info!(port, addr = %device_ip, "Listening on http://{device_ip}:{port}");
+        tracing::info!(port = actual_port, "Listening on http://localhost:{actual_port}");
+        tracing::info!(port = actual_port, addr = %device_ip, "Listening on http://{device_ip}:{actual_port}");
     } else {
-        tracing::info!(port, addr = %bind_ip, "Listening on http://{bind_ip}:{port}");
+        tracing::info!(port = actual_port, addr = %bind_ip, "Listening on http://{bind_ip}:{actual_port}");
     }
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
 
     Ok(())

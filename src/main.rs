@@ -873,23 +873,23 @@ async fn run(cli: Cli) -> Result<()> {
         Command::Dod { ref command } => cmd_dod(&cli, command).await,
         Command::Deps { ref command } => cmd_deps(&cli, command).await,
         Command::Web { port, host } => {
-            let effective_port = port
-                .or_else(|| std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok()))
-                .unwrap_or(3141);
+            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
+            let port_is_explicit = port.is_some() || from_env.is_some();
+            let effective_port = port.or(from_env).unwrap_or(3141);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = hooks::load_config(&root, cli.config.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            senko::presentation::web::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            senko::presentation::web::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::Serve { port, host } => {
-            let effective_port = port
-                .or_else(|| std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok()))
-                .unwrap_or(3142);
+            let from_env = std::env::var("SENKO_PORT").ok().and_then(|v| v.parse().ok());
+            let port_is_explicit = port.is_some() || from_env.is_some();
+            let effective_port = port.or(from_env).unwrap_or(3142);
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let config = hooks::load_config(&root, cli.config.as_deref())?;
             let backend: Arc<dyn TaskBackend> = Arc::new(db::SqliteBackend::new(&root, cli.db_path.as_deref(), config.storage.db_path.as_deref())?);
-            senko::presentation::api::serve(root, effective_port, host, cli.config.clone(), backend).await?;
+            senko::presentation::api::serve(root, effective_port, port_is_explicit, host, cli.config.clone(), backend).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {
