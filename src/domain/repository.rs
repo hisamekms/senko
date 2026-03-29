@@ -36,7 +36,7 @@ pub trait TaskRepository: Send + Sync {
     async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _prev) = task.ready(now)?;
+        let (task, _events) = task.ready(now)?;
         self.save(&task).await?;
         Ok(task)
     }
@@ -51,7 +51,7 @@ pub trait TaskRepository: Send + Sync {
     ) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _prev) = task.start(session_id, user_id, now)?;
+        let (task, _events) = task.start(session_id, user_id, now)?;
         self.save(&task).await?;
         Ok(task)
     }
@@ -60,7 +60,7 @@ pub trait TaskRepository: Send + Sync {
     async fn complete_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _prev) = task.complete(now)?;
+        let (task, _events) = task.complete(now)?;
         self.save(&task).await?;
         Ok(task)
     }
@@ -69,7 +69,7 @@ pub trait TaskRepository: Send + Sync {
     async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _prev) = task.cancel(now, reason)?;
+        let (task, _events) = task.cancel(now, reason)?;
         self.save(&task).await?;
         Ok(task)
     }
@@ -78,7 +78,7 @@ pub trait TaskRepository: Send + Sync {
     async fn check_dod(&self, project_id: i64, id: i64, index: usize) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let task = task.check_dod(index, now)?;
+        let (task, _events) = task.check_dod(index, now)?;
         self.save(&task).await?;
         Ok(task)
     }
@@ -87,7 +87,7 @@ pub trait TaskRepository: Send + Sync {
     async fn uncheck_dod(&self, project_id: i64, id: i64, index: usize) -> Result<Task> {
         let task = self.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let task = task.uncheck_dod(index, now)?;
+        let (task, _events) = task.uncheck_dod(index, now)?;
         self.save(&task).await?;
         Ok(task)
     }

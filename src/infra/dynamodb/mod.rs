@@ -1005,7 +1005,7 @@ impl TaskRepository for DynamoDbBackend {
         let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
 
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let task = task.add_dependency(dep_id, Some(now))?;
+        let (task, _events) = task.add_dependency(dep_id, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }
@@ -1014,7 +1014,7 @@ impl TaskRepository for DynamoDbBackend {
         let task = self.get_task(project_id, task_id).await?;
 
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let task = task.remove_dependency(dep_id, Some(now))?;
+        let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }
@@ -1027,7 +1027,7 @@ impl TaskRepository for DynamoDbBackend {
         }
 
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let task = task.set_dependencies(dep_ids, Some(now))?;
+        let (task, _events) = task.set_dependencies(dep_ids, Some(now))?;
         self.put_task(&task).await?;
         Ok(task)
     }

@@ -2608,21 +2608,21 @@ mod tests {
 
         // Check first item via domain method + save
         let task = get_task(&conn, task.id()).unwrap();
-        let task = task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.check_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(!updated.definition_of_done()[1].checked());
 
         // Check second item
-        let task = updated.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated.check_dod(2, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
 
         // Uncheck first item
-        let task = updated.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated.uncheck_dod(1, "2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert!(!updated.definition_of_done()[0].checked());
@@ -3024,19 +3024,19 @@ mod tests {
         assert!(!task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
-        let task = task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.check_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
-        let task = task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.check_dod(2, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(task.definition_of_done()[1].checked());
 
-        let task = task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.uncheck_dod(1, "2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
