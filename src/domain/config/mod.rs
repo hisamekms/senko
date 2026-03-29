@@ -150,6 +150,8 @@ pub struct HookEntry {
     pub command: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default)]
+    pub requires_env: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -183,6 +185,23 @@ impl HooksConfig {
         map.values()
             .filter(|e| e.enabled)
             .map(|e| e.command.as_str())
+            .collect()
+    }
+
+    /// Get enabled entries with their names for a given event name.
+    pub fn entries_for_event(&self, event_name: &str) -> Vec<(&str, &HookEntry)> {
+        let map = match event_name {
+            "task_added" => &self.on_task_added,
+            "task_ready" => &self.on_task_ready,
+            "task_started" => &self.on_task_started,
+            "task_completed" => &self.on_task_completed,
+            "task_canceled" => &self.on_task_canceled,
+            "no_eligible_task" => &self.on_no_eligible_task,
+            _ => return vec![],
+        };
+        map.iter()
+            .filter(|(_, e)| e.enabled)
+            .map(|(name, entry)| (name.as_str(), entry))
             .collect()
     }
 }

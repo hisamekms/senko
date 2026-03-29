@@ -184,7 +184,7 @@ fn apply_env_overrides(mut config: Config) -> Config {
 
     // Hook commands (insert as named "_env" entry)
     fn insert_env_hook(map: &mut std::collections::BTreeMap<String, HookEntry>, val: String) {
-        map.insert("_env".to_string(), HookEntry { command: val, enabled: true });
+        map.insert("_env".to_string(), HookEntry { command: val, enabled: true, requires_env: vec![] });
     }
     if let Ok(val) = std::env::var("SENKO_HOOK_ON_TASK_ADDED") {
         if !val.is_empty() {
@@ -368,6 +368,17 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
     });
 }
 
+/// Check which required environment variables are missing for a hook entry.
+/// Returns a list of missing variable names. Empty list means all required vars are set.
+fn check_required_env(entry: &HookEntry) -> Vec<&str> {
+    entry
+        .requires_env
+        .iter()
+        .filter(|var| std::env::var(var).is_err())
+        .map(|s| s.as_str())
+        .collect()
+}
+
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
 /// Results are logged to `$XDG_STATE_HOME/senko/hooks.log`.
@@ -379,8 +390,8 @@ pub async fn fire_hooks(
     from_status: Option<TaskStatus>,
     unblocked: Option<Vec<UnblockedTask>>,
 ) {
-    let commands = config.hooks.commands_for_event(event_name);
-    if commands.is_empty() {
+    let entries = config.hooks.entries_for_event(event_name);
+    if entries.is_empty() {
         return;
     }
 
@@ -399,15 +410,27 @@ pub async fn fire_hooks(
         }
     };
 
-    for cmd in &commands {
-        execute_hook(cmd, event_name, &json, log_path.as_deref());
+    for (name, entry) in &entries {
+        let missing = check_required_env(entry);
+        if !missing.is_empty() {
+            let msg = format!(
+                "hook skipped ({}): {} — missing env: {}",
+                event_name, name, missing.join(", ")
+            );
+            eprintln!("{msg}");
+            if let Some(ref p) = log_path {
+                log_to_file(p, "WARN", &msg);
+            }
+            continue;
+        }
+        execute_hook(&entry.command, event_name, &json, log_path.as_deref());
     }
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
 pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend, project_id: i64) {
-    let commands = config.hooks.commands_for_event("no_eligible_task");
-    if commands.is_empty() {
+    let entries = config.hooks.entries_for_event("no_eligible_task");
+    if entries.is_empty() {
         return;
     }
 
@@ -435,19 +458,46 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
         }
     };
 
-    for cmd in &commands {
-        execute_hook(cmd, "no_eligible_task", &json, log_path.as_deref());
+    for (name, entry) in &entries {
+        let missing = check_required_env(entry);
+        if !missing.is_empty() {
+            let msg = format!(
+                "hook skipped (no_eligible_task): {} — missing env: {}",
+                name, missing.join(", ")
+            );
+            eprintln!("{msg}");
+            if let Some(ref p) = log_path {
+                log_to_file(p, "WARN", &msg);
+            }
+            continue;
+        }
+        execute_hook(&entry.command, "no_eligible_task", &json, log_path.as_deref());
     }
 }
 
-/// Return the hook commands configured for the given event name.
+/// Return the hook commands configured for the given event name,
+/// filtering out hooks with missing required environment variables.
 /// Returns `None` if the event name is not recognized.
 pub fn get_commands_for_event(config: &Config, event_name: &str) -> Option<Vec<String>> {
-    let commands = config.hooks.commands_for_event(event_name);
     // Return None only for unrecognized event names
     match event_name {
         "task_added" | "task_ready" | "task_started" | "task_completed" | "task_canceled"
-        | "no_eligible_task" => Some(commands.into_iter().map(|s| s.to_string()).collect()),
+        | "no_eligible_task" => {
+            let entries = config.hooks.entries_for_event(event_name);
+            let mut commands = Vec::new();
+            for (name, entry) in &entries {
+                let missing = check_required_env(entry);
+                if !missing.is_empty() {
+                    eprintln!(
+                        "hook skipped ({}): {} — missing env: {}",
+                        event_name, name, missing.join(", ")
+                    );
+                    continue;
+                }
+                commands.push(entry.command.clone());
+            }
+            Some(commands)
+        }
         _ => None,
     }
 }
@@ -729,8 +779,8 @@ command = "echo completed"
         let cmd2 = format!("echo hook2 > {}", marker2.display());
 
         let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("hook1".to_string(), HookEntry { command: cmd1, enabled: true });
-        on_task_added.insert("hook2".to_string(), HookEntry { command: cmd2, enabled: true });
+        on_task_added.insert("hook1".to_string(), HookEntry { command: cmd1, enabled: true, requires_env: vec![] });
+        on_task_added.insert("hook2".to_string(), HookEntry { command: cmd2, enabled: true, requires_env: vec![] });
 
         let config = Config {
             hooks: HooksConfig {
@@ -832,7 +882,7 @@ command = "echo completed"
 
         // Run a hook that exits with non-zero
         let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("fail".to_string(), HookEntry { command: "exit 1".into(), enabled: true });
+        on_task_added.insert("fail".to_string(), HookEntry { command: "exit 1".into(), enabled: true, requires_env: vec![] });
         let config = Config {
             hooks: HooksConfig {
                 on_task_added,
@@ -921,6 +971,204 @@ enabled = false
     }
 
     #[test]
+    fn parse_requires_env_from_toml() {
+        let toml_str = r#"
+[hooks.on_task_ready.my-hook]
+command = "echo ready"
+requires_env = ["SENKO_HOST_PROJECT_DIR", "MY_VAR"]
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let entry = &config.hooks.on_task_ready["my-hook"];
+        assert_eq!(entry.requires_env, vec!["SENKO_HOST_PROJECT_DIR", "MY_VAR"]);
+    }
+
+    #[test]
+    fn parse_requires_env_defaults_to_empty() {
+        let toml_str = r#"
+[hooks.on_task_ready.my-hook]
+command = "echo ready"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let entry = &config.hooks.on_task_ready["my-hook"];
+        assert!(entry.requires_env.is_empty());
+    }
+
+    #[test]
+    fn entries_for_event_returns_enabled_entries() {
+        let toml_str = r#"
+[hooks.on_task_added.hook1]
+command = "echo 1"
+
+[hooks.on_task_added.hook2]
+command = "echo 2"
+enabled = false
+
+[hooks.on_task_added.hook3]
+command = "echo 3"
+"#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let entries = config.hooks.entries_for_event("task_added");
+        assert_eq!(entries.len(), 2);
+        let names: Vec<&str> = entries.iter().map(|(n, _)| *n).collect();
+        assert!(names.contains(&"hook1"));
+        assert!(names.contains(&"hook3"));
+    }
+
+    #[test]
+    fn check_required_env_all_set() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::set_var("SENKO_TEST_REQENV_A", "val");
+        }
+        let entry = HookEntry {
+            command: "echo test".into(),
+            enabled: true,
+            requires_env: vec!["SENKO_TEST_REQENV_A".into()],
+        };
+        let missing = check_required_env(&entry);
+        assert!(missing.is_empty());
+        unsafe {
+            std::env::remove_var("SENKO_TEST_REQENV_A");
+        }
+    }
+
+    #[test]
+    fn check_required_env_missing() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("SENKO_TEST_REQENV_MISSING_1");
+            std::env::remove_var("SENKO_TEST_REQENV_MISSING_2");
+        }
+        let entry = HookEntry {
+            command: "echo test".into(),
+            enabled: true,
+            requires_env: vec![
+                "SENKO_TEST_REQENV_MISSING_1".into(),
+                "SENKO_TEST_REQENV_MISSING_2".into(),
+            ],
+        };
+        let missing = check_required_env(&entry);
+        assert_eq!(missing, vec!["SENKO_TEST_REQENV_MISSING_1", "SENKO_TEST_REQENV_MISSING_2"]);
+    }
+
+    #[test]
+    fn check_required_env_empty_requires() {
+        let entry = HookEntry {
+            command: "echo test".into(),
+            enabled: true,
+            requires_env: vec![],
+        };
+        let missing = check_required_env(&entry);
+        assert!(missing.is_empty());
+    }
+
+    #[test]
+    fn fire_hooks_skips_hook_with_missing_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("SENKO_TEST_FIRE_HOOK_MISSING");
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let log_path = tmp.path().join("hooks.log");
+
+        let mut on_task_added = std::collections::BTreeMap::new();
+        on_task_added.insert(
+            "needs-env".to_string(),
+            HookEntry {
+                command: "echo should-not-run".into(),
+                enabled: true,
+                requires_env: vec!["SENKO_TEST_FIRE_HOOK_MISSING".into()],
+            },
+        );
+
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added,
+                ..Default::default()
+            },
+            log: crate::domain::config::LogConfig {
+                dir: Some(tmp.path().to_str().unwrap().to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let entries = config.hooks.entries_for_event("task_added");
+        assert_eq!(entries.len(), 1);
+
+        // Simulate the env check that fire_hooks performs
+        let (name, entry) = &entries[0];
+        let missing = check_required_env(entry);
+        assert!(!missing.is_empty());
+
+        let msg = format!(
+            "hook skipped (task_added): {} — missing env: {}",
+            name,
+            missing.join(", ")
+        );
+        log_to_file(&log_path, "WARN", &msg);
+
+        let log_content = std::fs::read_to_string(&log_path).unwrap();
+        assert!(log_content.contains("hook skipped (task_added): needs-env"));
+        assert!(log_content.contains("SENKO_TEST_FIRE_HOOK_MISSING"));
+        assert!(log_content.contains("[WARN]"));
+    }
+
+    #[test]
+    fn get_commands_for_event_skips_missing_env() {
+        let _lock = ENV_MUTEX.lock().unwrap();
+        unsafe {
+            std::env::remove_var("SENKO_TEST_GET_CMD_MISSING");
+            std::env::set_var("SENKO_TEST_GET_CMD_PRESENT", "val");
+        }
+
+        let mut on_task_added = std::collections::BTreeMap::new();
+        on_task_added.insert(
+            "needs-env".to_string(),
+            HookEntry {
+                command: "echo skip".into(),
+                enabled: true,
+                requires_env: vec!["SENKO_TEST_GET_CMD_MISSING".into()],
+            },
+        );
+        on_task_added.insert(
+            "has-env".to_string(),
+            HookEntry {
+                command: "echo run".into(),
+                enabled: true,
+                requires_env: vec!["SENKO_TEST_GET_CMD_PRESENT".into()],
+            },
+        );
+        on_task_added.insert(
+            "no-req".to_string(),
+            HookEntry {
+                command: "echo always".into(),
+                enabled: true,
+                requires_env: vec![],
+            },
+        );
+
+        let config = Config {
+            hooks: HooksConfig {
+                on_task_added,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        let commands = get_commands_for_event(&config, "task_added").unwrap();
+        assert_eq!(commands.len(), 2);
+        assert!(commands.contains(&"echo run".to_string()));
+        assert!(commands.contains(&"echo always".to_string()));
+        assert!(!commands.contains(&"echo skip".to_string()));
+
+        unsafe {
+            std::env::remove_var("SENKO_TEST_GET_CMD_PRESENT");
+        }
+    }
+
+    #[test]
     fn legacy_hook_format_rejected() {
         let _lock = ENV_MUTEX.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
@@ -949,7 +1197,7 @@ on_task_added = "echo added"
         let cmd = format!("cat > {}", output_file.display());
 
         let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("capture".to_string(), HookEntry { command: cmd, enabled: true });
+        on_task_added.insert("capture".to_string(), HookEntry { command: cmd, enabled: true, requires_env: vec![] });
         let config = Config {
             hooks: HooksConfig {
                 on_task_added,
@@ -1054,7 +1302,7 @@ on_task_added = "echo added"
             let mut config = Config::default();
             config.hooks.on_task_added.insert(
                 "toml-hook".to_string(),
-                HookEntry { command: "toml-hook".into(), enabled: true },
+                HookEntry { command: "toml-hook".into(), enabled: true, requires_env: vec![] },
             );
             let config = apply_env_overrides(config);
             assert_eq!(config.hooks.on_task_added.len(), 2);
@@ -1309,22 +1557,22 @@ dir = "/var/log/senko"
         let mut base_hooks = HooksConfig::default();
         base_hooks.on_task_added.insert(
             "user-hook".to_string(),
-            HookEntry { command: "user-cmd".into(), enabled: true },
+            HookEntry { command: "user-cmd".into(), enabled: true, requires_env: vec![] },
         );
         base_hooks.on_task_completed.insert(
             "shared".to_string(),
-            HookEntry { command: "user-completed".into(), enabled: true },
+            HookEntry { command: "user-completed".into(), enabled: true, requires_env: vec![] },
         );
 
         let mut overlay_hooks = HooksConfig::default();
         overlay_hooks.on_task_added.insert(
             "project-hook".to_string(),
-            HookEntry { command: "project-cmd".into(), enabled: true },
+            HookEntry { command: "project-cmd".into(), enabled: true, requires_env: vec![] },
         );
         // Override the shared hook
         overlay_hooks.on_task_completed.insert(
             "shared".to_string(),
-            HookEntry { command: "project-completed".into(), enabled: true },
+            HookEntry { command: "project-completed".into(), enabled: true, requires_env: vec![] },
         );
 
         let base = RawConfig { hooks: base_hooks, ..Default::default() };
@@ -1344,13 +1592,13 @@ dir = "/var/log/senko"
         let mut base_hooks = HooksConfig::default();
         base_hooks.on_task_added.insert(
             "notify".to_string(),
-            HookEntry { command: "notify-cmd".into(), enabled: true },
+            HookEntry { command: "notify-cmd".into(), enabled: true, requires_env: vec![] },
         );
 
         let mut overlay_hooks = HooksConfig::default();
         overlay_hooks.on_task_added.insert(
             "notify".to_string(),
-            HookEntry { command: "".into(), enabled: false },
+            HookEntry { command: "".into(), enabled: false, requires_env: vec![] },
         );
 
         let base = RawConfig { hooks: base_hooks, ..Default::default() };
