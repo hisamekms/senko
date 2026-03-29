@@ -178,7 +178,7 @@ run_lf complete "$T1" >/dev/null
 wait_for "completed event" 5 "[ -f '$HOOK_LOG2' ]"
 
 if [ -f "$HOOK_LOG2" ]; then
-  HAS_UNBLOCKED="$(grep '"event":"task_completed"' "$HOOK_LOG2" | head -1 | jq '.unblocked_tasks | length' 2>/dev/null || echo 0)"
+  HAS_UNBLOCKED="$(grep '"event":"task_completed"' "$HOOK_LOG2" | head -1 | jq '.event.unblocked_tasks | length' 2>/dev/null || echo 0)"
   if [ "$HAS_UNBLOCKED" -ge 1 ]; then
     echo "  PASS: unblocked_tasks present in completed event"
     PASS_COUNT=$((PASS_COUNT + 1))
@@ -187,7 +187,7 @@ if [ -f "$HOOK_LOG2" ]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 
-  UNBLOCKED_TITLE="$(grep '"event":"task_completed"' "$HOOK_LOG2" | head -1 | jq -r '.unblocked_tasks[0].title' 2>/dev/null || echo "")"
+  UNBLOCKED_TITLE="$(grep '"event":"task_completed"' "$HOOK_LOG2" | head -1 | jq -r '.event.unblocked_tasks[0].title' 2>/dev/null || echo "")"
   assert_eq "Blocked" "$UNBLOCKED_TITLE" "unblocked task is 'Blocked'"
 else
   echo "  FAIL: hook log not created"

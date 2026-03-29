@@ -45,8 +45,8 @@ wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
 
 if [[ -f "$HOOK_OUTPUT" ]]; then
   HOOK_JSON="$(cat "$HOOK_OUTPUT")"
-  HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event')"
-  HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.task.title')"
+  HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event.event')"
+  HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.event.task.title')"
   assert_eq "task_added" "$HOOK_EVENT" "on_task_added event type"
   assert_eq "Hook Test Task" "$HOOK_TITLE" "on_task_added task title"
 else
@@ -74,8 +74,8 @@ wait_for "completed hook output" 5 "[ -f '$HOOK_OUTPUT' ]"
 
 if [[ -f "$HOOK_OUTPUT" ]]; then
   HOOK_JSON="$(cat "$HOOK_OUTPUT")"
-  HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event')"
-  HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.task.title')"
+  HOOK_EVENT="$(echo "$HOOK_JSON" | jq -r '.event.event')"
+  HOOK_TITLE="$(echo "$HOOK_JSON" | jq -r '.event.task.title')"
   assert_eq "task_completed" "$HOOK_EVENT" "on_task_completed event type"
   assert_eq "Complete Me" "$HOOK_TITLE" "on_task_completed task title"
 else
@@ -106,18 +106,22 @@ wait_for "hook output created" 5 "[ -f '$HOOK_OUTPUT' ]"
 
 if [[ -f "$HOOK_OUTPUT" ]]; then
   HAS_EVENT="$(jq 'has("event")' "$HOOK_OUTPUT")"
-  HAS_TASK="$(jq 'has("task")' "$HOOK_OUTPUT")"
-  TASK_HAS_ID="$(jq '.task | has("id")' "$HOOK_OUTPUT")"
-  TASK_HAS_STATUS="$(jq '.task | has("status")' "$HOOK_OUTPUT")"
-  HAS_STATS="$(jq 'has("stats")' "$HOOK_OUTPUT")"
-  HAS_READY_COUNT="$(jq 'has("ready_count")' "$HOOK_OUTPUT")"
+  HAS_RUNTIME="$(jq 'has("runtime")' "$HOOK_OUTPUT")"
+  HAS_BACKEND="$(jq 'has("backend")' "$HOOK_OUTPUT")"
+  HAS_TASK="$(jq '.event | has("task")' "$HOOK_OUTPUT")"
+  TASK_HAS_ID="$(jq '.event.task | has("id")' "$HOOK_OUTPUT")"
+  TASK_HAS_STATUS="$(jq '.event.task | has("status")' "$HOOK_OUTPUT")"
+  HAS_STATS="$(jq '.event | has("stats")' "$HOOK_OUTPUT")"
+  HAS_READY_COUNT="$(jq '.event | has("ready_count")' "$HOOK_OUTPUT")"
 
   assert_eq "true" "$HAS_EVENT" "JSON has event field"
-  assert_eq "true" "$HAS_TASK" "JSON has task field"
+  assert_eq "true" "$HAS_RUNTIME" "JSON has runtime field"
+  assert_eq "true" "$HAS_BACKEND" "JSON has backend field"
+  assert_eq "true" "$HAS_TASK" "event has task field"
   assert_eq "true" "$TASK_HAS_ID" "task has id field"
   assert_eq "true" "$TASK_HAS_STATUS" "task has status field"
-  assert_eq "true" "$HAS_STATS" "JSON has stats field"
-  assert_eq "true" "$HAS_READY_COUNT" "JSON has ready_count field"
+  assert_eq "true" "$HAS_STATS" "event has stats field"
+  assert_eq "true" "$HAS_READY_COUNT" "event has ready_count field"
 else
   echo "  FAIL: hook output file not created"
   FAIL_COUNT=$((FAIL_COUNT + 1))
