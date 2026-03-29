@@ -37,6 +37,100 @@ pub struct NoEligibleTaskEvent {
     pub ready_count: i64,
 }
 
+/// Maximum bytes of stdout/stderr to retain in log entries.
+const MAX_OUTPUT_BYTES: usize = 4096;
+
+/// Structured JSONL log entry for hook operations.
+#[derive(Debug, Serialize)]
+struct HookLogEntry {
+    timestamp: String,
+    level: String,
+    #[serde(rename = "type")]
+    log_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    event: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    command: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_id: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdout: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stderr: Option<String>,
+}
+
+impl HookLogEntry {
+    fn new(level: &str, log_type: &str) -> Self {
+        Self {
+            timestamp: Utc::now().to_rfc3339(),
+            level: level.to_owned(),
+            log_type: log_type.to_owned(),
+            event_id: None,
+            event: None,
+            hook: None,
+            command: None,
+            task_id: None,
+            message: None,
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+        }
+    }
+
+    fn with_event_id(mut self, v: &str) -> Self {
+        self.event_id = Some(v.to_owned());
+        self
+    }
+
+    fn with_event(mut self, v: &str) -> Self {
+        self.event = Some(v.to_owned());
+        self
+    }
+
+    fn with_hook(mut self, v: &str) -> Self {
+        self.hook = Some(v.to_owned());
+        self
+    }
+
+    fn with_command(mut self, v: &str) -> Self {
+        self.command = Some(v.to_owned());
+        self
+    }
+
+    fn with_task_id(mut self, v: Option<i64>) -> Self {
+        self.task_id = v;
+        self
+    }
+
+    fn with_message(mut self, v: &str) -> Self {
+        self.message = Some(v.to_owned());
+        self
+    }
+
+    fn with_exit_code(mut self, v: Option<i32>) -> Self {
+        self.exit_code = v;
+        self
+    }
+}
+
+/// Truncate byte output to at most `MAX_OUTPUT_BYTES`, keeping the tail.
+fn truncate_output(bytes: &[u8]) -> String {
+    if bytes.len() <= MAX_OUTPUT_BYTES {
+        String::from_utf8_lossy(bytes).into_owned()
+    } else {
+        let start = bytes.len() - MAX_OUTPUT_BYTES;
+        String::from_utf8_lossy(&bytes[start..]).into_owned()
+    }
+}
+
 pub fn load_config(project_root: &Path, explicit_config: Option<&Path>) -> Result<Config> {
     // 1. Load user config (lowest priority layer)
     let user_raw = load_user_config()?;
@@ -191,7 +285,7 @@ pub fn log_file_path() -> Option<PathBuf> {
     log_file_path_with_dir(None)
 }
 
-fn log_to_file(path: &Path, level: &str, message: &str) {
+fn log_to_file(path: &Path, entry: &HookLogEntry) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -200,18 +294,30 @@ fn log_to_file(path: &Path, level: &str, message: &str) {
         .append(true)
         .open(path)
     {
-        // Build the full line in a single buffer so the O_APPEND write is atomic.
-        let ts = Utc::now().to_rfc3339();
-        let line = format!("[{}] [{}] {}\n", ts, level, message);
-        let _ = f.write_all(line.as_bytes());
+        // Build the full JSONL line so the O_APPEND write is atomic.
+        if let Ok(json) = serde_json::to_string(entry) {
+            let mut line = json;
+            line.push('\n');
+            let _ = f.write_all(line.as_bytes());
+        }
     }
 }
 
-fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&Path>) {
+fn execute_hook(
+    command: &str,
+    event_name: &str,
+    event_id: &str,
+    hook_name: &str,
+    task_id: Option<i64>,
+    json: &str,
+    log_path: Option<&Path>,
+) {
     let mut child = match std::process::Command::new("sh")
         .arg("-c")
         .arg(command)
         .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .spawn()
     {
         Ok(c) => c,
@@ -219,7 +325,14 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
             let msg = format!("hook spawn error ({}): {}: {:#}", event_name, command, e);
             eprintln!("{msg}");
             if let Some(p) = log_path {
-                log_to_file(p, "ERROR", &msg);
+                let entry = HookLogEntry::new("ERROR", "hook_error")
+                    .with_event_id(event_id)
+                    .with_event(event_name)
+                    .with_hook(hook_name)
+                    .with_command(command)
+                    .with_task_id(task_id)
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             return;
         }
@@ -229,7 +342,14 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
             let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
             eprintln!("{msg}");
             if let Some(p) = log_path {
-                log_to_file(p, "ERROR", &msg);
+                let entry = HookLogEntry::new("ERROR", "hook_error")
+                    .with_event_id(event_id)
+                    .with_event(event_name)
+                    .with_hook(hook_name)
+                    .with_command(command)
+                    .with_task_id(task_id)
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             return;
         }
@@ -239,27 +359,63 @@ fn execute_hook(command: &str, event_name: &str, json: &str, log_path: Option<&P
     // The CLI returns immediately; the thread outlives the main function
     // but Rust waits for non-daemon threads before process exit.
     let cmd = command.to_owned();
-    let event = event_name.to_owned();
+    let evt = event_name.to_owned();
+    let eid = event_id.to_owned();
+    let hname = hook_name.to_owned();
+    let tid = task_id;
     let log = log_path.map(|p| p.to_owned());
     std::thread::spawn(move || {
-        match child.wait() {
-            Ok(status) if status.success() => {
+        match child.wait_with_output() {
+            Ok(output) if output.status.success() => {
+                // Success: discard stdout/stderr
                 if let Some(p) = log {
-                    log_to_file(&p, "INFO", &format!("hook ok ({}): {} (exit: {})", event, cmd, status));
+                    let entry = HookLogEntry::new("INFO", "hook_ok")
+                        .with_event_id(&eid)
+                        .with_event(&evt)
+                        .with_hook(&hname)
+                        .with_command(&cmd)
+                        .with_task_id(tid)
+                        .with_exit_code(output.status.code());
+                    log_to_file(&p, &entry);
                 }
             }
-            Ok(status) => {
-                let msg = format!("hook failed ({}): {} (exit: {})", event, cmd, status);
+            Ok(output) => {
+                let msg = format!(
+                    "hook failed ({}): {} (exit: {})",
+                    evt,
+                    cmd,
+                    output.status.code().map_or("signal".to_string(), |c| c.to_string())
+                );
                 eprintln!("{msg}");
                 if let Some(p) = log {
-                    log_to_file(&p, "WARN", &msg);
+                    let mut entry = HookLogEntry::new("WARN", "hook_failed")
+                        .with_event_id(&eid)
+                        .with_event(&evt)
+                        .with_hook(&hname)
+                        .with_command(&cmd)
+                        .with_task_id(tid)
+                        .with_exit_code(output.status.code());
+                    if !output.stdout.is_empty() {
+                        entry.stdout = Some(truncate_output(&output.stdout));
+                    }
+                    if !output.stderr.is_empty() {
+                        entry.stderr = Some(truncate_output(&output.stderr));
+                    }
+                    log_to_file(&p, &entry);
                 }
             }
             Err(e) => {
-                let msg = format!("hook wait error ({}): {}: {:#}", event, cmd, e);
+                let msg = format!("hook wait error ({}): {}: {:#}", evt, cmd, e);
                 eprintln!("{msg}");
                 if let Some(p) = log {
-                    log_to_file(&p, "ERROR", &msg);
+                    let entry = HookLogEntry::new("ERROR", "hook_error")
+                        .with_event_id(&eid)
+                        .with_event(&evt)
+                        .with_hook(&hname)
+                        .with_command(&cmd)
+                        .with_task_id(tid)
+                        .with_message(&msg);
+                    log_to_file(&p, &entry);
                 }
             }
         }
@@ -289,10 +445,6 @@ pub async fn fire_hooks(
     unblocked: Option<Vec<UnblockedTask>>,
 ) {
     let entries = config.hooks.entries_for_event(event_name);
-    if entries.is_empty() {
-        return;
-    }
-
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
     let event = build_event(event_name, task, backend, from_status, unblocked).await;
@@ -302,14 +454,32 @@ pub async fn fire_hooks(
             let msg = format!("hook error: failed to serialize event: {e}");
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
-                log_to_file(p, "ERROR", &msg);
+                let entry = HookLogEntry::new("ERROR", "hook_error")
+                    .with_event_id(&event.event_id)
+                    .with_event(event_name)
+                    .with_task_id(Some(task.id()))
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             return;
         }
     };
 
-    for (name, entry) in &entries {
-        let missing = check_required_env(entry);
+    // Always log event_fired, even with 0 hooks
+    if let Some(ref p) = log_path {
+        let entry = HookLogEntry::new("INFO", "event_fired")
+            .with_event_id(&event.event_id)
+            .with_event(event_name)
+            .with_task_id(Some(task.id()));
+        log_to_file(p, &entry);
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    for (name, hook_entry) in &entries {
+        let missing = check_required_env(hook_entry);
         if !missing.is_empty() {
             let msg = format!(
                 "hook skipped ({}): {} — missing env: {}",
@@ -317,21 +487,32 @@ pub async fn fire_hooks(
             );
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
-                log_to_file(p, "WARN", &msg);
+                let entry = HookLogEntry::new("WARN", "hook_skipped")
+                    .with_event_id(&event.event_id)
+                    .with_event(event_name)
+                    .with_hook(name)
+                    .with_command(&hook_entry.command)
+                    .with_task_id(Some(task.id()))
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             continue;
         }
-        execute_hook(&entry.command, event_name, &json, log_path.as_deref());
+        execute_hook(
+            &hook_entry.command,
+            event_name,
+            &event.event_id,
+            name,
+            Some(task.id()),
+            &json,
+            log_path.as_deref(),
+        );
     }
 }
 
 /// Fire hooks for the `no_eligible_task` event (no task object in payload).
 pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBackend, project_id: i64) {
     let entries = config.hooks.entries_for_event("no_eligible_task");
-    if entries.is_empty() {
-        return;
-    }
-
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
     let stats = backend.task_stats(project_id).await.unwrap_or_default();
@@ -350,14 +531,30 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
             let msg = format!("hook error: failed to serialize event: {e}");
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
-                log_to_file(p, "ERROR", &msg);
+                let entry = HookLogEntry::new("ERROR", "hook_error")
+                    .with_event_id(&event.event_id)
+                    .with_event("no_eligible_task")
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             return;
         }
     };
 
-    for (name, entry) in &entries {
-        let missing = check_required_env(entry);
+    // Always log event_fired, even with 0 hooks
+    if let Some(ref p) = log_path {
+        let entry = HookLogEntry::new("INFO", "event_fired")
+            .with_event_id(&event.event_id)
+            .with_event("no_eligible_task");
+        log_to_file(p, &entry);
+    }
+
+    if entries.is_empty() {
+        return;
+    }
+
+    for (name, hook_entry) in &entries {
+        let missing = check_required_env(hook_entry);
         if !missing.is_empty() {
             let msg = format!(
                 "hook skipped (no_eligible_task): {} — missing env: {}",
@@ -365,11 +562,25 @@ pub async fn fire_no_eligible_task_hooks(config: &Config, backend: &dyn TaskBack
             );
             eprintln!("{msg}");
             if let Some(ref p) = log_path {
-                log_to_file(p, "WARN", &msg);
+                let entry = HookLogEntry::new("WARN", "hook_skipped")
+                    .with_event_id(&event.event_id)
+                    .with_event("no_eligible_task")
+                    .with_hook(name)
+                    .with_command(&hook_entry.command)
+                    .with_message(&msg);
+                log_to_file(p, &entry);
             }
             continue;
         }
-        execute_hook(&entry.command, "no_eligible_task", &json, log_path.as_deref());
+        execute_hook(
+            &hook_entry.command,
+            "no_eligible_task",
+            &event.event_id,
+            name,
+            None,
+            &json,
+            log_path.as_deref(),
+        );
     }
 }
 
@@ -795,11 +1006,22 @@ command = "echo completed"
     fn log_to_file_creates_and_appends() {
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("nested").join("hooks.log");
-        log_to_file(&log_path, "INFO", "first message");
-        log_to_file(&log_path, "WARN", "second message");
+        let entry1 = HookLogEntry::new("INFO", "hook_ok")
+            .with_message("first message");
+        let entry2 = HookLogEntry::new("WARN", "hook_failed")
+            .with_message("second message");
+        log_to_file(&log_path, &entry1);
+        log_to_file(&log_path, &entry2);
         let content = std::fs::read_to_string(&log_path).unwrap();
-        assert!(content.contains("[INFO] first message"));
-        assert!(content.contains("[WARN] second message"));
+        let lines: Vec<&str> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+        let j1: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(j1["level"], "INFO");
+        assert_eq!(j1["type"], "hook_ok");
+        assert_eq!(j1["message"], "first message");
+        let j2: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
+        assert_eq!(j2["level"], "WARN");
+        assert_eq!(j2["type"], "hook_failed");
     }
 
     #[tokio::test]
@@ -807,12 +1029,116 @@ command = "echo completed"
         let dir = tempfile::tempdir().unwrap();
         let log_path = dir.path().join("hooks.log");
 
-        // Run a hook that exits with non-zero
-        let mut on_task_added = std::collections::BTreeMap::new();
-        on_task_added.insert("fail".to_string(), HookEntry { command: "exit 1".into(), enabled: true, requires_env: vec![] });
+        let (_db_dir, backend) = setup_db();
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+
+        // Call execute_hook directly with our log path
+        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
+        execute_hook("exit 1", "task_added", "test-event-id", "fail", Some(1), &json, Some(&log_path));
+
+        // Wait for the thread to finish logging
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["level"], "WARN", "should log failure: {content}");
+        assert_eq!(line["type"], "hook_failed", "should be hook_failed type: {content}");
+        assert_eq!(line["event_id"], "test-event-id");
+        assert_eq!(line["hook"], "fail");
+        assert_eq!(line["event"], "task_added");
+        assert!(line["exit_code"].is_number());
+    }
+
+    #[test]
+    fn truncate_output_within_limit() {
+        let data = b"hello";
+        assert_eq!(truncate_output(data), "hello");
+    }
+
+    #[test]
+    fn truncate_output_at_limit() {
+        let data = vec![b'x'; MAX_OUTPUT_BYTES];
+        assert_eq!(truncate_output(&data).len(), MAX_OUTPUT_BYTES);
+    }
+
+    #[test]
+    fn truncate_output_over_limit_keeps_tail() {
+        let data: Vec<u8> = (0..MAX_OUTPUT_BYTES + 100)
+            .map(|i| b'A' + (i % 26) as u8)
+            .collect();
+        let result = truncate_output(&data);
+        assert_eq!(result.as_bytes(), &data[100..]);
+    }
+
+    #[tokio::test]
+    async fn hook_success_discards_stdout_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("hooks.log");
+
+        let (_db_dir, backend) = setup_db();
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+
+        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
+        execute_hook("echo STDOUT_MSG; echo STDERR_MSG >&2; exit 0", "task_added", "eid", "ok-hook", Some(1), &json, Some(&log_path));
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["type"], "hook_ok");
+        assert!(line.get("stdout").is_none() || line["stdout"].is_null(), "stdout should not be in success log");
+        assert!(line.get("stderr").is_none() || line["stderr"].is_null(), "stderr should not be in success log");
+    }
+
+    #[tokio::test]
+    async fn hook_failure_captures_stdout_stderr() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_path = dir.path().join("hooks.log");
+
+        let (_db_dir, backend) = setup_db();
+        let task = Task::new(
+            1, 1, "Test".into(), None, None, None,
+            crate::domain::task::Priority::P2, TaskStatus::Draft,
+            None, None,
+            "2026-01-01T00:00:00Z".into(), "2026-01-01T00:00:00Z".into(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        );
+
+        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
+        execute_hook("echo STDOUT_MSG; echo STDERR_MSG >&2; exit 1", "task_added", "eid", "fail-hook", Some(1), &json, Some(&log_path));
+
+        std::thread::sleep(std::time::Duration::from_millis(300));
+
+        let content = std::fs::read_to_string(&log_path).unwrap();
+        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["type"], "hook_failed");
+        assert_eq!(line["stdout"].as_str().unwrap().trim(), "STDOUT_MSG");
+        assert_eq!(line["stderr"].as_str().unwrap().trim(), "STDERR_MSG");
+    }
+
+    #[tokio::test]
+    async fn event_fired_logged_with_zero_hooks() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().to_str().unwrap().to_string();
+
         let config = Config {
-            hooks: HooksConfig {
-                on_task_added,
+            log: crate::domain::config::LogConfig {
+                dir: Some(log_dir.clone()),
                 ..Default::default()
             },
             ..Default::default()
@@ -828,16 +1154,14 @@ command = "echo completed"
             vec![], vec![], vec![], vec![], vec![],
         );
 
-        // Call execute_hook directly with our log path
-        let json = serde_json::to_string(&build_event("task_added", &task, &backend, None, None).await).unwrap();
-        execute_hook("exit 1", "task_added", &json, Some(&log_path));
+        fire_hooks(&config, "task_added", &task, &backend, None, None).await;
 
-        // Wait for the thread to finish logging
-        std::thread::sleep(std::time::Duration::from_millis(300));
-
+        let log_path = dir.path().join("hooks.log");
         let content = std::fs::read_to_string(&log_path).unwrap();
-        assert!(content.contains("[WARN]"), "should log failure: {content}");
-        assert!(content.contains("hook failed"), "should contain hook failed: {content}");
+        let line: serde_json::Value = serde_json::from_str(content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["type"], "event_fired");
+        assert_eq!(line["event"], "task_added");
+        assert_eq!(line["task_id"], 1);
     }
 
     #[test]
@@ -1034,12 +1358,18 @@ command = "echo 3"
             name,
             missing.join(", ")
         );
-        log_to_file(&log_path, "WARN", &msg);
+        let log_entry = HookLogEntry::new("WARN", "hook_skipped")
+            .with_event("task_added")
+            .with_hook(name)
+            .with_message(&msg);
+        log_to_file(&log_path, &log_entry);
 
         let log_content = std::fs::read_to_string(&log_path).unwrap();
-        assert!(log_content.contains("hook skipped (task_added): needs-env"));
-        assert!(log_content.contains("SENKO_TEST_FIRE_HOOK_MISSING"));
-        assert!(log_content.contains("[WARN]"));
+        let line: serde_json::Value = serde_json::from_str(log_content.lines().next().unwrap()).unwrap();
+        assert_eq!(line["type"], "hook_skipped");
+        assert_eq!(line["level"], "WARN");
+        assert!(line["message"].as_str().unwrap().contains("hook skipped (task_added): needs-env"));
+        assert!(line["message"].as_str().unwrap().contains("SENKO_TEST_FIRE_HOOK_MISSING"));
     }
 
     #[test]

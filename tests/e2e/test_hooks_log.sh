@@ -50,15 +50,15 @@ assert_contains "$LOG_OUTPUT" "task_added" "log contains task_added events"
 # 5. hooks log -n limits output
 echo "[5] hooks log -n 1"
 LOG_N1="$(run_lf hooks log -n 1 2>&1)"
-LINE_COUNT="$(echo "$LOG_N1" | grep -c '\[' || true)"
+LINE_COUNT="$(echo "$LOG_N1" | grep -c '{' || true)"
 assert_eq "1" "$LINE_COUNT" "log -n 1 shows 1 entry"
 
 # 6. hooks log --clear removes entries
 echo "[6] hooks log --clear removes entries"
 run_lf hooks log --clear >/dev/null 2>&1
 LOG_AFTER_CLEAR="$(run_lf hooks log 2>&1)"
-# After clearing, the log should be empty (no bracketed log entries)
-ENTRY_COUNT="$(echo "$LOG_AFTER_CLEAR" | grep -c '^\[' || true)"
+# After clearing, the log should be empty (no JSONL entries)
+ENTRY_COUNT="$(echo "$LOG_AFTER_CLEAR" | grep -c '^{' || true)"
 assert_eq "0" "$ENTRY_COUNT" "log is empty after clear"
 
 test_summary
