@@ -5,3 +5,12 @@ _.file = ".env"
 [tools]
 rust = "latest"
 gh = "latest"
+
+[tasks.build]
+description = "Build senko binary"
+run = "cargo build -q --bin senko"
+
+[tasks.senko]
+description = "Run locally built senko binary"
+depends = ["build"]
+run = "./target/debug/senko"
