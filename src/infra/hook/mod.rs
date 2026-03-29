@@ -989,6 +989,7 @@ command = "echo completed"
     #[tokio::test]
     async fn fire_hooks_executes_multiple_hooks() {
         let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().to_str().unwrap().to_string();
         let marker1 = dir.path().join("hook1.txt");
         let marker2 = dir.path().join("hook2.txt");
         let cmd1 = format!("echo hook1 > {}", marker1.display());
@@ -1001,6 +1002,10 @@ command = "echo completed"
         let config = Config {
             hooks: HooksConfig {
                 on_task_added,
+                ..Default::default()
+            },
+            log: crate::domain::config::LogConfig {
+                dir: Some(log_dir),
                 ..Default::default()
             },
             ..Default::default()
@@ -1026,8 +1031,16 @@ command = "echo completed"
 
     #[tokio::test]
     async fn fire_hooks_noop_when_no_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().to_str().unwrap().to_string();
         let (_db_dir, backend) = setup_db();
-        let config = Config::default();
+        let config = Config {
+            log: crate::domain::config::LogConfig {
+                dir: Some(log_dir),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
         let task = Task::new(
             1, 1, "Test".into(), None, None, None,
             crate::domain::task::Priority::P2, TaskStatus::Draft,
@@ -1627,6 +1640,7 @@ on_task_added = "echo added"
     #[tokio::test]
     async fn hook_receives_json_on_stdin() {
         let dir = tempfile::tempdir().unwrap();
+        let log_dir = dir.path().to_str().unwrap().to_string();
         let output_file = dir.path().join("stdin_capture.json");
         let cmd = format!("cat > {}", output_file.display());
 
@@ -1635,6 +1649,10 @@ on_task_added = "echo added"
         let config = Config {
             hooks: HooksConfig {
                 on_task_added,
+                ..Default::default()
+            },
+            log: crate::domain::config::LogConfig {
+                dir: Some(log_dir),
                 ..Default::default()
             },
             ..Default::default()
