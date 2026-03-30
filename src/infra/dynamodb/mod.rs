@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
@@ -9,6 +9,7 @@ use tokio::sync::OnceCell;
 
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::TaskQueryPort;
+use crate::domain::error::DomainError;
 use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -786,20 +787,36 @@ impl UserRepository for DynamoDbBackend {
 
 #[async_trait]
 impl ApiKeyRepository for DynamoDbBackend {
+    fn supports_api_key_management(&self) -> bool {
+        false
+    }
+
+    fn supports_api_key_auth(&self) -> bool {
+        false
+    }
+
     async fn create_api_key(&self, _user_id: i64, _name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
-        bail!("API key management is not yet supported for DynamoDB backend")
+        Err(DomainError::UnsupportedOperation {
+            operation: "create_api_key".into(),
+        }.into())
     }
 
     async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
-        bail!("API key authentication is not yet supported for DynamoDB backend")
+        Err(DomainError::UnsupportedOperation {
+            operation: "get_user_by_api_key".into(),
+        }.into())
     }
 
     async fn list_api_keys(&self, _user_id: i64) -> Result<Vec<ApiKey>> {
-        bail!("API key management is not yet supported for DynamoDB backend")
+        Err(DomainError::UnsupportedOperation {
+            operation: "list_api_keys".into(),
+        }.into())
     }
 
     async fn delete_api_key(&self, _key_id: i64) -> Result<()> {
-        bail!("API key management is not yet supported for DynamoDB backend")
+        Err(DomainError::UnsupportedOperation {
+            operation: "delete_api_key".into(),
+        }.into())
     }
 }
 

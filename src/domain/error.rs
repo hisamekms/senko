@@ -57,4 +57,8 @@ pub enum DomainError {
 
     #[error("cannot delete project with {count} existing task(s)")]
     CannotDeleteProjectWithTasks { count: i64 },
+
+    // Not Implemented (501)
+    #[error("operation not supported: {operation}")]
+    UnsupportedOperation { operation: String },
 }

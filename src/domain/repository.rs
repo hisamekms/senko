@@ -49,6 +49,16 @@ pub trait UserRepository: Send + Sync {
 
 #[async_trait]
 pub trait ApiKeyRepository: Send + Sync {
+    /// Whether this backend supports API key CRUD (create, list, delete).
+    fn supports_api_key_management(&self) -> bool {
+        true
+    }
+
+    /// Whether this backend supports API key authentication (lookup by hash).
+    fn supports_api_key_auth(&self) -> bool {
+        true
+    }
+
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
     async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User>;
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
