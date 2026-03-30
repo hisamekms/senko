@@ -1,13 +1,9 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 
 use super::project::{CreateProjectParams, Project};
-use super::task::{
-    CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
-};
+use super::task::{CreateTaskParams, Task, UpdateTaskArrayParams, UpdateTaskParams};
 use super::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
     Role, User,
@@ -20,11 +16,6 @@ pub trait TaskRepository: Send + Sync {
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task>;
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()>;
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>>;
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>>;
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>>;
-    async fn ready_count(&self, project_id: i64) -> Result<i64>;
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task>;
     async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task>;
     async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task>;
@@ -122,8 +113,3 @@ pub trait ProjectRepository: Send + Sync {
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
 }
 
-/// Combined trait for backends that implement both TaskRepository and ProjectRepository.
-/// Backends automatically implement TaskBackend via the blanket impl.
-pub trait TaskBackend: TaskRepository + ProjectRepository {}
-
-impl<T: TaskRepository + ProjectRepository> TaskBackend for T {}

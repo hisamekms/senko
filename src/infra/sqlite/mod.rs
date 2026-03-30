@@ -1399,6 +1399,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use crate::domain::config::Config;
+use crate::application::port::TaskQueryPort;
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 
 pub struct SqliteBackend {
@@ -1588,27 +1589,6 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
-        let filter = filter.clone();
-        blocking!(self, |conn: &Connection| list_tasks(conn, project_id, &filter))
-    }
-
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
-        blocking!(self, |conn: &Connection| next_task(conn, project_id))
-    }
-
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
-        blocking!(self, |conn: &Connection| task_stats(conn, project_id))
-    }
-
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
-        blocking!(self, |conn: &Connection| ready_count(conn, project_id))
-    }
-
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
-        blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
-    }
-
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         blocking!(self, |conn: &Connection| {
             verify_task_project(conn, project_id, task_id)?;
@@ -1641,6 +1621,30 @@ impl TaskRepository for SqliteBackend {
     async fn save(&self, task: &Task) -> Result<()> {
         let task = task.clone();
         blocking!(self, |conn: &Connection| save_task(conn, &task))
+    }
+}
+
+#[async_trait]
+impl TaskQueryPort for SqliteBackend {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_tasks(conn, project_id, &filter))
+    }
+
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+        blocking!(self, |conn: &Connection| next_task(conn, project_id))
+    }
+
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+        blocking!(self, |conn: &Connection| task_stats(conn, project_id))
+    }
+
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        blocking!(self, |conn: &Connection| ready_count(conn, project_id))
+    }
+
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
     }
 }
 

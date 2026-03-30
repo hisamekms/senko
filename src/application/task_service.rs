@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Result};
 
-use crate::domain::repository::TaskBackend;
+use crate::application::port::TaskBackend;
 use crate::domain::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
     CreateTaskParams, HookTrigger, ListTasksFilter, Task, TaskEvent, UnblockedTask,

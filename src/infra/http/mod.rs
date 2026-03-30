@@ -4,6 +4,7 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use serde_json::json;
 
+use crate::application::port::TaskQueryPort;
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
@@ -408,72 +409,6 @@ impl TaskRepository for HttpBackend {
         check_success(resp).await
     }
 
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
-        let mut url = self.project_url(project_id, "/tasks");
-        let mut params: Vec<String> = Vec::new();
-
-        for status in &filter.statuses {
-            params.push(format!("status={}", status.to_string().to_lowercase()));
-        }
-        for tag in &filter.tags {
-            params.push(format!("tag={tag}"));
-        }
-        if let Some(dep) = filter.depends_on {
-            params.push(format!("depends_on={dep}"));
-        }
-        if filter.ready {
-            params.push("ready=true".into());
-        }
-
-        if !params.is_empty() {
-            url = format!("{url}?{}", params.join("&"));
-        }
-
-        let resp = self.auth(self.client.get(&url)).send().await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, "/tasks/next"))
-            .json(&json!({})))
-            .send()
-            .await?;
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
-            return Ok(None);
-        }
-        if resp.status().is_success() {
-            Ok(Some(resp.json().await?))
-        } else {
-            bail!("{}", extract_error(resp).await);
-        }
-    }
-
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
-        let resp = self.auth(self
-            .client
-            .get(self.project_url(project_id, "/stats")))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
-        let tasks = self.list_tasks(project_id, &ListTasksFilter {
-            ready: true,
-            ..Default::default()
-        }).await?;
-        Ok(tasks.len() as i64)
-    }
-
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
-        self.list_tasks(project_id, &ListTasksFilter {
-            ready: true,
-            ..Default::default()
-        }).await
-    }
-
     async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
         let resp = self.auth(self
             .client
@@ -593,5 +528,74 @@ impl TaskRepository for HttpBackend {
             .send()
             .await?;
         read_json_or_error(resp).await
+    }
+}
+
+#[async_trait]
+impl TaskQueryPort for HttpBackend {
+    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+        let mut url = self.project_url(project_id, "/tasks");
+        let mut params: Vec<String> = Vec::new();
+
+        for status in &filter.statuses {
+            params.push(format!("status={}", status.to_string().to_lowercase()));
+        }
+        for tag in &filter.tags {
+            params.push(format!("tag={tag}"));
+        }
+        if let Some(dep) = filter.depends_on {
+            params.push(format!("depends_on={dep}"));
+        }
+        if filter.ready {
+            params.push("ready=true".into());
+        }
+
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+
+        let resp = self.auth(self.client.get(&url)).send().await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, "/tasks/next"))
+            .json(&json!({})))
+            .send()
+            .await?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if resp.status().is_success() {
+            Ok(Some(resp.json().await?))
+        } else {
+            bail!("{}", extract_error(resp).await);
+        }
+    }
+
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+        let resp = self.auth(self
+            .client
+            .get(self.project_url(project_id, "/stats")))
+            .send()
+            .await?;
+        read_json_or_error(resp).await
+    }
+
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        let tasks = self.list_tasks(project_id, &ListTasksFilter {
+            ready: true,
+            ..Default::default()
+        }).await?;
+        Ok(tasks.len() as i64)
+    }
+
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        self.list_tasks(project_id, &ListTasksFilter {
+            ready: true,
+            ..Default::default()
+        }).await
     }
 }

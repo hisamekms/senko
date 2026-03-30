@@ -7,6 +7,7 @@ use sqlx::postgres::PgPool;
 use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
+use crate::application::port::TaskQueryPort;
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -916,190 +917,6 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_tasks(
-        &self,
-        project_id: i64,
-        filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
-        let pool = self.pool().await?;
-
-        let mut conditions: Vec<String> = Vec::new();
-        let mut param_idx: i32 = 1;
-
-        // We'll build SQL with numbered params and collect bind values
-        // Since we can't dynamically bind heterogeneous types easily with sqlx,
-        // we build the query string with casted params.
-
-        // Approach: build conditions, then execute with a single query using string interpolation
-        // for param numbers, and bind them sequentially using a query builder.
-
-        // Actually, the cleanest approach: build the WHERE clause and use sqlx::query with raw SQL.
-        // We'll bind all params as strings (since statuses and tags are strings, project_id is i64).
-
-        // Collect all bind values as enum
-        enum BindVal {
-            Int(i64),
-            Str(String),
-        }
-        let mut binds: Vec<BindVal> = Vec::new();
-
-        conditions.push(format!("t.project_id = ${param_idx}"));
-        binds.push(BindVal::Int(project_id));
-        param_idx += 1;
-
-        if !filter.statuses.is_empty() {
-            let placeholders: Vec<String> = filter
-                .statuses
-                .iter()
-                .map(|_| {
-                    let p = format!("${param_idx}");
-                    binds.push(BindVal::Str(String::new())); // placeholder, filled below
-                    param_idx += 1;
-                    p
-                })
-                .collect();
-            // Fix: replace placeholder binds with actual values
-            let base = binds.len() - filter.statuses.len();
-            for (i, s) in filter.statuses.iter().enumerate() {
-                binds[base + i] = BindVal::Str(s.to_string());
-            }
-            conditions.push(format!("t.status IN ({})", placeholders.join(", ")));
-        }
-
-        if !filter.tags.is_empty() {
-            let placeholders: Vec<String> = filter
-                .tags
-                .iter()
-                .map(|_| {
-                    let p = format!("${param_idx}");
-                    binds.push(BindVal::Str(String::new()));
-                    param_idx += 1;
-                    p
-                })
-                .collect();
-            let base = binds.len() - filter.tags.len();
-            for (i, tag) in filter.tags.iter().enumerate() {
-                binds[base + i] = BindVal::Str(tag.clone());
-            }
-            conditions.push(format!(
-                "EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({}))",
-                placeholders.join(", ")
-            ));
-        }
-
-        if let Some(dep_id) = filter.depends_on {
-            conditions.push(format!(
-                "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ${param_idx})"
-            ));
-            binds.push(BindVal::Int(dep_id));
-            #[allow(unused_assignments)]
-            { param_idx += 1; }
-        }
-
-        if filter.ready {
-            conditions.push("t.status = 'todo'".to_string());
-            conditions.push(
-                "NOT EXISTS (SELECT 1 FROM task_dependencies td JOIN tasks dep ON dep.id = td.depends_on_task_id WHERE td.task_id = t.id AND dep.status != 'completed')"
-                    .to_string(),
-            );
-        }
-
-        let where_clause = if conditions.is_empty() {
-            String::new()
-        } else {
-            format!(" WHERE {}", conditions.join(" AND "))
-        };
-
-        let sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
-
-        // Build the query and bind all values
-        let mut query = sqlx::query(&sql);
-        for bind in &binds {
-            match bind {
-                BindVal::Int(v) => query = query.bind(v),
-                BindVal::Str(v) => query = query.bind(v),
-            }
-        }
-
-        let rows = query.fetch_all(pool).await?;
-        let ids: Vec<i64> = rows.iter().map(|r| r.get("id")).collect();
-
-        let mut tasks = Vec::with_capacity(ids.len());
-        for id in ids {
-            tasks.push(get_task_by_id(pool, id).await?);
-        }
-        Ok(tasks)
-    }
-
-    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
-        let pool = self.pool().await?;
-        let row = sqlx::query(
-            "SELECT t.id FROM tasks t
-             WHERE t.project_id = $1
-               AND t.status = 'todo'
-               AND NOT EXISTS (
-                 SELECT 1 FROM task_dependencies td
-                 JOIN tasks dep ON dep.id = td.depends_on_task_id
-                 WHERE td.task_id = t.id AND dep.status != 'completed'
-               )
-             ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
-             LIMIT 1",
-        )
-        .bind(project_id)
-        .fetch_optional(pool)
-        .await?;
-        match row {
-            Some(r) => {
-                let id: i64 = r.get("id");
-                Ok(Some(get_task_by_id(pool, id).await?))
-            }
-            None => Ok(None),
-        }
-    }
-
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
-        let pool = self.pool().await?;
-        let rows = sqlx::query(
-            "SELECT status, COUNT(*) as cnt FROM tasks WHERE project_id = $1 GROUP BY status",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
-        let mut stats = HashMap::new();
-        for row in rows {
-            let status: String = row.get("status");
-            let count: i64 = row.get("cnt");
-            stats.insert(status, count);
-        }
-        Ok(stats)
-    }
-
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
-        let pool = self.pool().await?;
-        let row = sqlx::query(
-            "SELECT COUNT(*) as cnt FROM tasks t
-             WHERE t.project_id = $1
-               AND t.status = 'todo'
-               AND NOT EXISTS (
-                 SELECT 1 FROM task_dependencies td
-                 JOIN tasks dep ON dep.id = td.depends_on_task_id
-                 WHERE td.task_id = t.id AND dep.status != 'completed'
-               )",
-        )
-        .bind(project_id)
-        .fetch_one(pool)
-        .await?;
-        Ok(row.get("cnt"))
-    }
-
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
-        let filter = ListTasksFilter {
-            ready: true,
-            ..Default::default()
-        };
-        self.list_tasks(project_id, &filter).await
-    }
-
     async fn add_dependency(
         &self,
         project_id: i64,
@@ -1291,6 +1108,180 @@ impl TaskRepository for PostgresBackend {
 
         tx.commit().await?;
         Ok(())
+    }
+}
+
+#[async_trait]
+impl TaskQueryPort for PostgresBackend {
+    async fn list_tasks(
+        &self,
+        project_id: i64,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
+        let pool = self.pool().await?;
+
+        let mut conditions: Vec<String> = Vec::new();
+        let mut param_idx: i32 = 1;
+
+        enum BindVal {
+            Int(i64),
+            Str(String),
+        }
+        let mut binds: Vec<BindVal> = Vec::new();
+
+        conditions.push(format!("t.project_id = ${param_idx}"));
+        binds.push(BindVal::Int(project_id));
+        param_idx += 1;
+
+        if !filter.statuses.is_empty() {
+            let placeholders: Vec<String> = filter
+                .statuses
+                .iter()
+                .map(|_| {
+                    let p = format!("${param_idx}");
+                    binds.push(BindVal::Str(String::new()));
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            let base = binds.len() - filter.statuses.len();
+            for (i, s) in filter.statuses.iter().enumerate() {
+                binds[base + i] = BindVal::Str(s.to_string());
+            }
+            conditions.push(format!("t.status IN ({})", placeholders.join(", ")));
+        }
+
+        if !filter.tags.is_empty() {
+            let placeholders: Vec<String> = filter
+                .tags
+                .iter()
+                .map(|_| {
+                    let p = format!("${param_idx}");
+                    binds.push(BindVal::Str(String::new()));
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            let base = binds.len() - filter.tags.len();
+            for (i, tag) in filter.tags.iter().enumerate() {
+                binds[base + i] = BindVal::Str(tag.clone());
+            }
+            conditions.push(format!(
+                "EXISTS (SELECT 1 FROM task_tags tt WHERE tt.task_id = t.id AND tt.tag IN ({}))",
+                placeholders.join(", ")
+            ));
+        }
+
+        if let Some(dep_id) = filter.depends_on {
+            conditions.push(format!(
+                "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ${param_idx})"
+            ));
+            binds.push(BindVal::Int(dep_id));
+            #[allow(unused_assignments)]
+            { param_idx += 1; }
+        }
+
+        if filter.ready {
+            conditions.push("t.status = 'todo'".to_string());
+            conditions.push(
+                "NOT EXISTS (SELECT 1 FROM task_dependencies td JOIN tasks dep ON dep.id = td.depends_on_task_id WHERE td.task_id = t.id AND dep.status != 'completed')"
+                    .to_string(),
+            );
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+
+        let sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
+
+        let mut query = sqlx::query(&sql);
+        for bind in &binds {
+            match bind {
+                BindVal::Int(v) => query = query.bind(v),
+                BindVal::Str(v) => query = query.bind(v),
+            }
+        }
+
+        let rows = query.fetch_all(pool).await?;
+        let ids: Vec<i64> = rows.iter().map(|r| r.get("id")).collect();
+
+        let mut tasks = Vec::with_capacity(ids.len());
+        for id in ids {
+            tasks.push(get_task_by_id(pool, id).await?);
+        }
+        Ok(tasks)
+    }
+
+    async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT t.id FROM tasks t
+             WHERE t.project_id = $1
+               AND t.status = 'todo'
+               AND NOT EXISTS (
+                 SELECT 1 FROM task_dependencies td
+                 JOIN tasks dep ON dep.id = td.depends_on_task_id
+                 WHERE td.task_id = t.id AND dep.status != 'completed'
+               )
+             ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .fetch_optional(pool)
+        .await?;
+        match row {
+            Some(r) => {
+                let id: i64 = r.get("id");
+                Ok(Some(get_task_by_id(pool, id).await?))
+            }
+            None => Ok(None),
+        }
+    }
+
+    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+        let pool = self.pool().await?;
+        let rows = sqlx::query(
+            "SELECT status, COUNT(*) as cnt FROM tasks WHERE project_id = $1 GROUP BY status",
+        )
+        .bind(project_id)
+        .fetch_all(pool)
+        .await?;
+        let mut stats = HashMap::new();
+        for row in rows {
+            let status: String = row.get("status");
+            let count: i64 = row.get("cnt");
+            stats.insert(status, count);
+        }
+        Ok(stats)
+    }
+
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT COUNT(*) as cnt FROM tasks t
+             WHERE t.project_id = $1
+               AND t.status = 'todo'
+               AND NOT EXISTS (
+                 SELECT 1 FROM task_dependencies td
+                 JOIN tasks dep ON dep.id = td.depends_on_task_id
+                 WHERE td.task_id = t.id AND dep.status != 'completed'
+               )",
+        )
+        .bind(project_id)
+        .fetch_one(pool)
+        .await?;
+        Ok(row.get("cnt"))
+    }
+
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+        let filter = ListTasksFilter {
+            ready: true,
+            ..Default::default()
+        };
+        self.list_tasks(project_id, &filter).await
     }
 }
 

@@ -17,7 +17,7 @@ use crate::application::{ProjectService, TaskService, UserService};
 use crate::auth::{
     self, ApiKeyProvider, AuthError, AuthProvider, HasAuth, OptionalAuthUser, Permission,
 };
-use crate::domain::repository::TaskBackend;
+use crate::application::port::TaskBackend;
 use crate::bootstrap;
 use crate::infra::hook as hooks;
 use crate::infra::hook::RuntimeMode;
