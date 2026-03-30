@@ -7,7 +7,7 @@ use chrono::Utc;
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
-    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent,
+    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::has_cycle_async;
@@ -169,9 +169,16 @@ impl TaskService {
         };
 
         let prev_status = task.status();
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.start(session_id, user_id, now)?;
-        self.backend.save(&task).await?;
+
+        // HttpBackend returns already-started tasks; skip start() in that case
+        let task = if task.status() == TaskStatus::InProgress {
+            task
+        } else {
+            let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+            let (task, _events) = task.start(session_id, user_id, now)?;
+            self.backend.save(&task).await?;
+            task
+        };
 
         self.hooks
             .fire(

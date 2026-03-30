@@ -18,7 +18,7 @@ use crate::bootstrap::resolve_backend_info;
 use crate::bootstrap::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
@@ -387,29 +387,6 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
             operations.push(format!("Set assignee_user_id to {}", uid));
         }
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
-    }
-
-    // HttpBackend's next_task() already starts the task atomically,
-    // so we handle the using_http case separately to avoid a redundant start_task call.
-    if using_http {
-        let backend_info = resolve_backend_info(&config, &root);
-        let hook_executor = create_hook_executor(config, using_http, hooks::RuntimeMode::Cli, backend_info, backend.clone());
-        let task = match backend.next_task(project_id).await? {
-            Some(t) => t,
-            None => {
-                hook_executor.fire(&HookTrigger::NoEligibleTask { project_id }, None, None, None).await;
-                anyhow::bail!("no eligible task found");
-            }
-        };
-        let prev_status = task.status();
-        hook_executor
-            .fire(&HookTrigger::Task(TaskEvent::Started), Some(&task), Some(prev_status), None)
-            .await;
-        match cli.output {
-            OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
-            OutputFormat::Text => println!("Started task #{}: {}", task.id(), task.title()),
-        }
-        return Ok(());
     }
 
     let task_service = create_task_service(backend, &config, using_http, &root);
