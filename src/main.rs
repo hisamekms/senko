@@ -71,14 +71,9 @@ fn create_backend(
     }
 
     // 4. Default: SqliteBackend
-    Ok((
-        Arc::new(db::SqliteBackend::new(
-            project_root,
-            None,
-            config.storage.db_path.as_deref(),
-        )?),
-        false,
-    ))
+    let sqlite = db::SqliteBackend::new(project_root, None, config.storage.db_path.as_deref())?;
+    sqlite.sync_config_defaults(config)?;
+    Ok((Arc::new(sqlite), false))
 }
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {

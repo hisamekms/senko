@@ -1374,12 +1374,31 @@ fn query_i64_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<i64>
     Ok(items)
 }
 
+// --- Default record sync ---
+
+fn update_project_name(conn: &Connection, id: i64, name: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE projects SET name = ?1 WHERE id = ?2",
+        params![name, id],
+    )?;
+    Ok(())
+}
+
+fn update_user_username(conn: &Connection, id: i64, username: &str) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET username = ?1 WHERE id = ?2",
+        params![username, id],
+    )?;
+    Ok(())
+}
+
 // --- SqliteBackend implementation ---
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
+use crate::domain::config::Config;
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 
 pub struct SqliteBackend {
@@ -1407,6 +1426,25 @@ impl SqliteBackend {
         Ok(Self {
             conn: Arc::new(std::sync::Mutex::new(conn)),
         })
+    }
+
+    /// Sync config.toml project/user names to the id=1 default records.
+    /// Called once at backend creation time for SQLite single-mode usage.
+    pub fn sync_config_defaults(&self, config: &Config) -> Result<()> {
+        let conn = self.conn.lock().map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
+        if let Some(ref name) = config.project.name {
+            update_project_name(&conn, 1, name)
+                .with_context(|| format!(
+                    "failed to sync project name '{name}' to default project (id=1): name may already be used by another project"
+                ))?;
+        }
+        if let Some(ref name) = config.user.name {
+            update_user_username(&conn, 1, name)
+                .with_context(|| format!(
+                    "failed to sync user name '{name}' to default user (id=1): username may already be used by another user"
+                ))?;
+        }
+        Ok(())
     }
 }
 
@@ -3035,5 +3073,61 @@ mod tests {
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert!(task.definition_of_done()[1].checked());
+    }
+
+    #[tokio::test]
+    async fn test_sync_config_defaults_project_name() {
+        let backend = SqliteBackend::new_in_memory().unwrap();
+        let project = backend.get_project(1).await.unwrap();
+        assert_eq!(project.name(), "default");
+
+        let mut config = Config::default();
+        config.project.name = Some("my-project".to_string());
+        backend.sync_config_defaults(&config).unwrap();
+
+        let project = backend.get_project(1).await.unwrap();
+        assert_eq!(project.name(), "my-project");
+    }
+
+    #[tokio::test]
+    async fn test_sync_config_defaults_user_name() {
+        let backend = SqliteBackend::new_in_memory().unwrap();
+        let user = backend.get_user(1).await.unwrap();
+        assert_eq!(user.username(), "default");
+
+        let mut config = Config::default();
+        config.user.name = Some("alice".to_string());
+        backend.sync_config_defaults(&config).unwrap();
+
+        let user = backend.get_user(1).await.unwrap();
+        assert_eq!(user.username(), "alice");
+    }
+
+    #[tokio::test]
+    async fn test_sync_config_defaults_none_keeps_default() {
+        let backend = SqliteBackend::new_in_memory().unwrap();
+        let config = Config::default();
+        backend.sync_config_defaults(&config).unwrap();
+
+        let project = backend.get_project(1).await.unwrap();
+        assert_eq!(project.name(), "default");
+        let user = backend.get_user(1).await.unwrap();
+        assert_eq!(user.username(), "default");
+    }
+
+    #[tokio::test]
+    async fn test_sync_config_defaults_unique_conflict() {
+        let backend = SqliteBackend::new_in_memory().unwrap();
+        // Create a second project with name "taken"
+        use crate::domain::project::CreateProjectParams;
+        backend.create_project(&CreateProjectParams {
+            name: "taken".to_string(),
+            description: None,
+        }).await.unwrap();
+
+        let mut config = Config::default();
+        config.project.name = Some("taken".to_string());
+        let result = backend.sync_config_defaults(&config);
+        assert!(result.is_err());
     }
 }

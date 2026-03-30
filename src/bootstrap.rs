@@ -62,14 +62,13 @@ pub fn create_backend(
     }
 
     // 4. Default: SqliteBackend
-    Ok((
-        Arc::new(crate::infra::sqlite::SqliteBackend::new(
-            project_root,
-            None,
-            config.storage.db_path.as_deref(),
-        )?),
-        false,
-    ))
+    let sqlite = crate::infra::sqlite::SqliteBackend::new(
+        project_root,
+        None,
+        config.storage.db_path.as_deref(),
+    )?;
+    sqlite.sync_config_defaults(config)?;
+    Ok((Arc::new(sqlite), false))
 }
 
 pub fn should_fire_client_hooks(config: &Config, using_http: bool) -> bool {
