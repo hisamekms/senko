@@ -92,7 +92,7 @@ assert_json_field "$STARTED" '.assignee_session_id' "test-session" "session_id s
 echo ""
 echo "=== Complete task (no DoD) ==="
 COMPLETED=$(api_json -X POST "$PBASE/tasks/$TASK1_ID/complete" -d '{}')
-assert_json_field "$COMPLETED" '.status' "completed" "complete transitions to completed"
+assert_json_field "$COMPLETED" '.task.status' "completed" "complete transitions to completed"
 
 echo ""
 echo "=== List filtered by status ==="
@@ -129,7 +129,7 @@ echo "=== Check all DoD and complete ==="
 api_json -X POST "$PBASE/tasks/$TASK2_ID/dod/1/check" -d '{}' >/dev/null
 api_json -X POST "$PBASE/tasks/$TASK2_ID/dod/2/check" -d '{}' >/dev/null
 COMPLETED2=$(api_json -X POST "$PBASE/tasks/$TASK2_ID/complete" -d '{}')
-assert_json_field "$COMPLETED2" '.status' "completed" "complete after checking all DoD"
+assert_json_field "$COMPLETED2" '.task.status' "completed" "complete after checking all DoD"
 
 echo ""
 echo "=== Create tasks for deps test ==="
