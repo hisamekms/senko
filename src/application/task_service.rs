@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
+use chrono::Utc;
 
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
@@ -104,8 +105,11 @@ impl TaskService {
     }
 
     pub async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
-        let task = self.backend.ready_task(project_id, id).await?;
+        let task = self.backend.get_task(project_id, id).await?;
+        let prev_status = task.status();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.ready(now)?;
+        self.backend.save(&task).await?;
 
         self.hooks
             .fire(
@@ -126,8 +130,11 @@ impl TaskService {
         session_id: Option<String>,
         user_id: Option<i64>,
     ) -> Result<Task> {
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
-        let task = self.backend.start_task(project_id, id, session_id, user_id).await?;
+        let task = self.backend.get_task(project_id, id).await?;
+        let prev_status = task.status();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.start(session_id, user_id, now)?;
+        self.backend.save(&task).await?;
 
         self.hooks
             .fire(
@@ -163,7 +170,9 @@ impl TaskService {
         };
 
         let prev_status = task.status();
-        let task = self.backend.start_task(project_id, task.id(), session_id, user_id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.start(session_id, user_id, now)?;
+        self.backend.save(&task).await?;
 
         self.hooks
             .fire(
@@ -210,7 +219,9 @@ impl TaskService {
             .collect();
 
         let prev_status = task.status();
-        let task = self.backend.complete_task(project_id, id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.complete(now)?;
+        self.backend.save(&task).await?;
 
         // Compute unblocked tasks
         let curr_ready = self.backend.list_ready_tasks(project_id).await.unwrap_or_default();
@@ -239,8 +250,11 @@ impl TaskService {
         id: i64,
         reason: Option<String>,
     ) -> Result<Task> {
-        let prev_status = self.backend.get_task(project_id, id).await?.status();
-        let task = self.backend.cancel_task(project_id, id, reason).await?;
+        let task = self.backend.get_task(project_id, id).await?;
+        let prev_status = task.status();
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.cancel(now, reason)?;
+        self.backend.save(&task).await?;
 
         self.hooks
             .fire(
@@ -303,7 +317,11 @@ impl TaskService {
         task_id: i64,
         index: usize,
     ) -> Result<Task> {
-        self.backend.check_dod(project_id, task_id, index).await
+        let task = self.backend.get_task(project_id, task_id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.check_dod(index, now)?;
+        self.backend.save(&task).await?;
+        Ok(task)
     }
 
     pub async fn uncheck_dod(
@@ -312,7 +330,11 @@ impl TaskService {
         task_id: i64,
         index: usize,
     ) -> Result<Task> {
-        self.backend.uncheck_dod(project_id, task_id, index).await
+        let task = self.backend.get_task(project_id, task_id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.uncheck_dod(index, now)?;
+        self.backend.save(&task).await?;
+        Ok(task)
     }
 
     pub async fn add_dependency(
