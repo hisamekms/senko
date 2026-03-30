@@ -47,6 +47,19 @@ assert_eq "sqlite" "$DRY_BACKEND_TYPE" "dry-run backend type"
 HAS_DB_PATH="$(echo "$DRY_OUTPUT" | jq '.backend | has("db_file_path")')"
 assert_eq "true" "$HAS_DB_PATH" "dry-run backend has db_file_path"
 
+# 1c. dry-run: envelope includes project and user
+echo "[1c] dry-run includes project and user"
+DRY_PROJECT_ID="$(echo "$DRY_OUTPUT" | jq '.project.id')"
+DRY_PROJECT_NAME="$(echo "$DRY_OUTPUT" | jq -r '.project.name')"
+DRY_USER_ID="$(echo "$DRY_OUTPUT" | jq '.user.id')"
+DRY_USER_NAME="$(echo "$DRY_OUTPUT" | jq -r '.user.name')"
+assert_eq "1" "$DRY_PROJECT_ID" "dry-run project id"
+assert_eq "1" "$DRY_USER_ID" "dry-run user id"
+HAS_PROJECT="$(echo "$DRY_OUTPUT" | jq 'has("project")')"
+assert_eq "true" "$HAS_PROJECT" "dry-run has project field"
+HAS_USER="$(echo "$DRY_OUTPUT" | jq 'has("user")')"
+assert_eq "true" "$HAS_USER" "dry-run has user field"
+
 # 2. dry-run without task_id: should use sample task
 echo "[2] dry-run without task_id uses sample task"
 SAMPLE_OUTPUT="$(run_lf hooks test task_added --dry-run 2>/dev/null)"
@@ -100,5 +113,9 @@ NO_TASK_RUNTIME="$(echo "$NO_TASK_OUTPUT" | jq -r '.runtime')"
 NO_TASK_EVENT="$(echo "$NO_TASK_OUTPUT" | jq -r '.event.event')"
 assert_eq "cli" "$NO_TASK_RUNTIME" "no_eligible_task runtime"
 assert_eq "no_eligible_task" "$NO_TASK_EVENT" "no_eligible_task event name"
+NO_TASK_PROJECT_ID="$(echo "$NO_TASK_OUTPUT" | jq '.project.id')"
+NO_TASK_USER_ID="$(echo "$NO_TASK_OUTPUT" | jq '.user.id')"
+assert_eq "1" "$NO_TASK_PROJECT_ID" "no_eligible_task project id"
+assert_eq "1" "$NO_TASK_USER_ID" "no_eligible_task user id"
 
 test_summary

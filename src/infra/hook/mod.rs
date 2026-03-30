@@ -30,10 +30,24 @@ pub enum BackendInfo {
     Http { api_url: String },
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvelopeProjectInfo {
+    pub id: i64,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvelopeUserInfo {
+    pub id: i64,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct HookEnvelope<T: Serialize> {
     pub runtime: RuntimeMode,
     pub backend: BackendInfo,
+    pub project: EnvelopeProjectInfo,
+    pub user: EnvelopeUserInfo,
     pub event: T,
 }
 
@@ -481,6 +495,40 @@ fn check_required_env(entry: &HookEntry) -> Vec<&str> {
         .collect()
 }
 
+const DEFAULT_PROJECT_ID: i64 = 1;
+const DEFAULT_USER_ID: i64 = 1;
+
+pub async fn resolve_envelope_context(
+    config: &Config,
+    backend: &dyn TaskBackend,
+) -> (EnvelopeProjectInfo, EnvelopeUserInfo) {
+    let project = match config.project.name.as_deref() {
+        Some(name) => backend
+            .get_project_by_name(name)
+            .await
+            .map(|p| EnvelopeProjectInfo { id: p.id(), name: p.name().to_owned() })
+            .unwrap_or_else(|_| EnvelopeProjectInfo { id: DEFAULT_PROJECT_ID, name: "default".into() }),
+        None => backend
+            .get_project(DEFAULT_PROJECT_ID)
+            .await
+            .map(|p| EnvelopeProjectInfo { id: p.id(), name: p.name().to_owned() })
+            .unwrap_or_else(|_| EnvelopeProjectInfo { id: DEFAULT_PROJECT_ID, name: "default".into() }),
+    };
+    let user = match config.user.name.as_deref() {
+        Some(name) => backend
+            .get_user_by_username(name)
+            .await
+            .map(|u| EnvelopeUserInfo { id: u.id(), name: u.username().to_owned() })
+            .unwrap_or_else(|_| EnvelopeUserInfo { id: DEFAULT_USER_ID, name: "default".into() }),
+        None => backend
+            .get_user(DEFAULT_USER_ID)
+            .await
+            .map(|u| EnvelopeUserInfo { id: u.id(), name: u.username().to_owned() })
+            .unwrap_or_else(|_| EnvelopeUserInfo { id: DEFAULT_USER_ID, name: "default".into() }),
+    };
+    (project, user)
+}
+
 /// Fire hooks for the given event, spawning each hook command as a
 /// fire-and-forget child process. Returns immediately.
 /// Results are logged to `$XDG_STATE_HOME/senko/hooks.log`.
@@ -498,9 +546,12 @@ pub async fn fire_hooks(
     let log_path = log_file_path_with_dir(config.log.dir.as_deref());
 
     let event = build_event(event_name, task, backend, from_status, unblocked).await;
+    let (project, user) = resolve_envelope_context(config, backend).await;
     let envelope = HookEnvelope {
         runtime: runtime_mode.clone(),
         backend: backend_info.clone(),
+        project,
+        user,
         event,
     };
     let json = match serde_json::to_string(&envelope) {
@@ -591,9 +642,12 @@ pub async fn fire_no_eligible_task_hooks(
         stats,
         ready_count,
     };
+    let (project, user) = resolve_envelope_context(config, backend).await;
     let envelope = HookEnvelope {
         runtime: runtime_mode.clone(),
         backend: backend_info.clone(),
+        project,
+        user,
         event,
     };
 
@@ -1300,6 +1354,8 @@ command = "echo completed"
         let envelope = HookEnvelope {
             runtime: RuntimeMode::Cli,
             backend: BackendInfo::Sqlite { db_file_path: "/tmp/test.db".into() },
+            project: EnvelopeProjectInfo { id: 1, name: "default".into() },
+            user: EnvelopeUserInfo { id: 1, name: "default".into() },
             event,
         };
         let json = serde_json::to_string(&envelope).unwrap();
@@ -1307,6 +1363,10 @@ command = "echo completed"
         assert_eq!(v["runtime"], "cli");
         assert_eq!(v["backend"]["type"], "sqlite");
         assert_eq!(v["backend"]["db_file_path"], "/tmp/test.db");
+        assert_eq!(v["project"]["id"], 1);
+        assert_eq!(v["project"]["name"], "default");
+        assert_eq!(v["user"]["id"], 1);
+        assert_eq!(v["user"]["name"], "default");
         assert_eq!(v["event"]["event"], "task_added");
         assert_eq!(v["event"]["task"]["id"], 1);
     }
@@ -1323,6 +1383,8 @@ command = "echo completed"
         let envelope = HookEnvelope {
             runtime: RuntimeMode::Api,
             backend: BackendInfo::Http { api_url: "http://localhost:8080".into() },
+            project: EnvelopeProjectInfo { id: 2, name: "my-project".into() },
+            user: EnvelopeUserInfo { id: 3, name: "alice".into() },
             event,
         };
         let json = serde_json::to_string(&envelope).unwrap();
@@ -1330,6 +1392,10 @@ command = "echo completed"
         assert_eq!(v["runtime"], "api");
         assert_eq!(v["backend"]["type"], "http");
         assert_eq!(v["backend"]["api_url"], "http://localhost:8080");
+        assert_eq!(v["project"]["id"], 2);
+        assert_eq!(v["project"]["name"], "my-project");
+        assert_eq!(v["user"]["id"], 3);
+        assert_eq!(v["user"]["name"], "alice");
         assert_eq!(v["event"]["event"], "no_eligible_task");
     }
 

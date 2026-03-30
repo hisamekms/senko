@@ -1440,6 +1440,8 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let project_id = resolve_project_id(&*backend, &config).await?;
             let backend_info = resolve_backend_info(&config, &root);
 
+            let (envelope_project, envelope_user) = hooks::resolve_envelope_context(&config, &*backend).await;
+
             // no_eligible_task uses a different event structure (no task object)
             if event_name == "no_eligible_task" {
                 let stats = backend.task_stats(project_id).await.unwrap_or_default();
@@ -1454,6 +1456,8 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 let envelope = hooks::HookEnvelope {
                     runtime: RuntimeMode::Cli,
                     backend: backend_info,
+                    project: envelope_project,
+                    user: envelope_user,
                     event,
                 };
                 let json = serde_json::to_string_pretty(&envelope)?;
@@ -1507,6 +1511,8 @@ async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
             let envelope = hooks::HookEnvelope {
                 runtime: RuntimeMode::Cli,
                 backend: backend_info,
+                project: envelope_project,
+                user: envelope_user,
                 event,
             };
             let json = serde_json::to_string_pretty(&envelope)?;

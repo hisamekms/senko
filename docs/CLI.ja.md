@@ -246,48 +246,77 @@ on_task_completed = ["notify-send '完了'", "curl https://example.com/done"]
 
 ### イベントペイロード
 
-フックのstdinに渡されるJSONオブジェクト:
+フックのstdinに渡されるJSONオブジェクト（「フックエンベロープ」）:
 
 ```json
 {
-  "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_completed",
-  "timestamp": "2026-03-24T12:00:00Z",
-  "from_status": "in_progress",
-  "task": {
-    "id": 7,
-    "project_id": 1,
-    "title": "Webhookハンドラの実装",
-    "background": null,
-    "description": "外部連携用のWebhookエンドポイントを追加",
-    "plan": null,
-    "priority": "P1",
-    "status": "completed",
-    "assignee_session_id": null,
-    "assignee_user_id": null,
-    "created_at": "2026-03-24T10:00:00Z",
-    "updated_at": "2026-03-24T12:00:00Z",
-    "started_at": "2026-03-24T10:30:00Z",
-    "completed_at": "2026-03-24T12:00:00Z",
-    "canceled_at": null,
-    "cancel_reason": null,
-    "branch": "feature/webhook",
-    "pr_url": "https://github.com/org/repo/pull/42",
-    "metadata": null,
-    "definition_of_done": [
-      { "content": "ユニットテストを書く", "checked": true },
-      { "content": "APIドキュメントを更新", "checked": true }
-    ],
-    "in_scope": ["RESTエンドポイント"],
-    "out_of_scope": ["GraphQLサポート"],
-    "tags": ["backend", "api"],
-    "dependencies": [3, 5]
+  "runtime": "cli",
+  "backend": {
+    "type": "sqlite",
+    "db_file_path": "/path/to/project/.senko/senko.db"
   },
-  "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
-  "ready_count": 2,
-  "unblocked_tasks": [{ "id": 3, "title": "次のタスク", "priority": "P1", "metadata": null }]
+  "project": {
+    "id": 1,
+    "name": "default"
+  },
+  "user": {
+    "id": 1,
+    "name": "default"
+  },
+  "event": {
+    "event_id": "550e8400-e29b-41d4-a716-446655440000",
+    "event": "task_completed",
+    "timestamp": "2026-03-24T12:00:00Z",
+    "from_status": "in_progress",
+    "task": {
+      "id": 7,
+      "project_id": 1,
+      "title": "Webhookハンドラの実装",
+      "background": null,
+      "description": "外部連携用のWebhookエンドポイントを追加",
+      "plan": null,
+      "priority": "P1",
+      "status": "completed",
+      "assignee_session_id": null,
+      "assignee_user_id": null,
+      "created_at": "2026-03-24T10:00:00Z",
+      "updated_at": "2026-03-24T12:00:00Z",
+      "started_at": "2026-03-24T10:30:00Z",
+      "completed_at": "2026-03-24T12:00:00Z",
+      "canceled_at": null,
+      "cancel_reason": null,
+      "branch": "feature/webhook",
+      "pr_url": "https://github.com/org/repo/pull/42",
+      "metadata": null,
+      "definition_of_done": [
+        { "content": "ユニットテストを書く", "checked": true },
+        { "content": "APIドキュメントを更新", "checked": true }
+      ],
+      "in_scope": ["RESTエンドポイント"],
+      "out_of_scope": ["GraphQLサポート"],
+      "tags": ["backend", "api"],
+      "dependencies": [3, 5]
+    },
+    "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
+    "ready_count": 2,
+    "unblocked_tasks": [{ "id": 3, "title": "次のタスク", "priority": "P1", "metadata": null }]
+  }
 }
 ```
+
+#### エンベロープフィールド
+
+| フィールド | 型 | 説明 |
+|-------|------|-------------|
+| `runtime` | string | `"cli"` または `"api"` |
+| `backend` | object | バックエンド情報（`type` およびバックエンド固有フィールド） |
+| `project` | object | プロジェクト情報: `id`（integer）と `name`（string） |
+| `user` | object | ユーザー情報: `id`（integer）と `name`（string） |
+| `event` | object | イベントペイロード（下記参照） |
+
+`project` と `user` は現在のconfigを反映します。`config.toml` で `[project] name` や `[user] name` が設定されている場合、対応する名前がバックエンドから解決されます。未設定の場合はデフォルトレコード（id=1）が使用されます。
+
+#### `event` フィールド
 
 | フィールド | 型 | 説明 |
 |-------|------|-------------|

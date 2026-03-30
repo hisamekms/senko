@@ -250,48 +250,77 @@ Hooks receive the full event payload as JSON on **stdin** and are executed via `
 
 ### Event Payload
 
-The JSON object passed to hooks on stdin:
+The JSON object passed to hooks on stdin (the "hook envelope"):
 
 ```json
 {
-  "event_id": "550e8400-e29b-41d4-a716-446655440000",
-  "event": "task_completed",
-  "timestamp": "2026-03-24T12:00:00Z",
-  "from_status": "in_progress",
-  "task": {
-    "id": 7,
-    "project_id": 1,
-    "title": "Implement webhook handler",
-    "background": null,
-    "description": "Add webhook endpoint for external integrations",
-    "plan": null,
-    "priority": "P1",
-    "status": "completed",
-    "assignee_session_id": null,
-    "assignee_user_id": null,
-    "created_at": "2026-03-24T10:00:00Z",
-    "updated_at": "2026-03-24T12:00:00Z",
-    "started_at": "2026-03-24T10:30:00Z",
-    "completed_at": "2026-03-24T12:00:00Z",
-    "canceled_at": null,
-    "cancel_reason": null,
-    "branch": "feature/webhook",
-    "pr_url": "https://github.com/org/repo/pull/42",
-    "metadata": null,
-    "definition_of_done": [
-      { "content": "Write unit tests", "checked": true },
-      { "content": "Update API docs", "checked": true }
-    ],
-    "in_scope": ["REST endpoint"],
-    "out_of_scope": ["GraphQL support"],
-    "tags": ["backend", "api"],
-    "dependencies": [3, 5]
+  "runtime": "cli",
+  "backend": {
+    "type": "sqlite",
+    "db_file_path": "/path/to/project/.senko/senko.db"
   },
-  "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
-  "ready_count": 2,
-  "unblocked_tasks": [{ "id": 3, "title": "Next task", "priority": "P1", "metadata": null }]
+  "project": {
+    "id": 1,
+    "name": "default"
+  },
+  "user": {
+    "id": 1,
+    "name": "default"
+  },
+  "event": {
+    "event_id": "550e8400-e29b-41d4-a716-446655440000",
+    "event": "task_completed",
+    "timestamp": "2026-03-24T12:00:00Z",
+    "from_status": "in_progress",
+    "task": {
+      "id": 7,
+      "project_id": 1,
+      "title": "Implement webhook handler",
+      "background": null,
+      "description": "Add webhook endpoint for external integrations",
+      "plan": null,
+      "priority": "P1",
+      "status": "completed",
+      "assignee_session_id": null,
+      "assignee_user_id": null,
+      "created_at": "2026-03-24T10:00:00Z",
+      "updated_at": "2026-03-24T12:00:00Z",
+      "started_at": "2026-03-24T10:30:00Z",
+      "completed_at": "2026-03-24T12:00:00Z",
+      "canceled_at": null,
+      "cancel_reason": null,
+      "branch": "feature/webhook",
+      "pr_url": "https://github.com/org/repo/pull/42",
+      "metadata": null,
+      "definition_of_done": [
+        { "content": "Write unit tests", "checked": true },
+        { "content": "Update API docs", "checked": true }
+      ],
+      "in_scope": ["REST endpoint"],
+      "out_of_scope": ["GraphQL support"],
+      "tags": ["backend", "api"],
+      "dependencies": [3, 5]
+    },
+    "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5 },
+    "ready_count": 2,
+    "unblocked_tasks": [{ "id": 3, "title": "Next task", "priority": "P1", "metadata": null }]
+  }
 }
 ```
+
+#### Envelope fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `runtime` | string | `"cli"` or `"api"` |
+| `backend` | object | Backend info (`type`, and backend-specific fields) |
+| `project` | object | Project context: `id` (integer) and `name` (string) |
+| `user` | object | User context: `id` (integer) and `name` (string) |
+| `event` | object | Event payload (see below) |
+
+The `project` and `user` fields reflect the current config. When `[project] name` or `[user] name` is set in `config.toml`, the corresponding name is resolved from the backend. Otherwise, the default record (id=1) is used.
+
+#### `event` fields
 
 | Field | Type | Description |
 |-------|------|-------------|
