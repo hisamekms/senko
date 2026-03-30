@@ -915,8 +915,8 @@ command = "echo completed"
         .unwrap();
         let t2 = backend.get_task(1, 2).await.unwrap();
         let (t2, _) = t2.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (t2, _) = t2.add_dependency(1, Some("2025-01-01T00:00:00Z".into())).unwrap();
         backend.save(&t2).await.unwrap();
-        backend.add_dependency(1, 2, 1).await.unwrap();
 
         // Capture ready tasks before completion
         let prev_ready: std::collections::HashSet<i64> =

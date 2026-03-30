@@ -449,41 +449,6 @@ impl TaskRepository for HttpBackend {
         check_success(resp).await
     }
 
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .post(self.project_url(project_id, &format!("/tasks/{task_id}/deps")))
-            .json(&json!({ "dep_id": dep_id })))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let resp = self.auth(self
-            .client
-            .delete(self.project_url(project_id, &format!("/tasks/{task_id}/deps/{dep_id}"))))
-            .send()
-            .await?;
-        read_json_or_error(resp).await
-    }
-
-    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let current_deps = self.list_dependencies(project_id, task_id).await?;
-        let current_ids: std::collections::HashSet<i64> =
-            current_deps.iter().map(|t| t.id()).collect();
-        let desired: std::collections::HashSet<i64> = dep_ids.iter().copied().collect();
-
-        for id in current_ids.difference(&desired) {
-            self.remove_dependency(project_id, task_id, *id).await?;
-        }
-        for id in desired.difference(&current_ids) {
-            self.add_dependency(project_id, task_id, *id).await?;
-        }
-
-        self.get_task(project_id, task_id).await
-    }
-
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let resp = self.auth(self
             .client
@@ -496,12 +461,11 @@ impl TaskRepository for HttpBackend {
     async fn save(&self, task: &Task) -> Result<()> {
         let resp = self.auth(self
             .client
-            .put(self.project_url(task.project_id(), &format!("/tasks/{}", task.id())))
+            .put(self.project_url(task.project_id(), &format!("/tasks/{}/_save", task.id())))
             .json(task))
             .send()
             .await?;
-        read_json_or_error::<Task>(resp).await?;
-        Ok(())
+        check_success(resp).await
     }
 
 }

@@ -6,7 +6,7 @@ use anyhow::{Context, Result};
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ use crate::bootstrap;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
+    CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
@@ -372,6 +372,10 @@ pub async fn serve(
             "/api/v1/projects/{project_id}/tasks/{id}",
             get(get_task).put(edit_task).delete(delete_task),
         )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/_save",
+            put(save_task_handler),
+        )
         // Preview transition (read-only)
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/preview-transition",
@@ -651,6 +655,21 @@ async fn edit_task(
     state.task_service.edit_task_arrays(project_id, id, &array_params).await.map_err(classify_error)?;
     let task = state.task_service.get_task(project_id, id).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(task)))
+}
+
+// PUT /api/v1/projects/{project_id}/tasks/{id}/_save
+async fn save_task_handler(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((project_id, id)): Path<(i64, i64)>,
+    Json(task): Json<Task>,
+) -> Result<StatusCode, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    if task.id() != id || task.project_id() != project_id {
+        return Err(classify_error(anyhow::anyhow!("task ID or project ID mismatch")));
+    }
+    state.backend.save(&task).await.map_err(classify_error)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // DELETE /api/v1/projects/{project_id}/tasks/{id}

@@ -897,116 +897,6 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn add_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
-        let pool = self.pool().await?;
-        verify_task_project(pool, project_id, task_id).await?;
-        // Verify both tasks exist
-        get_task_by_id(pool, task_id)
-            .await
-            .context("task not found")?;
-        get_task_by_id(pool, dep_id)
-            .await
-            .context("dependency task not found")?;
-
-        sqlx::query(
-            "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-        )
-        .bind(task_id)
-        .bind(dep_id)
-        .execute(pool)
-        .await?;
-
-        sqlx::query("UPDATE tasks SET updated_at = $1 WHERE id = $2")
-            .bind(now_utc())
-            .bind(task_id)
-            .execute(pool)
-            .await?;
-
-        get_task_by_id(pool, task_id).await
-    }
-
-    async fn remove_dependency(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_id: i64,
-    ) -> Result<Task> {
-        let pool = self.pool().await?;
-        verify_task_project(pool, project_id, task_id).await?;
-        get_task_by_id(pool, task_id)
-            .await
-            .context("task not found")?;
-
-        let result = sqlx::query(
-            "DELETE FROM task_dependencies WHERE task_id = $1 AND depends_on_task_id = $2",
-        )
-        .bind(task_id)
-        .bind(dep_id)
-        .execute(pool)
-        .await?;
-        if result.rows_affected() == 0 {
-            anyhow::bail!(
-                "dependency not found: task {} does not depend on {}",
-                task_id,
-                dep_id
-            );
-        }
-
-        sqlx::query("UPDATE tasks SET updated_at = $1 WHERE id = $2")
-            .bind(now_utc())
-            .bind(task_id)
-            .execute(pool)
-            .await?;
-
-        get_task_by_id(pool, task_id).await
-    }
-
-    async fn set_dependencies(
-        &self,
-        project_id: i64,
-        task_id: i64,
-        dep_ids: &[i64],
-    ) -> Result<Task> {
-        let pool = self.pool().await?;
-        verify_task_project(pool, project_id, task_id).await?;
-        get_task_by_id(pool, task_id)
-            .await
-            .context("task not found")?;
-        for &dep_id in dep_ids {
-            get_task_by_id(pool, dep_id)
-                .await
-                .with_context(|| format!("dependency task not found: {}", dep_id))?;
-        }
-
-        let mut tx = pool.begin().await?;
-        sqlx::query("DELETE FROM task_dependencies WHERE task_id = $1")
-            .bind(task_id)
-            .execute(&mut *tx)
-            .await?;
-        for &dep_id in dep_ids {
-            sqlx::query(
-                "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
-            )
-            .bind(task_id)
-            .bind(dep_id)
-            .execute(&mut *tx)
-            .await?;
-        }
-        sqlx::query("UPDATE tasks SET updated_at = $1 WHERE id = $2")
-            .bind(now_utc())
-            .bind(task_id)
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-
-        get_task_by_id(pool, task_id).await
-    }
-
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
         verify_task_project(pool, project_id, task_id).await?;
@@ -1082,6 +972,21 @@ impl TaskRepository for PostgresBackend {
             .bind(task.id())
             .bind(dod.content())
             .bind(checked_val)
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Sync dependencies
+        sqlx::query("DELETE FROM task_dependencies WHERE task_id = $1")
+            .bind(task.id())
+            .execute(&mut *tx)
+            .await?;
+        for &dep_id in task.dependencies() {
+            sqlx::query(
+                "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
+            )
+            .bind(task.id())
+            .bind(dep_id)
             .execute(&mut *tx)
             .await?;
         }
@@ -1452,14 +1357,18 @@ mod tests {
         let t1 = backend.create_task(1, &params("Task 1")).await.unwrap();
         let t2 = backend.create_task(1, &params("Task 2")).await.unwrap();
 
-        let t2 = backend.add_dependency(1, t2.id(), t1.id()).await.unwrap();
+        let (t2, _) = t2.add_dependency(t1.id(), Some(now_utc())).unwrap();
+        backend.save(&t2).await.unwrap();
+        let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert_eq!(t2.dependencies(), vec![t1.id()]);
 
         let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id(), t1.id());
 
-        let t2 = backend.remove_dependency(1, t2.id(), t1.id()).await.unwrap();
+        let (t2, _) = t2.remove_dependency(t1.id(), Some(now_utc())).unwrap();
+        backend.save(&t2).await.unwrap();
+        let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
     }
 

@@ -1445,9 +1445,6 @@ pub trait TaskRepository: Send + Sync {
     async fn update_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task>;
     async fn update_task_arrays(&self, project_id: i64, id: i64, params: &UpdateTaskArrayParams) -> Result<()>;
     async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task>;
-    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task>;
-    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task>;
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>>;
     async fn save(&self, task: &Task) -> Result<()>;
 }

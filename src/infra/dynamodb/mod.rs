@@ -901,38 +901,6 @@ impl TaskRepository for DynamoDbBackend {
         Ok(())
     }
 
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let task = self.get_task(project_id, task_id).await?;
-        let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
-
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.add_dependency(dep_id, Some(now))?;
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        let task = self.get_task(project_id, task_id).await?;
-
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
-    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let task = self.get_task(project_id, task_id).await?;
-
-        for &dep_id in dep_ids {
-            let _ = self.get_task_internal(dep_id).await.context("dependency task not found")?;
-        }
-
-        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.set_dependencies(dep_ids, Some(now))?;
-        self.put_task(&task).await?;
-        Ok(task)
-    }
-
     async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
         let task = self.get_task(project_id, task_id).await?;
         self.batch_get_tasks(task.dependencies()).await

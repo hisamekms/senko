@@ -512,8 +512,6 @@ impl TaskService {
         let task = self.backend.get_task(project_id, task_id).await?;
         // Verify dep exists
         let _ = self.backend.get_task(project_id, dep_id).await?;
-        // Domain validation (self-dep check, consumed)
-        let _ = task.add_dependency(dep_id, None).map(|(_, events)| events)?;
 
         // Cycle detection
         let backend = self.backend.clone();
@@ -532,9 +530,10 @@ impl TaskService {
             return Err(DomainError::DependencyCycle { dep_id }.into());
         }
 
-        self.backend
-            .add_dependency(project_id, task_id, dep_id)
-            .await
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.add_dependency(dep_id, Some(now))?;
+        self.backend.save(&task).await?;
+        self.backend.get_task(project_id, task_id).await
     }
 
     pub async fn remove_dependency(
@@ -543,9 +542,11 @@ impl TaskService {
         task_id: i64,
         dep_id: i64,
     ) -> Result<Task> {
-        self.backend
-            .remove_dependency(project_id, task_id, dep_id)
-            .await
+        let task = self.backend.get_task(project_id, task_id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
+        self.backend.save(&task).await?;
+        self.backend.get_task(project_id, task_id).await
     }
 
     pub async fn set_dependencies(
@@ -555,8 +556,6 @@ impl TaskService {
         dep_ids: &[i64],
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
-        // Domain validation (self-dep check, consumed)
-        let _ = task.set_dependencies(dep_ids, None).map(|(_, events)| events)?;
 
         // Verify all deps exist
         for &dep_id in dep_ids {
@@ -582,9 +581,10 @@ impl TaskService {
             }
         }
 
-        self.backend
-            .set_dependencies(project_id, task_id, dep_ids)
-            .await
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (task, _events) = task.set_dependencies(dep_ids, Some(now))?;
+        self.backend.save(&task).await?;
+        self.backend.get_task(project_id, task_id).await
     }
 
     pub async fn list_dependencies(

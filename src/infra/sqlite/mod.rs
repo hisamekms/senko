@@ -1049,6 +1049,18 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
         )?;
     }
 
+    // Sync dependencies
+    conn.execute(
+        "DELETE FROM task_dependencies WHERE task_id = ?1",
+        params![task.id()],
+    )?;
+    for &dep_id in task.dependencies() {
+        conn.execute(
+            "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
+            params![task.id(), dep_id],
+        )?;
+    }
+
     Ok(())
 }
 
@@ -1277,63 +1289,6 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 }
 
 
-fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
-    // Verify both tasks exist
-    get_task(conn, task_id)?;
-    get_task(conn, dep_id)?;
-    conn.execute(
-        "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-        params![task_id, dep_id],
-    )?;
-    conn.execute(
-        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        params![task_id],
-    )?;
-    get_task(conn, task_id)
-}
-
-fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
-    get_task(conn, task_id)?;
-    let affected = conn.execute(
-        "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_task_id = ?2",
-        params![task_id, dep_id],
-    )?;
-    if affected == 0 {
-        return Err(DomainError::DependencyNotFound { task_id, dep_id }.into());
-    }
-    conn.execute(
-        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        params![task_id],
-    )?;
-    get_task(conn, task_id)
-}
-
-fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-    // Verify task exists
-    get_task(conn, task_id)?;
-    // Verify all deps exist
-    for &dep_id in dep_ids {
-        get_task(conn, dep_id)?;
-    }
-
-    // Delete all existing dependencies and insert new ones
-    conn.execute(
-        "DELETE FROM task_dependencies WHERE task_id = ?1",
-        params![task_id],
-    )?;
-    for &dep_id in dep_ids {
-        conn.execute(
-            "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-            params![task_id, dep_id],
-        )?;
-    }
-
-    conn.execute(
-        "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
-        params![task_id],
-    )?;
-    get_task(conn, task_id)
-}
 
 fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     get_task(conn, task_id)?;
@@ -1589,28 +1544,6 @@ impl TaskRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| {
             verify_task_project(conn, project_id, id)?;
             delete_task(conn, id)
-        })
-    }
-
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            add_dependency(conn, task_id, dep_id)
-        })
-    }
-
-    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            remove_dependency(conn, task_id, dep_id)
-        })
-    }
-
-    async fn set_dependencies(&self, project_id: i64, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
-        let dep_ids = dep_ids.to_vec();
-        blocking!(self, |conn: &Connection| {
-            verify_task_project(conn, project_id, task_id)?;
-            set_dependencies(conn, task_id, &dep_ids)
         })
     }
 
@@ -2439,134 +2372,56 @@ mod tests {
         assert_eq!(result.title(), "ready");
     }
 
-    // --- Dependency tests ---
+    // --- Dependency tests (via domain methods + save) ---
 
     #[test]
-    fn add_dependency_basic() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("task2")).unwrap();
-
-        let updated = add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        assert!(updated.dependencies().contains(&t2.id()));
-    }
-
-    #[test]
-    fn add_dependency_self_is_now_allowed_at_repo_level() {
-        // Self-dep validation moved to Task aggregate; repo is a pure data layer
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
-        // Self-dep insert is idempotent (INSERT OR IGNORE)
-        let result = add_dependency(&conn, t1.id(), t1.id());
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn add_dependency_nonexistent_task() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("task1")).unwrap();
-        assert!(add_dependency(&conn, t1.id(), 999).is_err());
-        assert!(add_dependency(&conn, 999, t1.id()).is_err());
-    }
-
-    #[test]
-    fn add_dependency_no_cycle_check_at_repo_level() {
-        // Cycle detection moved to TaskService; repo is a pure data layer
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-
-        add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        // Direct cycle: repo no longer rejects this (service layer does)
-        let result = add_dependency(&conn, t2.id(), t1.id());
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn add_dependency_idempotent() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-
-        add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        let result = add_dependency(&conn, t1.id(), t2.id());
-        assert!(result.is_ok());
-        let task = result.unwrap();
-        assert_eq!(task.dependencies().len(), 1);
-    }
-
-    #[test]
-    fn remove_dependency_basic() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-
-        add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        let updated = remove_dependency(&conn, t1.id(), t2.id()).unwrap();
-        assert!(updated.dependencies().is_empty());
-    }
-
-    #[test]
-    fn remove_dependency_nonexistent() {
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-
-        let result = remove_dependency(&conn, t1.id(), t2.id());
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("dependency not found"));
-    }
-
-    #[test]
-    fn set_dependencies_basic() {
+    fn save_persists_dependencies() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        let updated = set_dependencies(&conn, t1.id(), &[t2.id(), t3.id()]).unwrap();
-        assert_eq!(updated.dependencies().len(), 2);
-        assert!(updated.dependencies().contains(&t2.id()));
-        assert!(updated.dependencies().contains(&t3.id()));
+        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1.add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
+
+        let loaded = get_task(&conn, t1.id()).unwrap();
+        assert_eq!(loaded.dependencies().len(), 2);
+        assert!(loaded.dependencies().contains(&t2.id()));
+        assert!(loaded.dependencies().contains(&t3.id()));
     }
 
     #[test]
-    fn set_dependencies_replace() {
+    fn save_replaces_dependencies() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        set_dependencies(&conn, t1.id(), &[t2.id()]).unwrap();
-        let updated = set_dependencies(&conn, t1.id(), &[t3.id()]).unwrap();
-        assert_eq!(updated.dependencies(), &[t3.id()]);
+        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
+
+        let (t1, _) = t1.set_dependencies(&[t3.id()], Some("2026-01-01T00:00:01Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
+
+        let loaded = get_task(&conn, t1.id()).unwrap();
+        assert_eq!(loaded.dependencies(), &[t3.id()]);
     }
 
     #[test]
-    fn set_dependencies_empty() {
+    fn save_clears_dependencies() {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
 
-        add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        let updated = set_dependencies(&conn, t1.id(), &[]).unwrap();
-        assert!(updated.dependencies().is_empty());
-    }
+        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
 
-    #[test]
-    fn set_dependencies_no_cycle_check_at_repo_level() {
-        // Cycle detection moved to TaskService; repo is a pure data layer
-        let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
+        let (t1, _) = t1.set_dependencies(&[], Some("2026-01-01T00:00:01Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
 
-        add_dependency(&conn, t2.id(), t1.id()).unwrap();
-        // Repo no longer rejects cycles
-        let result = set_dependencies(&conn, t1.id(), &[t3.id(), t2.id()]);
-        assert!(result.is_ok());
-        let task = get_task(&conn, t1.id()).unwrap();
-        assert_eq!(task.dependencies().len(), 2);
+        let loaded = get_task(&conn, t1.id()).unwrap();
+        assert!(loaded.dependencies().is_empty());
     }
 
     #[test]
@@ -2576,8 +2431,9 @@ mod tests {
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
 
-        add_dependency(&conn, t1.id(), t2.id()).unwrap();
-        add_dependency(&conn, t1.id(), t3.id()).unwrap();
+        let (t1, _) = t1.add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        let (t1, _) = t1.add_dependency(t3.id(), Some("2026-01-01T00:00:00Z".into())).unwrap();
+        save_task(&conn, &t1).unwrap();
 
         let deps = list_dependencies(&conn, t1.id()).unwrap();
         assert_eq!(deps.len(), 2);
@@ -3039,7 +2895,9 @@ mod tests {
         let (t2, _) = t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
 
-        let t2 = backend.add_dependency(1, t2.id(), t1.id()).await.unwrap();
+        let (t2, _) = t2.add_dependency(t1.id(), Some("2026-01-01T00:00:01Z".into())).unwrap();
+        backend.save(&t2).await.unwrap();
+        let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert_eq!(t2.dependencies(), &[t1.id()]);
 
         let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
@@ -3049,7 +2907,9 @@ mod tests {
         let next = backend.next_task(1).await.unwrap();
         assert!(next.is_none() || next.unwrap().id() == t1.id());
 
-        let t2 = backend.remove_dependency(1, t2.id(), t1.id()).await.unwrap();
+        let (t2, _) = t2.remove_dependency(t1.id(), Some("2026-01-01T00:00:02Z".into())).unwrap();
+        backend.save(&t2).await.unwrap();
+        let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
     }
 
