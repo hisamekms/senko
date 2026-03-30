@@ -1161,6 +1161,7 @@ impl TaskQueryPort for PostgresBackend {
             { param_idx += 1; }
         }
 
+        // SQL-optimized implementation of `crate::domain::task::filter_ready`.
         if filter.ready {
             conditions.push("t.status = 'todo'".to_string());
             conditions.push(
@@ -1195,6 +1196,7 @@ impl TaskQueryPort for PostgresBackend {
         Ok(tasks)
     }
 
+    /// SQL-optimized implementation of [`crate::domain::task::select_next`].
     async fn next_task(&self, project_id: i64) -> Result<Option<Task>> {
         let pool = self.pool().await?;
         let row = sqlx::query(
@@ -1238,6 +1240,8 @@ impl TaskQueryPort for PostgresBackend {
         Ok(stats)
     }
 
+    /// SQL-optimized implementation of ready-count, equivalent to
+    /// `crate::domain::task::filter_ready(...).len()`.
     async fn ready_count(&self, project_id: i64) -> Result<i64> {
         let pool = self.pool().await?;
         let row = sqlx::query(

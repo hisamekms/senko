@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 
@@ -116,7 +117,7 @@ impl FromStr for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Priority {
     P0 = 0,
     P1 = 1,
@@ -370,6 +371,23 @@ impl Task {
 
     pub fn dependencies(&self) -> &[i64] {
         &self.dependencies
+    }
+
+    // --- Query methods ---
+
+    /// Returns true if this task is eligible for execution.
+    ///
+    /// A task is ready when:
+    /// - status == Todo
+    /// - All dependencies that exist in `dep_statuses` have status == Completed
+    /// - Missing dependencies (not present in `dep_statuses`) are treated as non-blocking
+    pub fn is_ready(&self, dep_statuses: &HashMap<i64, TaskStatus>) -> bool {
+        self.status == TaskStatus::Todo
+            && self.dependencies.iter().all(|dep_id| {
+                dep_statuses
+                    .get(dep_id)
+                    .map_or(true, |s| *s == TaskStatus::Completed)
+            })
     }
 
     // --- Update methods ---
@@ -646,6 +664,38 @@ impl Task {
         self.updated_at = now;
         Ok((self, vec![TaskEvent::DodUnchecked { index }]))
     }
+}
+
+/// Filter tasks to only those that are ready (eligible for execution).
+///
+/// This is the canonical definition of "ready" used across all backends.
+/// SQL backends may implement equivalent logic in SQL for performance;
+/// see [`select_next`] for the full selection specification.
+pub fn filter_ready(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) -> Vec<Task> {
+    tasks
+        .into_iter()
+        .filter(|t| t.is_ready(dep_statuses))
+        .collect()
+}
+
+/// Select the next task to execute from a set of tasks.
+///
+/// Selection rules (canonical — all backends must produce equivalent results):
+/// 1. Filter to ready tasks (status == Todo, all existing deps completed)
+/// 2. Sort by: priority ASC (P0 first), created_at ASC, id ASC
+/// 3. Return the first one
+///
+/// SQL backends may implement this as an optimized query; equivalence
+/// is verified by integration tests.
+pub fn select_next(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) -> Option<Task> {
+    let mut ready = filter_ready(tasks, dep_statuses);
+    ready.sort_by(|a, b| {
+        a.priority()
+            .cmp(&b.priority())
+            .then_with(|| a.created_at().cmp(b.created_at()))
+            .then_with(|| a.id().cmp(&b.id()))
+    });
+    ready.into_iter().next()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1076,5 +1126,135 @@ mod tests {
     fn task_check_dod_empty_list() {
         let task = make_task(TaskStatus::InProgress);
         assert!(task.check_dod(1, "2026-01-05T00:00:00Z".to_string()).is_err());
+    }
+
+    // --- is_ready / filter_ready / select_next tests ---
+
+    fn make_task_with_opts(id: i64, priority: Priority, status: TaskStatus, created_at: &str) -> Task {
+        Task::new(
+            id, 1, format!("task-{id}"), None, None, None, priority, status,
+            None, None,
+            created_at.to_string(), created_at.to_string(),
+            None, None, None, None, None, None, None,
+            vec![], vec![], vec![], vec![], vec![],
+        )
+    }
+
+    #[test]
+    fn is_ready_todo_no_deps() {
+        let task = make_task(TaskStatus::Todo);
+        assert!(task.is_ready(&HashMap::new()));
+    }
+
+    #[test]
+    fn is_ready_draft_returns_false() {
+        let task = make_task(TaskStatus::Draft);
+        assert!(!task.is_ready(&HashMap::new()));
+    }
+
+    #[test]
+    fn is_ready_in_progress_returns_false() {
+        let task = make_task(TaskStatus::InProgress);
+        assert!(!task.is_ready(&HashMap::new()));
+    }
+
+    #[test]
+    fn is_ready_blocked_by_incomplete_dep() {
+        let task = make_task(TaskStatus::Todo);
+        let (task, _) = task.set_dependencies(&[10], None).unwrap();
+        let deps = HashMap::from([(10, TaskStatus::Todo)]);
+        assert!(!task.is_ready(&deps));
+    }
+
+    #[test]
+    fn is_ready_blocked_by_in_progress_dep() {
+        let task = make_task(TaskStatus::Todo);
+        let (task, _) = task.set_dependencies(&[10], None).unwrap();
+        let deps = HashMap::from([(10, TaskStatus::InProgress)]);
+        assert!(!task.is_ready(&deps));
+    }
+
+    #[test]
+    fn is_ready_unblocked_by_completed_dep() {
+        let task = make_task(TaskStatus::Todo);
+        let (task, _) = task.set_dependencies(&[10], None).unwrap();
+        let deps = HashMap::from([(10, TaskStatus::Completed)]);
+        assert!(task.is_ready(&deps));
+    }
+
+    #[test]
+    fn is_ready_missing_dep_is_non_blocking() {
+        let task = make_task(TaskStatus::Todo);
+        let (task, _) = task.set_dependencies(&[99], None).unwrap();
+        assert!(task.is_ready(&HashMap::new()));
+    }
+
+    #[test]
+    fn select_next_priority_order() {
+        let tasks = vec![
+            make_task_with_opts(1, Priority::P3, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(2, Priority::P0, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(3, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+        ];
+        let result = super::select_next(tasks, &HashMap::new()).unwrap();
+        assert_eq!(result.id(), 2);
+    }
+
+    #[test]
+    fn select_next_created_at_tiebreak() {
+        let tasks = vec![
+            make_task_with_opts(1, Priority::P2, TaskStatus::Todo, "2026-01-02T00:00:00Z"),
+            make_task_with_opts(2, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+        ];
+        let result = super::select_next(tasks, &HashMap::new()).unwrap();
+        assert_eq!(result.id(), 2);
+    }
+
+    #[test]
+    fn select_next_id_tiebreak() {
+        let tasks = vec![
+            make_task_with_opts(5, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(3, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+        ];
+        let result = super::select_next(tasks, &HashMap::new()).unwrap();
+        assert_eq!(result.id(), 3);
+    }
+
+    #[test]
+    fn select_next_skips_blocked() {
+        let t1 = make_task_with_opts(1, Priority::P0, TaskStatus::Todo, "2026-01-01T00:00:00Z");
+        let (t1, _) = t1.set_dependencies(&[10], None).unwrap();
+        let t2 = make_task_with_opts(2, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z");
+        let deps = HashMap::from([(10, TaskStatus::InProgress)]);
+        let result = super::select_next(vec![t1, t2], &deps).unwrap();
+        assert_eq!(result.id(), 2);
+    }
+
+    #[test]
+    fn select_next_empty() {
+        assert!(super::select_next(vec![], &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn select_next_skips_non_todo() {
+        let tasks = vec![
+            make_task_with_opts(1, Priority::P0, TaskStatus::Draft, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(2, Priority::P0, TaskStatus::InProgress, "2026-01-01T00:00:00Z"),
+            make_task_with_opts(3, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
+        ];
+        let result = super::select_next(tasks, &HashMap::new()).unwrap();
+        assert_eq!(result.id(), 3);
+    }
+
+    #[test]
+    fn filter_ready_returns_only_eligible() {
+        let t1 = make_task_with_opts(1, Priority::P0, TaskStatus::Todo, "2026-01-01T00:00:00Z");
+        let t2 = make_task_with_opts(2, Priority::P1, TaskStatus::Draft, "2026-01-01T00:00:00Z");
+        let t3 = make_task_with_opts(3, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z");
+        let (t3, _) = t3.set_dependencies(&[10], None).unwrap();
+        let deps = HashMap::from([(10, TaskStatus::Todo)]);
+        let ready = super::filter_ready(vec![t1, t2, t3], &deps);
+        assert_eq!(ready.len(), 1);
+        assert_eq!(ready[0].id(), 1);
     }
 }

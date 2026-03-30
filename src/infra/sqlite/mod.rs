@@ -1192,6 +1192,8 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         param_values.push(Box::new(dep_id));
     }
 
+    // SQL-optimized implementation of `crate::domain::task::filter_ready`.
+    // Equivalence with domain logic is verified by integration tests.
     if filter.ready {
         conditions.push("t.status = 'todo'".to_string());
         conditions.push(
@@ -1222,6 +1224,8 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
     Ok(tasks)
 }
 
+/// SQL-optimized implementation of [`crate::domain::task::select_next`].
+/// Equivalence with domain logic is verified by integration tests.
 fn next_task(conn: &Connection, project_id: i64) -> Result<Option<Task>> {
     let sql = "
         SELECT t.id FROM tasks t
@@ -1259,6 +1263,8 @@ fn task_stats(conn: &Connection, project_id: i64) -> Result<HashMap<String, i64>
     Ok(stats)
 }
 
+/// SQL-optimized implementation of ready-count, equivalent to
+/// `crate::domain::task::filter_ready(...).len()`.
 fn ready_count(conn: &Connection, project_id: i64) -> Result<i64> {
     let sql = "
         SELECT COUNT(*) FROM tasks t
@@ -3142,5 +3148,143 @@ mod tests {
         config.project.name = Some("taken".to_string());
         let result = backend.sync_config_defaults(&config);
         assert!(result.is_err());
+    }
+
+    // --- SQL / domain equivalence tests ---
+
+    #[test]
+    fn sql_next_task_matches_domain_select_next() {
+        let (_tmp, conn) = setup();
+
+        make_todo(&conn, "low", Some(Priority::P3));
+        make_todo(&conn, "high", Some(Priority::P0));
+        make_todo(&conn, "mid", Some(Priority::P1));
+
+        let sql_result = next_task(&conn, 1).unwrap().unwrap();
+
+        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let domain_result =
+            crate::domain::task::select_next(all_tasks, &HashMap::new()).unwrap();
+
+        assert_eq!(sql_result.id(), domain_result.id());
+    }
+
+    #[test]
+    fn sql_next_task_matches_domain_with_deps() {
+        let (_tmp, conn) = setup();
+
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        // dep stays draft (not completed) => blocks dependents
+
+        let blocked = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                title: "blocked".to_string(),
+                dependencies: vec![dep.id()],
+                ..default_create_params("blocked")
+            },
+        )
+        .unwrap();
+        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+
+        let free = make_todo(&conn, "free", Some(Priority::P1));
+
+        let sql_result = next_task(&conn, 1).unwrap().unwrap();
+
+        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
+            .iter()
+            .map(|t| (t.id(), t.status()))
+            .collect();
+        let todo_tasks: Vec<Task> = all_tasks
+            .into_iter()
+            .filter(|t| t.status() == TaskStatus::Todo)
+            .collect();
+        let domain_result =
+            crate::domain::task::select_next(todo_tasks, &dep_statuses).unwrap();
+
+        assert_eq!(sql_result.id(), domain_result.id());
+        assert_eq!(sql_result.id(), free.id());
+    }
+
+    #[test]
+    fn sql_ready_filter_matches_domain_filter_ready() {
+        let (_tmp, conn) = setup();
+
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+
+        let blocked = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                title: "blocked".to_string(),
+                dependencies: vec![dep.id()],
+                ..default_create_params("blocked")
+            },
+        )
+        .unwrap();
+        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+
+        make_todo(&conn, "free1", None);
+        make_todo(&conn, "free2", None);
+
+        let sql_ready = list_ready_tasks(&conn, 1).unwrap();
+
+        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
+            .iter()
+            .map(|t| (t.id(), t.status()))
+            .collect();
+        let todo_tasks: Vec<Task> = all_tasks
+            .into_iter()
+            .filter(|t| t.status() == TaskStatus::Todo)
+            .collect();
+        let domain_ready =
+            crate::domain::task::filter_ready(todo_tasks, &dep_statuses);
+
+        let mut sql_ids: Vec<i64> = sql_ready.iter().map(|t| t.id()).collect();
+        let mut domain_ids: Vec<i64> = domain_ready.iter().map(|t| t.id()).collect();
+        sql_ids.sort();
+        domain_ids.sort();
+        assert_eq!(sql_ids, domain_ids);
+    }
+
+    #[test]
+    fn sql_ready_count_matches_domain() {
+        let (_tmp, conn) = setup();
+
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+
+        let blocked = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                title: "blocked".to_string(),
+                dependencies: vec![dep.id()],
+                ..default_create_params("blocked")
+            },
+        )
+        .unwrap();
+        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+
+        make_todo(&conn, "free1", None);
+        make_todo(&conn, "free2", None);
+
+        let sql_count = ready_count(&conn, 1).unwrap();
+
+        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let dep_statuses: HashMap<i64, TaskStatus> = all_tasks
+            .iter()
+            .map(|t| (t.id(), t.status()))
+            .collect();
+        let todo_tasks: Vec<Task> = all_tasks
+            .into_iter()
+            .filter(|t| t.status() == TaskStatus::Todo)
+            .collect();
+        let domain_count =
+            crate::domain::task::filter_ready(todo_tasks, &dep_statuses).len() as i64;
+
+        assert_eq!(sql_count, domain_count);
     }
 }

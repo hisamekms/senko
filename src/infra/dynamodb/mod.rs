@@ -964,16 +964,10 @@ impl TaskQueryPort for DynamoDbBackend {
             let dep_tasks = self
                 .batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>())
                 .await?;
-            let dep_status: HashMap<i64, TaskStatus> =
+            let dep_statuses: HashMap<i64, TaskStatus> =
                 dep_tasks.into_iter().map(|t| (t.id(), t.status())).collect();
 
-            result.retain(|task| {
-                task.dependencies().iter().all(|dep_id| {
-                    dep_status
-                        .get(dep_id)
-                        .map_or(true, |s| *s == TaskStatus::Completed)
-                })
-            });
+            result = crate::domain::task::filter_ready(result, &dep_statuses);
         }
 
         result.sort_by_key(|t| t.id());
@@ -996,26 +990,10 @@ impl TaskQueryPort for DynamoDbBackend {
             .flat_map(|t| t.dependencies().iter().copied())
             .collect();
         let dep_tasks = self.batch_get_tasks(&dep_ids.into_iter().collect::<Vec<_>>()).await?;
-        let dep_status: HashMap<i64, TaskStatus> = dep_tasks.into_iter().map(|t| (t.id(), t.status())).collect();
+        let dep_statuses: HashMap<i64, TaskStatus> =
+            dep_tasks.into_iter().map(|t| (t.id(), t.status())).collect();
 
-        let mut ready: Vec<Task> = todo_tasks
-            .into_iter()
-            .filter(|task| {
-                task.dependencies().iter().all(|dep_id| {
-                    dep_status.get(dep_id).map_or(true, |s| *s == TaskStatus::Completed)
-                })
-            })
-            .collect();
-
-        ready.sort_by(|a, b| {
-            let pa = i32::from(a.priority());
-            let pb = i32::from(b.priority());
-            pa.cmp(&pb)
-                .then_with(|| a.created_at().cmp(b.created_at()))
-                .then_with(|| a.id().cmp(&b.id()))
-        });
-
-        Ok(ready.into_iter().next())
+        Ok(crate::domain::task::select_next(todo_tasks, &dep_statuses))
     }
 
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
