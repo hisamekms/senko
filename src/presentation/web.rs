@@ -12,7 +12,7 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::application::{ListTasksFilter, TaskService};
+use crate::application::{ListTasksFilter, TaskOperations, TaskService};
 use crate::infra::config::Config;
 use crate::bootstrap;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};

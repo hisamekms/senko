@@ -12,7 +12,7 @@ use crate::bootstrap::{
     create_task_service, create_user_service, resolve_project_id, resolve_user_id,
     DEFAULT_PROJECT_ID,
 };
-use crate::application::HookTrigger;
+use crate::application::{HookTrigger, TaskOperations};
 use crate::infra::config::{CliOverrides, Config};
 use crate::infra::http::HttpBackend;
 use crate::bootstrap::resolve_backend_info;

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use senko::application::port::HookExecutor;
-use senko::application::{ProjectService, TaskService, UserService};
+use senko::application::{ProjectService, TaskOperations, TaskService, UserService};
 use senko::application::HookTrigger;
 use senko::infra::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;

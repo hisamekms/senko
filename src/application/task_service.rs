@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::Utc;
 
 use crate::application::port::TaskBackend;
@@ -10,21 +11,10 @@ use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
-
-/// Result of previewing a status transition without executing it.
-#[derive(Debug, Clone)]
-pub struct PreviewResult {
-    pub allowed: bool,
-    pub reason: Option<String>,
-    pub task: Task,
-    pub target_status: TaskStatus,
-    pub operations: Vec<String>,
-    pub unblocked_tasks: Vec<Task>,
-}
 use crate::domain::validator::has_cycle_async;
 
 use super::HookTrigger;
-use super::port::{HookExecutor, PrVerifier};
+use super::port::{HookExecutor, PreviewResult, PrVerifier, TaskOperations};
 
 pub struct TaskService {
     backend: Arc<dyn TaskBackend>,
@@ -48,13 +38,55 @@ impl TaskService {
         }
     }
 
-    pub fn backend(&self) -> &dyn TaskBackend {
+    /// Find tasks that would become ready if the given task were completed.
+    async fn compute_would_be_unblocked(
+        &self,
+        project_id: i64,
+        completing_task_id: i64,
+    ) -> Result<Vec<Task>> {
+        let all_tasks = self
+            .backend
+            .list_tasks(project_id, &ListTasksFilter::default())
+            .await?;
+        let mut result = Vec::new();
+
+        for t in &all_tasks {
+            if !t.dependencies().contains(&completing_task_id) {
+                continue;
+            }
+            // Only consider tasks that are waiting (draft or todo)
+            if t.status() != TaskStatus::Draft && t.status() != TaskStatus::Todo {
+                continue;
+            }
+            // Check if all other deps are completed
+            let all_other_done = t
+                .dependencies()
+                .iter()
+                .filter(|&&dep_id| dep_id != completing_task_id)
+                .all(|&dep_id| {
+                    all_tasks
+                        .iter()
+                        .find(|tt| tt.id() == dep_id)
+                        .is_some_and(|tt| tt.status() == TaskStatus::Completed)
+                });
+            if all_other_done {
+                result.push(t.clone());
+            }
+        }
+
+        Ok(result)
+    }
+}
+
+#[async_trait]
+impl TaskOperations for TaskService {
+    fn backend(&self) -> &dyn TaskBackend {
         self.backend.as_ref()
     }
 
     // --- Task CRUD with business logic ---
 
-    pub async fn create_task(
+    async fn create_task(
         &self,
         project_id: i64,
         params: &CreateTaskParams,
@@ -73,7 +105,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let prev_status = self.backend.get_task(project_id, id).await?.status();
         let task = self.backend.ready_task(project_id, id).await?;
 
@@ -89,7 +121,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn start_task(
+    async fn start_task(
         &self,
         project_id: i64,
         id: i64,
@@ -111,7 +143,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn next_task(
+    async fn next_task(
         &self,
         project_id: i64,
         session_id: Option<String>,
@@ -153,7 +185,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn complete_task(
+    async fn complete_task(
         &self,
         project_id: i64,
         id: i64,
@@ -212,7 +244,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn cancel_task(
+    async fn cancel_task(
         &self,
         project_id: i64,
         id: i64,
@@ -233,9 +265,7 @@ impl TaskService {
         Ok(task)
     }
 
-    /// Preview a status transition without executing it.
-    /// Returns whether the transition is allowed, with impact information.
-    pub async fn preview_transition(
+    async fn preview_transition(
         &self,
         project_id: i64,
         task_id: i64,
@@ -328,8 +358,7 @@ impl TaskService {
         })
     }
 
-    /// Preview the next eligible task without starting it.
-    pub async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
+    async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
         let task = match self.backend.next_task(project_id).await? {
             Some(t) => t,
             None => return Err(DomainError::NoEligibleTask.into()),
@@ -354,52 +383,13 @@ impl TaskService {
         })
     }
 
-    /// Find tasks that would become ready if the given task were completed.
-    async fn compute_would_be_unblocked(
-        &self,
-        project_id: i64,
-        completing_task_id: i64,
-    ) -> Result<Vec<Task>> {
-        let all_tasks = self
-            .backend
-            .list_tasks(project_id, &ListTasksFilter::default())
-            .await?;
-        let mut result = Vec::new();
-
-        for t in &all_tasks {
-            if !t.dependencies().contains(&completing_task_id) {
-                continue;
-            }
-            // Only consider tasks that are waiting (draft or todo)
-            if t.status() != TaskStatus::Draft && t.status() != TaskStatus::Todo {
-                continue;
-            }
-            // Check if all other deps are completed
-            let all_other_done = t
-                .dependencies()
-                .iter()
-                .filter(|&&dep_id| dep_id != completing_task_id)
-                .all(|&dep_id| {
-                    all_tasks
-                        .iter()
-                        .find(|tt| tt.id() == dep_id)
-                        .is_some_and(|tt| tt.status() == TaskStatus::Completed)
-                });
-            if all_other_done {
-                result.push(t.clone());
-            }
-        }
-
-        Ok(result)
-    }
-
     // --- Passthrough methods (no hooks) ---
 
-    pub async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
         self.backend.get_task(project_id, id).await
     }
 
-    pub async fn list_tasks(
+    async fn list_tasks(
         &self,
         project_id: i64,
         filter: &ListTasksFilter,
@@ -407,7 +397,7 @@ impl TaskService {
         self.backend.list_tasks(project_id, filter).await
     }
 
-    pub async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
+    async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
         let tasks = self
             .backend
             .list_tasks(project_id, &ListTasksFilter::default())
@@ -421,14 +411,14 @@ impl TaskService {
         Ok(tags)
     }
 
-    pub async fn task_stats(
+    async fn task_stats(
         &self,
         project_id: i64,
     ) -> Result<std::collections::HashMap<String, i64>> {
         self.backend.task_stats(project_id).await
     }
 
-    pub async fn edit_task(
+    async fn edit_task(
         &self,
         project_id: i64,
         id: i64,
@@ -437,7 +427,7 @@ impl TaskService {
         self.backend.update_task(project_id, id, params).await
     }
 
-    pub async fn edit_task_arrays(
+    async fn edit_task_arrays(
         &self,
         project_id: i64,
         id: i64,
@@ -446,11 +436,11 @@ impl TaskService {
         self.backend.update_task_arrays(project_id, id, params).await
     }
 
-    pub async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
         self.backend.delete_task(project_id, id).await
     }
 
-    pub async fn check_dod(
+    async fn check_dod(
         &self,
         project_id: i64,
         task_id: i64,
@@ -463,7 +453,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn uncheck_dod(
+    async fn uncheck_dod(
         &self,
         project_id: i64,
         task_id: i64,
@@ -476,7 +466,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn add_dependency(
+    async fn add_dependency(
         &self,
         project_id: i64,
         task_id: i64,
@@ -509,7 +499,7 @@ impl TaskService {
         self.backend.get_task(project_id, task_id).await
     }
 
-    pub async fn remove_dependency(
+    async fn remove_dependency(
         &self,
         project_id: i64,
         task_id: i64,
@@ -522,7 +512,7 @@ impl TaskService {
         self.backend.get_task(project_id, task_id).await
     }
 
-    pub async fn set_dependencies(
+    async fn set_dependencies(
         &self,
         project_id: i64,
         task_id: i64,
@@ -560,7 +550,7 @@ impl TaskService {
         self.backend.get_task(project_id, task_id).await
     }
 
-    pub async fn list_dependencies(
+    async fn list_dependencies(
         &self,
         project_id: i64,
         task_id: i64,
@@ -568,11 +558,11 @@ impl TaskService {
         self.backend.list_dependencies(project_id, task_id).await
     }
 
-    pub async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         self.backend.list_ready_tasks(project_id).await
     }
 
-    pub async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: i64) -> Result<i64> {
         self.backend.ready_count(project_id).await
     }
 }
