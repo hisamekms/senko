@@ -7,7 +7,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilte
 use crate::application::port::HookExecutor;
 use crate::application::{ProjectService, TaskService, UserService};
 use crate::domain::repository::TaskBackend;
-use crate::domain::config::{Config, HookMode, LogConfig, LogFormat};
+use crate::infra::config::{Config, HookMode, LogConfig, LogFormat};
 use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};

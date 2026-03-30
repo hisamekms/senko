@@ -10,7 +10,7 @@ use serde::Serialize;
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::domain::config::{Config, HookEntry, RawConfig};
+use crate::infra::config::{Config, HookEntry, RawConfig};
 use crate::domain::repository::TaskBackend;
 use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
@@ -785,7 +785,7 @@ pub async fn compute_unblocked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::config::{
+    use crate::infra::config::{
         CompletionMode, HookMode, HooksConfig, RawLogConfig, RawWorkflowConfig,
     };
     use crate::infra::sqlite::SqliteBackend;
@@ -1058,7 +1058,7 @@ command = "echo completed"
                 on_task_added,
                 ..Default::default()
             },
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(log_dir),
                 ..Default::default()
             },
@@ -1089,7 +1089,7 @@ command = "echo completed"
         let log_dir = dir.path().to_str().unwrap().to_string();
         let (_db_dir, backend) = setup_db();
         let config = Config {
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(log_dir),
                 ..Default::default()
             },
@@ -1282,7 +1282,7 @@ command = "echo completed"
         let log_dir = dir.path().to_str().unwrap().to_string();
 
         let config = Config {
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(log_dir.clone()),
                 ..Default::default()
             },
@@ -1318,7 +1318,7 @@ command = "echo completed"
         let log_dir = dir.path().to_str().unwrap().to_string();
 
         let config = Config {
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(log_dir.clone()),
                 ..Default::default()
             },
@@ -1594,7 +1594,7 @@ command = "echo 3"
                 on_task_added,
                 ..Default::default()
             },
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(tmp.path().to_str().unwrap().to_string()),
                 ..Default::default()
             },
@@ -1717,7 +1717,7 @@ on_task_added = "echo added"
                 on_task_added,
                 ..Default::default()
             },
-            log: crate::domain::config::LogConfig {
+            log: crate::infra::config::LogConfig {
                 dir: Some(log_dir),
                 ..Default::default()
             },

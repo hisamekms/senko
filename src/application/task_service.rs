@@ -4,13 +4,14 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 
 use crate::domain::repository::TaskBackend;
-use crate::domain::config::{CompletionMode, WorkflowConfig};
+use crate::infra::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
-    CreateTaskParams, HookTrigger, ListTasksFilter, Task, TaskEvent, UnblockedTask,
+    CreateTaskParams, ListTasksFilter, Task, TaskEvent, UnblockedTask,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::has_cycle_async;
 
+use super::HookTrigger;
 use super::port::{HookExecutor, PrVerifier};
 
 pub struct TaskService {

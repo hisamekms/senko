@@ -7,7 +7,7 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::bootstrap::create_backend;
-use crate::domain::config::CliOverrides;
+use crate::infra::config::CliOverrides;
 use crate::infra::hook as hooks;
 use crate::domain::task::Priority;
 use crate::domain::user::Role;

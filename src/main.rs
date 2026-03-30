@@ -7,11 +7,12 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use senko::application::port::HookExecutor;
 use senko::application::{ProjectService, TaskService, UserService};
-use senko::domain::config::{CliOverrides, Config, HookEntry, HookMode};
+use senko::application::HookTrigger;
+use senko::infra::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
 use senko::domain::repository::TaskBackend;
 use senko::domain::task::{
-    CreateTaskParams, HookTrigger, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
+    CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};

@@ -1,3 +1,4 @@
+pub mod config;
 pub mod hook;
 pub mod http;
 pub mod pr_verifier;

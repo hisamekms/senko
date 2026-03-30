@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 
 use crate::application::port::HookExecutor;
+use crate::application::HookTrigger;
 use crate::domain::repository::TaskBackend;
-use crate::domain::config::Config;
-use crate::domain::task::{HookTrigger, Task, TaskStatus, UnblockedTask};
+use crate::infra::config::Config;
+use crate::domain::task::{Task, TaskStatus, UnblockedTask};
 
 use super::{fire_hooks, fire_no_eligible_task_hooks, RuntimeMode, BackendInfo};
 

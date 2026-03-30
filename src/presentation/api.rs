@@ -22,7 +22,7 @@ use crate::bootstrap;
 use crate::infra::hook as hooks;
 use crate::infra::hook::RuntimeMode;
 use crate::infra::hook::executor::ShellHookExecutor;
-use crate::domain::config::Config;
+use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,

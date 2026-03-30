@@ -1398,7 +1398,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::domain::config::Config;
+use crate::infra::config::Config;
 use crate::domain::repository::{ProjectRepository, TaskRepository};
 
 pub struct SqliteBackend {
