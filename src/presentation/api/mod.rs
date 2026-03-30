@@ -15,7 +15,6 @@ use tower_http::trace::TraceLayer;
 mod auth;
 
 use crate::domain::error::DomainError;
-use crate::infra::pr_verifier::GhCliPrVerifier;
 use crate::application::{ProjectService, TaskService, UserService};
 use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
@@ -24,8 +23,6 @@ use crate::application::port::TaskBackend;
 use crate::infra::auth::ApiKeyProvider;
 use self::auth::{HasAuth, OptionalAuthUser};
 use crate::bootstrap;
-use crate::infra::hook::RuntimeMode;
-use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
@@ -287,8 +284,8 @@ pub async fn serve(
 
     // Server always fires hooks (should_fire = true)
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
-    let hook_executor = Arc::new(ShellHookExecutor::new(config.clone(), true, RuntimeMode::Api, backend_info, backend.clone()));
-    let pr_verifier = Arc::new(GhCliPrVerifier);
+    let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
+    let pr_verifier = bootstrap::create_pr_verifier();
     let task_service = Arc::new(TaskService::new(
         backend.clone(),
         hook_executor,

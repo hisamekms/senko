@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{bail, Context, Result};
 
 use super::{Cli, DryRunOperation, print_dry_run};
-use crate::infra::project_root::resolve_project_root;
+use crate::bootstrap::resolve_project_root;
 
 pub const SKILL_MD_CONTENT: &str = include_str!("../../skill_md.txt");
 pub const DOD_VERIFIER_AGENT_CONTENT: &str = include_str!("../../dod_verifier_agent.md");

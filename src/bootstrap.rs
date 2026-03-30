@@ -13,6 +13,10 @@ use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
+// Re-exports for presentation layer (avoid direct infra dependency)
+pub use crate::infra::hook;
+pub use crate::infra::project_root::resolve_project_root;
+
 pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 /// Create the appropriate backend based on config (env + CLI already applied).

@@ -15,14 +15,14 @@ use crate::bootstrap::{
 use crate::application::HookTrigger;
 use crate::infra::config::{CliOverrides, Config};
 use crate::bootstrap::resolve_backend_info;
-use crate::infra::hook as hooks;
+use crate::bootstrap::hook as hooks;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams};
-use crate::infra::project_root::resolve_project_root;
+use crate::bootstrap::resolve_project_root;
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {
     CliOverrides {

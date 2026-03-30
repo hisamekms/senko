@@ -46,7 +46,7 @@ impl From<CliRole> for Role {
         }
     }
 }
-use crate::infra::project_root::resolve_project_root;
+use crate::bootstrap::resolve_project_root;
 
 #[derive(Debug, Clone, ValueEnum)]
 pub enum OutputFormat {
