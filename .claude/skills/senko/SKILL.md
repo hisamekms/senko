@@ -334,7 +334,8 @@ Before creating the plan, run `senko config` to check the workflow configuration
      - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
      - **NOT_ACHIEVED**: Go back and implement the missing item, then re-verify
   4. All DoD items must be checked before proceeding to merge
-- Merge the branch into main (all DoD items must be checked before this step)
+- Rebase merge the branch into main using the rebase-merge script (all DoD items must be checked before this step):
+  `bash ${CLAUDE_SKILL_DIR}/scripts/rebase-merge.sh <branch-name>`
 - Use `AskUserQuestion` to ask the user for completion approval
 - Complete the task: `senko complete <id>`
 - Delete the worktree (using `/wth` skill)
