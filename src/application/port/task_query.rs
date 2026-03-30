@@ -15,4 +15,17 @@ pub trait TaskQueryPort: Send + Sync {
     async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>>;
     async fn ready_count(&self, project_id: i64) -> Result<i64>;
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
+
+    /// Server-side task completion (used by HttpBackend).
+    /// Returns `Some(task)` if the backend handled completion server-side,
+    /// or `None` to fall back to local TaskService logic.
+    async fn complete_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        skip_pr_check: bool,
+    ) -> Result<Option<Task>> {
+        let _ = (project_id, id, skip_pr_check);
+        Ok(None)
+    }
 }

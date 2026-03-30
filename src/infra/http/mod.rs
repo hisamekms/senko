@@ -541,6 +541,22 @@ impl TaskQueryPort for HttpBackend {
             ..Default::default()
         }).await
     }
+
+    async fn complete_task(
+        &self,
+        project_id: i64,
+        id: i64,
+        skip_pr_check: bool,
+    ) -> Result<Option<Task>> {
+        let resp = self.auth(self
+            .client
+            .post(self.project_url(project_id, &format!("/tasks/{id}/complete")))
+            .json(&json!({ "skip_pr_check": skip_pr_check })))
+            .send()
+            .await?;
+        let task: Task = read_json_or_error(resp).await?;
+        Ok(Some(task))
+    }
 }
 
 #[async_trait]

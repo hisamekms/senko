@@ -56,6 +56,7 @@ use senko::infra::hook as hooks;
 use senko::infra::hook::{RuntimeMode, BackendInfo};
 use senko::infra::http::HttpBackend;
 use senko::infra::hook::executor::ShellHookExecutor;
+use senko::application::port::{NoOpPrVerifier, PrVerifier};
 use senko::infra::pr_verifier::GhCliPrVerifier;
 use senko::infra::project_root::resolve_project_root;
 use senko::infra::sqlite as db;
@@ -167,7 +168,11 @@ fn create_task_service(
 ) -> TaskService {
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
-    let pr_verifier = Arc::new(GhCliPrVerifier);
+    let pr_verifier: Arc<dyn PrVerifier> = if using_http {
+        Arc::new(NoOpPrVerifier)
+    } else {
+        Arc::new(GhCliPrVerifier)
+    };
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
     TaskService::new(backend, hooks, pr_verifier, completion_policy)
 }

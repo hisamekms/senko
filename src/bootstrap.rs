@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-use crate::application::port::HookExecutor;
+use crate::application::port::{HookExecutor, NoOpPrVerifier, PrVerifier};
 use crate::application::{HookTestService, ProjectService, TaskService, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
@@ -135,7 +135,11 @@ pub fn create_task_service(
 ) -> TaskService {
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
-    let pr_verifier = Arc::new(GhCliPrVerifier);
+    let pr_verifier: Arc<dyn PrVerifier> = if using_http {
+        Arc::new(NoOpPrVerifier)
+    } else {
+        Arc::new(GhCliPrVerifier)
+    };
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
     TaskService::new(backend, hooks, pr_verifier, completion_policy)
 }
