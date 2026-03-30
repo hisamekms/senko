@@ -6,7 +6,6 @@ use chrono::Utc;
 
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
-use crate::infra::config::WorkflowConfig;
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -20,7 +19,7 @@ pub struct TaskService {
     backend: Arc<dyn TaskBackend>,
     hooks: Arc<dyn HookExecutor>,
     pr_verifier: Arc<dyn PrVerifier>,
-    workflow: WorkflowConfig,
+    completion_policy: CompletionPolicy,
 }
 
 impl TaskService {
@@ -28,13 +27,13 @@ impl TaskService {
         backend: Arc<dyn TaskBackend>,
         hooks: Arc<dyn HookExecutor>,
         pr_verifier: Arc<dyn PrVerifier>,
-        workflow: WorkflowConfig,
+        completion_policy: CompletionPolicy,
     ) -> Self {
         Self {
             backend,
             hooks,
             pr_verifier,
-            workflow,
+            completion_policy,
         }
     }
 
@@ -195,14 +194,13 @@ impl TaskService {
         let task = self.backend.get_task(project_id, id).await?;
 
         // PR workflow checks (domain policy decides whether to check)
-        let policy = CompletionPolicy::from_workflow(&self.workflow);
-        if let Some(pr_url) = policy.required_pr_url(&task, skip_pr_check)
+        if let Some(pr_url) = self.completion_policy.required_pr_url(&task, skip_pr_check)
             .map_err(|e| DomainError::CannotCompleteTask {
                 task_id: id,
                 reason: e.to_string(),
             })? {
             self.pr_verifier
-                .verify_pr_status(pr_url, policy.auto_merge())
+                .verify_pr_status(pr_url, self.completion_policy.auto_merge())
                 .map_err(|e| DomainError::CannotCompleteTask {
                     task_id: id,
                     reason: e.to_string(),

@@ -7,7 +7,28 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
-use crate::infra::config::{CompletionMode, WorkflowConfig};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CompletionMode {
+    MergeThenComplete,
+    PrThenComplete,
+}
+
+impl Default for CompletionMode {
+    fn default() -> Self {
+        CompletionMode::MergeThenComplete
+    }
+}
+
+impl fmt::Display for CompletionMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CompletionMode::MergeThenComplete => write!(f, "merge_then_complete"),
+            CompletionMode::PrThenComplete => write!(f, "pr_then_complete"),
+        }
+    }
+}
 
 /// Domain event emitted by Task aggregate methods.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -805,10 +826,10 @@ pub struct CompletionPolicy {
 }
 
 impl CompletionPolicy {
-    pub fn from_workflow(workflow: &WorkflowConfig) -> Self {
+    pub fn new(completion_mode: CompletionMode, auto_merge: bool) -> Self {
         Self {
-            completion_mode: workflow.completion_mode,
-            auto_merge: workflow.auto_merge,
+            completion_mode,
+            auto_merge,
         }
     }
 
@@ -1268,27 +1289,21 @@ mod tests {
 
     #[test]
     fn completion_policy_merge_mode_returns_none() {
-        use crate::infra::config::WorkflowConfig;
-        let workflow = WorkflowConfig { completion_mode: CompletionMode::MergeThenComplete, auto_merge: true };
-        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let policy = super::CompletionPolicy::new(CompletionMode::MergeThenComplete, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).unwrap().is_none());
     }
 
     #[test]
     fn completion_policy_pr_mode_no_url_errors() {
-        use crate::infra::config::WorkflowConfig;
-        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
-        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, false).is_err());
     }
 
     #[test]
     fn completion_policy_pr_mode_with_url() {
-        use crate::infra::config::WorkflowConfig;
-        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
-        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
         let mut task = make_task(TaskStatus::InProgress);
         task.pr_url = Some("https://github.com/org/repo/pull/1".to_string());
         let result = policy.required_pr_url(&task, false).unwrap();
@@ -1297,9 +1312,7 @@ mod tests {
 
     #[test]
     fn completion_policy_skip_pr_check() {
-        use crate::infra::config::WorkflowConfig;
-        let workflow = WorkflowConfig { completion_mode: CompletionMode::PrThenComplete, auto_merge: true };
-        let policy = super::CompletionPolicy::from_workflow(&workflow);
+        let policy = super::CompletionPolicy::new(CompletionMode::PrThenComplete, true);
         let task = make_task(TaskStatus::InProgress);
         assert!(policy.required_pr_url(&task, true).unwrap().is_none());
     }

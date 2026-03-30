@@ -26,8 +26,8 @@ use crate::bootstrap;
 use crate::infra::config::Config;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
@@ -298,11 +298,12 @@ pub async fn serve(
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);
     let hook_executor = bootstrap::create_api_hook_executor(config.clone(), backend_info, backend.clone());
     let pr_verifier = bootstrap::create_pr_verifier();
+    let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
     let task_service = Arc::new(TaskService::new(
         backend.clone(),
         hook_executor,
         pr_verifier,
-        config.workflow.clone(),
+        completion_policy,
     ));
     let project_service = Arc::new(ProjectService::new(backend.clone()));
     let user_service = Arc::new(UserService::new(backend.clone()));

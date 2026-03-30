@@ -12,7 +12,7 @@ use senko::infra::config::{CliOverrides, Config, HookEntry, HookMode};
 use senko::domain::project::CreateProjectParams;
 use senko::application::port::TaskBackend;
 use senko::domain::task::{
-    CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
+    CompletionPolicy, CreateTaskParams, ListTasksFilter, Priority, Task, TaskEvent, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
 };
 use senko::domain::user::{AddProjectMemberParams, CreateUserParams, Role};
@@ -168,7 +168,8 @@ fn create_task_service(
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), using_http, RuntimeMode::Cli, backend_info, backend.clone());
     let pr_verifier = Arc::new(GhCliPrVerifier);
-    TaskService::new(backend, hooks, pr_verifier, config.workflow.clone())
+    let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
+    TaskService::new(backend, hooks, pr_verifier, completion_policy)
 }
 
 fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {

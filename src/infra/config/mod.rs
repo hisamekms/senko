@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
+pub use crate::domain::task::CompletionMode;
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     #[serde(default)]
@@ -106,28 +108,6 @@ pub enum HookMode {
     Server,
     Client,
     Both,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CompletionMode {
-    MergeThenComplete,
-    PrThenComplete,
-}
-
-impl Default for CompletionMode {
-    fn default() -> Self {
-        CompletionMode::MergeThenComplete
-    }
-}
-
-impl std::fmt::Display for CompletionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CompletionMode::MergeThenComplete => write!(f, "merge_then_complete"),
-            CompletionMode::PrThenComplete => write!(f, "pr_then_complete"),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
