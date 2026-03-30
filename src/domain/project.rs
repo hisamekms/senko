@@ -3,7 +3,6 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
-use super::user::{AddProjectMemberParams, ProjectMember, Role};
 
 /// The default project (id=1) cannot be deleted.
 pub const DEFAULT_PROJECT_ID: i64 = 1;
@@ -61,8 +60,12 @@ pub trait ProjectRepository: Send + Sync {
     async fn get_project_by_name(&self, name: &str) -> Result<Project>;
     async fn list_projects(&self) -> Result<Vec<Project>>;
     async fn delete_project(&self, id: i64) -> Result<()>;
+}
 
-    // Project membership
+use super::user::{AddProjectMemberParams, ProjectMember, Role};
+
+#[async_trait]
+pub trait ProjectMemberRepository: Send + Sync {
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember>;
     async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()>;
     async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>>;

@@ -10,7 +10,7 @@ use tokio::sync::OnceCell;
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::domain::error::DomainError;
-use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -666,7 +666,10 @@ impl ProjectRepository for DynamoDbBackend {
             .context("failed to delete project")?;
         Ok(())
     }
+}
 
+#[async_trait]
+impl ProjectMemberRepository for DynamoDbBackend {
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
         let id = self.next_id("MEMBER").await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();

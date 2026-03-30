@@ -1368,7 +1368,7 @@ use async_trait::async_trait;
 
 use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::infra::config::Config;
-use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,
@@ -1450,7 +1450,10 @@ impl ProjectRepository for SqliteBackend {
     async fn delete_project(&self, id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_project(conn, id))
     }
+}
 
+#[async_trait]
+impl ProjectMemberRepository for SqliteBackend {
     async fn add_project_member(&self, project_id: i64, params: &AddProjectMemberParams) -> Result<ProjectMember> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| add_project_member(conn, project_id, &params))

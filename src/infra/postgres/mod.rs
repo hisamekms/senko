@@ -7,7 +7,7 @@ use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::{AuthenticationPort, TaskQueryPort};
-use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -284,7 +284,10 @@ impl ProjectRepository for PostgresBackend {
         }
         Ok(())
     }
+}
 
+#[async_trait]
+impl ProjectMemberRepository for PostgresBackend {
     async fn add_project_member(
         &self,
         project_id: i64,

@@ -10,7 +10,7 @@ use crate::domain::error::DomainError;
 use crate::domain::task::TaskStatus;
 use crate::presentation::dto::PreviewTransitionResponse;
 use crate::application::port::AuthenticationPort;
-use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,
@@ -253,7 +253,10 @@ impl ProjectRepository for HttpBackend {
             .await?;
         check_success(resp).await
     }
+}
 
+#[async_trait]
+impl ProjectMemberRepository for HttpBackend {
     async fn add_project_member(
         &self,
         project_id: i64,
