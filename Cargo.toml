@@ -31,6 +31,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
 tower-http = { version = "0.6", features = ["trace"] }
 sha2 = "0.10"
+thiserror = "2"
 aws-sdk-dynamodb = { version = "1", optional = true }
 aws-config = { version = "1", optional = true, features = ["behavior-version-latest"] }
 sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres"] }

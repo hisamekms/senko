@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result};
 use rusqlite::{params, Connection, OptionalExtension};
+use crate::domain::error::DomainError;
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -472,7 +473,8 @@ fn get_project(conn: &Connection, id: i64) -> Result<Project> {
             params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .context("project not found")?;
+        .optional()?
+        .ok_or(DomainError::ProjectNotFound)?;
     Ok(Project::new(id, name, description, created_at))
 }
 
@@ -483,7 +485,8 @@ fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
             params![name],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .context("project not found")?;
+        .optional()?
+        .ok_or(DomainError::ProjectNotFound)?;
     Ok(Project::new(id, name.to_string(), description, created_at))
 }
 
@@ -503,9 +506,21 @@ fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
 }
 
 fn delete_project(conn: &Connection, id: i64) -> Result<()> {
+    if id == 1 {
+        return Err(DomainError::CannotDeleteDefaultProject.into());
+    }
+    // Check for existing tasks
+    let task_count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM tasks WHERE project_id = ?1",
+        params![id],
+        |row| row.get(0),
+    )?;
+    if task_count > 0 {
+        return Err(DomainError::CannotDeleteProjectWithTasks { count: task_count }.into());
+    }
     let affected = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
     if affected == 0 {
-        anyhow::bail!("project not found: {id}");
+        return Err(DomainError::ProjectNotFound.into());
     }
     Ok(())
 }
@@ -528,7 +543,8 @@ fn get_user(conn: &Connection, id: i64) -> Result<User> {
             rusqlite::params![id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .context("user not found")?;
+        .optional()?
+        .ok_or(DomainError::UserNotFound)?;
     Ok(User::new(id, username, display_name, email, created_at))
 }
 
@@ -539,7 +555,8 @@ fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
             rusqlite::params![username],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
-        .context("user not found")?;
+        .optional()?
+        .ok_or(DomainError::UserNotFound)?;
     Ok(User::new(id, username.to_string(), display_name, email, created_at))
 }
 
@@ -564,7 +581,7 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
 fn delete_user(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM users WHERE id = ?1", rusqlite::params![id])?;
     if affected == 0 {
-        anyhow::bail!("user not found: {id}");
+        return Err(DomainError::UserNotFound.into());
     }
     Ok(())
 }
@@ -607,7 +624,8 @@ fn get_user_by_api_key(conn: &Connection, key_hash: &str) -> Result<User> {
             params![key_hash],
             |row| Ok((row.get(0)?,)),
         )
-        .context("invalid api key")?;
+        .optional()?
+        .ok_or(DomainError::ApiKeyNotFound)?;
 
     get_user(conn, user_id)
 }
@@ -634,7 +652,7 @@ fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
 fn delete_api_key(conn: &Connection, key_id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM api_keys WHERE id = ?1", params![key_id])?;
     if affected == 0 {
-        anyhow::bail!("api key not found: {key_id}");
+        return Err(DomainError::ApiKeyNotFound.into());
     }
     Ok(())
 }
@@ -665,7 +683,7 @@ fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Re
         rusqlite::params![project_id, user_id],
     )?;
     if affected == 0 {
-        anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
+        return Err(DomainError::ProjectMemberNotFound.into());
     }
     Ok(())
 }
@@ -699,7 +717,8 @@ fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Resul
             rusqlite::params![project_id, user_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
-        .context("project member not found")?;
+        .optional()?
+        .ok_or(DomainError::ProjectMemberNotFound)?;
     let role: Role = role_str.parse()?;
     Ok(ProjectMember::new(id, project_id, user_id, role, created_at))
 }
@@ -715,7 +734,7 @@ fn update_member_role(
         rusqlite::params![project_id, user_id, role.to_string()],
     )?;
     if affected == 0 {
-        anyhow::bail!("project member not found: project_id={project_id}, user_id={user_id}");
+        return Err(DomainError::ProjectMemberNotFound.into());
     }
     get_project_member(conn, project_id, user_id)
 }
@@ -728,9 +747,10 @@ fn verify_task_project(conn: &Connection, project_id: i64, task_id: i64) -> Resu
             params![task_id],
             |row| row.get(0),
         )
-        .context("task not found")?;
+        .optional()?
+        .ok_or(DomainError::TaskNotFound)?;
     if actual_project_id != project_id {
-        anyhow::bail!("task not found");
+        return Err(DomainError::TaskNotFound.into());
     }
     Ok(())
 }
@@ -803,7 +823,8 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
                 ))
             },
         )
-        .context("task not found")?;
+        .optional()?
+        .ok_or(DomainError::TaskNotFound)?;
 
     let status: TaskStatus = status_str.parse()?;
     let priority = Priority::try_from(priority_val)?;
@@ -1133,7 +1154,7 @@ fn update_content_array(
 fn delete_task(conn: &Connection, id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
     if affected == 0 {
-        anyhow::bail!("task not found: {id}");
+        return Err(DomainError::TaskNotFound.into());
     }
     Ok(())
 }
@@ -1264,8 +1285,8 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 
 fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
     // Verify both tasks exist
-    get_task(conn, task_id).context("task not found")?;
-    get_task(conn, dep_id).context("dependency task not found")?;
+    get_task(conn, task_id)?;
+    get_task(conn, dep_id)?;
     conn.execute(
         "INSERT OR IGNORE INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
         params![task_id, dep_id],
@@ -1278,13 +1299,13 @@ fn add_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> 
 }
 
 fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Task> {
-    get_task(conn, task_id).context("task not found")?;
+    get_task(conn, task_id)?;
     let affected = conn.execute(
         "DELETE FROM task_dependencies WHERE task_id = ?1 AND depends_on_task_id = ?2",
         params![task_id, dep_id],
     )?;
     if affected == 0 {
-        anyhow::bail!("dependency not found: task {} does not depend on {}", task_id, dep_id);
+        return Err(DomainError::DependencyNotFound { task_id, dep_id }.into());
     }
     conn.execute(
         "UPDATE tasks SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
@@ -1295,10 +1316,10 @@ fn remove_dependency(conn: &Connection, task_id: i64, dep_id: i64) -> Result<Tas
 
 fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<Task> {
     // Verify task exists
-    get_task(conn, task_id).context("task not found")?;
+    get_task(conn, task_id)?;
     // Verify all deps exist
     for &dep_id in dep_ids {
-        get_task(conn, dep_id).with_context(|| format!("dependency task not found: {}", dep_id))?;
+        get_task(conn, dep_id)?;
     }
 
     // Delete all existing dependencies and insert new ones
@@ -1321,7 +1342,7 @@ fn set_dependencies(conn: &Connection, task_id: i64, dep_ids: &[i64]) -> Result<
 }
 
 fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
-    get_task(conn, task_id).context("task not found")?;
+    get_task(conn, task_id)?;
     let dep_ids = query_i64_list(
         conn,
         "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",

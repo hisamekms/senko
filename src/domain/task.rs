@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use super::error::DomainError;
+
 /// Domain event emitted by Task aggregate methods.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskEvent {
@@ -77,11 +79,11 @@ impl TaskStatus {
         if self.can_transition_to(to) {
             Ok(to)
         } else {
-            Err(anyhow::anyhow!(
-                "invalid status transition: {} -> {}",
-                self,
-                to
-            ))
+            Err(DomainError::InvalidStatusTransition {
+                from: self.to_string(),
+                to: to.to_string(),
+            }
+            .into())
         }
     }
 }
@@ -109,7 +111,7 @@ impl FromStr for TaskStatus {
             "in_progress" => Ok(TaskStatus::InProgress),
             "completed" => Ok(TaskStatus::Completed),
             "canceled" => Ok(TaskStatus::Canceled),
-            _ => Err(anyhow::anyhow!("invalid task status: {s}")),
+            _ => Err(DomainError::InvalidTaskStatus { value: s.to_string() }.into()),
         }
     }
 }
@@ -131,7 +133,7 @@ impl TryFrom<i32> for Priority {
             1 => Ok(Priority::P1),
             2 => Ok(Priority::P2),
             3 => Ok(Priority::P3),
-            _ => Err(anyhow::anyhow!("invalid priority: {value}")),
+            _ => Err(DomainError::InvalidPriority { value: value.to_string() }.into()),
         }
     }
 }
@@ -163,7 +165,7 @@ impl FromStr for Priority {
             "p1" => Ok(Priority::P1),
             "p2" => Ok(Priority::P2),
             "p3" => Ok(Priority::P3),
-            _ => Err(anyhow::anyhow!("invalid priority: {s} (expected p0-p3)")),
+            _ => Err(DomainError::InvalidPriority { value: s.to_string() }.into()),
         }
     }
 }
@@ -547,11 +549,11 @@ impl Task {
     pub fn complete(mut self, completed_at: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         let unchecked_count = self.definition_of_done.iter().filter(|d| !d.checked).count();
         if unchecked_count > 0 {
-            anyhow::bail!(
-                "cannot complete task #{}: {} unchecked DoD item(s)",
-                self.id,
-                unchecked_count
-            );
+            return Err(DomainError::CannotCompleteTask {
+                task_id: self.id,
+                reason: format!("{} unchecked DoD item(s)", unchecked_count),
+            }
+            .into());
         }
         self.status = self.status.transition_to(TaskStatus::Completed)?;
         self.updated_at = completed_at.clone();
@@ -571,7 +573,7 @@ impl Task {
     /// Add a dependency, validating self-dependency. Idempotent (no event if already present).
     pub fn add_dependency(mut self, dep_id: i64, now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if self.id == dep_id {
-            anyhow::bail!("a task cannot depend on itself");
+            return Err(DomainError::SelfDependency.into());
         }
         if !self.dependencies.contains(&dep_id) {
             self.dependencies.push(dep_id);
@@ -589,7 +591,11 @@ impl Task {
         let before = self.dependencies.len();
         self.dependencies.retain(|&d| d != dep_id);
         if self.dependencies.len() == before {
-            anyhow::bail!("dependency not found: task {} does not depend on {}", self.id, dep_id);
+            return Err(DomainError::DependencyNotFound {
+                task_id: self.id,
+                dep_id,
+            }
+            .into());
         }
         if let Some(now) = now {
             self.updated_at = now;
@@ -601,7 +607,7 @@ impl Task {
     pub fn set_dependencies(mut self, dep_ids: &[i64], now: Option<String>) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         for &dep_id in dep_ids {
             if dep_id == self.id {
-                anyhow::bail!("a task cannot depend on itself");
+                return Err(DomainError::SelfDependency.into());
             }
         }
         self.dependencies = dep_ids.to_vec();
@@ -614,10 +620,12 @@ impl Task {
     /// Check a DoD item by 1-based index.
     pub fn check_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
-            anyhow::bail!(
-                "DoD index {} out of range (task #{} has {} DoD item(s))",
-                index, self.id, self.definition_of_done.len()
-            );
+            return Err(DomainError::DodIndexOutOfRange {
+                index,
+                task_id: self.id,
+                count: self.definition_of_done.len(),
+            }
+            .into());
         }
         self.definition_of_done[index - 1].checked = true;
         self.updated_at = now;
@@ -627,10 +635,12 @@ impl Task {
     /// Uncheck a DoD item by 1-based index.
     pub fn uncheck_dod(mut self, index: usize, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
-            anyhow::bail!(
-                "DoD index {} out of range (task #{} has {} DoD item(s))",
-                index, self.id, self.definition_of_done.len()
-            );
+            return Err(DomainError::DodIndexOutOfRange {
+                index,
+                task_id: self.id,
+                count: self.definition_of_done.len(),
+            }
+            .into());
         }
         self.definition_of_done[index - 1].checked = false;
         self.updated_at = now;

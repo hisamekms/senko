@@ -1,8 +1,9 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
 
+use crate::domain::error::DomainError;
 use crate::domain::repository::TaskBackend;
 use crate::infra::config::{CompletionMode, WorkflowConfig};
 use crate::domain::task::{
@@ -157,7 +158,7 @@ impl TaskService {
                         None,
                     )
                     .await;
-                bail!("no eligible task found");
+                return Err(DomainError::NoEligibleTask.into());
             }
         };
 
@@ -189,16 +190,22 @@ impl TaskService {
             && self.workflow.completion_mode == CompletionMode::PrThenComplete
         {
             let pr_url = task.pr_url().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "cannot complete task #{}: completion_mode is pr_then_complete but no pr_url is set. \
-                     Use `senko edit {} --pr-url <url>` to set it.",
-                    id,
-                    id
-                )
+                DomainError::CannotCompleteTask {
+                    task_id: id,
+                    reason: format!(
+                        "completion_mode is pr_then_complete but no pr_url is set. \
+                         Use `senko edit {} --pr-url <url>` to set it.",
+                        id
+                    ),
+                }
             })?;
 
             self.pr_verifier
-                .verify_pr_status(pr_url, self.workflow.auto_merge)?;
+                .verify_pr_status(pr_url, self.workflow.auto_merge)
+                .map_err(|e| DomainError::CannotCompleteTask {
+                    task_id: id,
+                    reason: e.to_string(),
+                })?;
         }
 
         // Capture ready tasks before completion for unblocked detection
@@ -341,7 +348,7 @@ impl TaskService {
         })
         .await
         {
-            bail!("adding this dependency would create a cycle");
+            return Err(DomainError::DependencyCycle { dep_id }.into());
         }
 
         self.backend
@@ -390,7 +397,7 @@ impl TaskService {
             })
             .await
             {
-                bail!("adding dependency on {} would create a cycle", dep_id);
+                return Err(DomainError::DependencyCycle { dep_id }.into());
             }
         }
 
