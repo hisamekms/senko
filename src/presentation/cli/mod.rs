@@ -611,10 +611,12 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
-            let (backend, _) = create_backend(&root, &config)?;
+            let (backend, using_http) = create_backend(&root, &config)?;
+            let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
+            let task_service = std::sync::Arc::new(crate::bootstrap::create_task_service(backend, &config, using_http, &root));
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
-            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, backend).await?;
+            crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_service, project_id).await?;
             Ok(())
         }
         Command::Serve { port, host } => {

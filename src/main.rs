@@ -868,10 +868,12 @@ async fn run(cli: Cli) -> Result<()> {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let mut config = load_config_with_cli(&root, &cli)?;
             config.apply_cli(&CliOverrides { port, host: host.clone(), ..Default::default() });
-            let (backend, _) = create_backend(&root, &config)?;
+            let (backend, using_http) = create_backend(&root, &config)?;
+            let project_id = resolve_project_id(&*backend, &config).await?;
+            let task_service = Arc::new(create_task_service(backend, &config, using_http, &root));
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
-            senko::presentation::web::serve(root, effective_port, port_is_explicit, &config, backend).await?;
+            senko::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_service, project_id).await?;
             Ok(())
         }
         Command::Serve { port, ref host } => {

@@ -12,14 +12,15 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
+use crate::application::TaskService;
 use crate::infra::config::Config;
-use crate::domain::repository::TaskBackend;
 use crate::bootstrap;
 use crate::domain::task::{DodItem, Priority, Task, TaskStatus};
 
 #[derive(Clone)]
 struct AppState {
-    backend: Arc<dyn TaskBackend>,
+    task_service: Arc<TaskService>,
+    project_id: i64,
 }
 
 #[derive(serde::Deserialize)]
@@ -35,12 +36,14 @@ pub async fn serve(
     port: u16,
     port_is_explicit: bool,
     config: &Config,
-    backend: Arc<dyn TaskBackend>,
+    task_service: Arc<TaskService>,
+    project_id: i64,
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
 
     let state = AppState {
-        backend,
+        task_service,
+        project_id,
     };
 
     let app = Router::new()
@@ -94,11 +97,11 @@ async fn index_handler(
         tags,
         ..Default::default()
     };
-    let project_id = 1; // Default project for web viewer
-    let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project_id = state.project_id;
+    let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
     // Collect all tags from all tasks (unfiltered) for the filter UI
-    let all_tasks = state.backend.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
+    let all_tasks = state.task_service.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut all_tags: Vec<String> = all_tasks
@@ -117,7 +120,7 @@ async fn task_handler(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Html<String>, StatusCode> {
-    let task = state.backend.get_task(1, id).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let task = state.task_service.get_task(state.project_id, id).await.map_err(|_| StatusCode::NOT_FOUND)?;
 
     let body = render_task_detail(&task);
     let title = format!("#{} {}", task.id(), escape_html(task.title()));
@@ -140,10 +143,10 @@ async fn graph_handler(
         tags,
         ..Default::default()
     };
-    let project_id = 1;
-    let tasks = state.backend.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let project_id = state.project_id;
+    let tasks = state.task_service.list_tasks(project_id, &filter).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let all_tasks = state.backend.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
+    let all_tasks = state.task_service.list_tasks(project_id, &crate::domain::task::ListTasksFilter::default())
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut all_tags: Vec<String> = all_tasks
