@@ -20,7 +20,6 @@ use crate::application::auth as app_auth;
 use crate::application::auth::Permission;
 use crate::application::port::auth::{AuthError, AuthProvider};
 use crate::application::port::TaskBackend;
-use crate::infra::auth::ApiKeyProvider;
 use self::auth::{HasAuth, OptionalAuthUser};
 use crate::bootstrap;
 use crate::infra::config::Config;
@@ -281,23 +280,9 @@ pub async fn serve(
     config: &Config,
     config_path: Option<PathBuf>,
     backend: Arc<dyn TaskBackend>,
+    auth_provider: Option<Arc<dyn AuthProvider>>,
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
-
-    let auth_provider: Option<Arc<dyn AuthProvider>> = if config.auth.enabled {
-        if backend.supports_api_key_auth() {
-            tracing::info!("authentication enabled");
-            Some(Arc::new(ApiKeyProvider::new(backend.clone())))
-        } else {
-            tracing::warn!(
-                "authentication requested but backend does not support API key auth; disabling"
-            );
-            None
-        }
-    } else {
-        tracing::info!("authentication disabled");
-        None
-    };
 
     // Server always fires hooks (should_fire = true)
     let backend_info = bootstrap::resolve_backend_info(config, &project_root);

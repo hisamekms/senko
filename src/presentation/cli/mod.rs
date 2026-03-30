@@ -669,7 +669,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             let (backend, _) = create_backend(&root, &config)?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3142);
-            crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend).await?;
+            let auth_provider = crate::bootstrap::create_auth_provider(&config, backend.clone());
+            crate::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_provider).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {

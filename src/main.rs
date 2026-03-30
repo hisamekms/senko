@@ -935,7 +935,8 @@ async fn run(cli: Cli) -> Result<()> {
             let (backend, _) = create_backend(&root, &config)?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3142);
-            senko::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend).await?;
+            let auth_provider = senko::bootstrap::create_auth_provider(&config, backend.clone());
+            senko::presentation::api::serve(root, effective_port, port_is_explicit, &config, cli.config.clone(), backend, auth_provider).await?;
             Ok(())
         }
         Command::SkillInstall { ref output_dir, yes } => {

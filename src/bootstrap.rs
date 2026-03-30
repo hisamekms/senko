@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
+use crate::application::port::auth::AuthProvider;
 use crate::application::port::{HookExecutor, NoOpPrVerifier, PrVerifier};
 use crate::application::{HookTestService, ProjectService, TaskService, UserService};
 use crate::domain::task::CompletionPolicy;
@@ -13,6 +14,7 @@ use crate::infra::http::HttpBackend;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
+use crate::infra::auth::ApiKeyProvider;
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
 // Re-exports for presentation layer (avoid direct infra dependency)
@@ -125,6 +127,26 @@ pub fn create_api_hook_executor(
 
 pub fn create_pr_verifier() -> Arc<dyn crate::application::port::PrVerifier> {
     Arc::new(GhCliPrVerifier)
+}
+
+pub fn create_auth_provider(
+    config: &Config,
+    backend: Arc<dyn TaskBackend>,
+) -> Option<Arc<dyn AuthProvider>> {
+    if config.auth.enabled {
+        if backend.supports_api_key_auth() {
+            tracing::info!("authentication enabled");
+            Some(Arc::new(ApiKeyProvider::new(backend)))
+        } else {
+            tracing::warn!(
+                "authentication requested but backend does not support API key auth; disabling"
+            );
+            None
+        }
+    } else {
+        tracing::info!("authentication disabled");
+        None
+    }
 }
 
 pub fn create_task_service(
