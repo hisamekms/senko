@@ -281,18 +281,6 @@ impl ProjectRepository for PostgresBackend {
 
     async fn delete_project(&self, id: i64) -> Result<()> {
         let pool = self.pool().await?;
-        if id == 1 {
-            anyhow::bail!("cannot delete the default project");
-        }
-        let count: i64 =
-            sqlx::query("SELECT COUNT(*) as cnt FROM tasks WHERE project_id = $1")
-                .bind(id)
-                .fetch_one(pool)
-                .await?
-                .get("cnt");
-        if count > 0 {
-            anyhow::bail!("cannot delete project with {} existing task(s)", count);
-        }
         let result = sqlx::query("DELETE FROM projects WHERE id = $1")
             .bind(id)
             .execute(pool)

@@ -653,9 +653,6 @@ impl ProjectRepository for DynamoDbBackend {
     }
 
     async fn delete_project(&self, id: i64) -> Result<()> {
-        if id == 1 {
-            bail!("cannot delete the default project");
-        }
         let client = self.client().await?;
         client
             .delete_item()

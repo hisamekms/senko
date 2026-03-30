@@ -23,7 +23,7 @@ use senko::infra::pr_verifier::GhCliPrVerifier;
 use senko::infra::project_root::resolve_project_root;
 use senko::infra::sqlite as db;
 
-const DEFAULT_PROJECT_ID: i64 = 1;
+use senko::domain::project::DEFAULT_PROJECT_ID;
 
 /// Create the appropriate backend based on config (env + CLI already applied).
 /// Returns (backend, is_http) where is_http indicates HTTP mode for hook control.

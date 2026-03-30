@@ -3,7 +3,8 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::domain::repository::TaskBackend;
-use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::project::{CreateProjectParams, Project, DEFAULT_PROJECT_ID};
+use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{
     AddProjectMemberParams, ProjectMember, Role,
 };
@@ -34,6 +35,13 @@ impl ProjectService {
     }
 
     pub async fn delete_project(&self, id: i64) -> Result<()> {
+        if id == DEFAULT_PROJECT_ID {
+            anyhow::bail!("cannot delete the default project");
+        }
+        let tasks = self.backend.list_tasks(id, &ListTasksFilter::default()).await?;
+        if !tasks.is_empty() {
+            anyhow::bail!("cannot delete project with {} existing task(s)", tasks.len());
+        }
         self.backend.delete_project(id).await
     }
 

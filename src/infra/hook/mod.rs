@@ -495,7 +495,7 @@ fn check_required_env(entry: &HookEntry) -> Vec<&str> {
         .collect()
 }
 
-const DEFAULT_PROJECT_ID: i64 = 1;
+use crate::domain::project::DEFAULT_PROJECT_ID;
 const DEFAULT_USER_ID: i64 = 1;
 
 pub async fn resolve_envelope_context(

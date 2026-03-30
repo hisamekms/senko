@@ -503,18 +503,6 @@ fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
 }
 
 fn delete_project(conn: &Connection, id: i64) -> Result<()> {
-    if id == 1 {
-        anyhow::bail!("cannot delete the default project");
-    }
-    // Check for existing tasks
-    let task_count: i64 = conn.query_row(
-        "SELECT COUNT(*) FROM tasks WHERE project_id = ?1",
-        params![id],
-        |row| row.get(0),
-    )?;
-    if task_count > 0 {
-        anyhow::bail!("cannot delete project with {} existing task(s)", task_count);
-    }
     let affected = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
     if affected == 0 {
         anyhow::bail!("project not found: {id}");

@@ -13,7 +13,7 @@ use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 
-pub const DEFAULT_PROJECT_ID: i64 = 1;
+pub use crate::domain::project::DEFAULT_PROJECT_ID;
 pub const DEFAULT_USER_ID: i64 = 1;
 
 /// Create the appropriate backend based on config (env + CLI already applied).

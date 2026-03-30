@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 
+/// The default project (id=1) cannot be deleted.
+pub const DEFAULT_PROJECT_ID: i64 = 1;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     id: i64,
