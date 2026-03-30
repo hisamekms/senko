@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::application::PreviewResult;
+use crate::application::{CompleteResult, PreviewResult};
 use crate::infra::config::Config;
 use crate::domain::project::Project;
 use crate::domain::task::{DodItem, Task};
@@ -167,6 +167,32 @@ impl From<Task> for TaskViewModel {
             in_scope: t.in_scope().to_vec(),
             out_of_scope: t.out_of_scope().to_vec(),
             dependencies: t.dependencies().to_vec(),
+        }
+    }
+}
+
+// --- Complete Task ---
+
+#[derive(Serialize)]
+pub struct CompleteTaskResponse {
+    pub task: TaskResponse,
+    pub unblocked_tasks: Vec<UnblockedTaskInfo>,
+}
+
+impl From<CompleteResult> for CompleteTaskResponse {
+    fn from(r: CompleteResult) -> Self {
+        Self {
+            task: TaskResponse::from(r.task),
+            unblocked_tasks: r
+                .unblocked
+                .into_iter()
+                .map(|t| UnblockedTaskInfo {
+                    id: t.id(),
+                    title: t.title().to_owned(),
+                    status: "todo".to_owned(),
+                    priority: t.priority().to_string(),
+                })
+                .collect(),
         }
     }
 }

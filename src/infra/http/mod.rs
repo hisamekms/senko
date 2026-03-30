@@ -8,6 +8,7 @@ use crate::application::port::{ProjectQueryPort, TaskQueryPort, UserQueryPort};
 use crate::application::port::TaskTransitionPort;
 use crate::domain::error::DomainError;
 use crate::domain::task::TaskStatus;
+use serde::Deserialize;
 use crate::presentation::dto::PreviewTransitionResponse;
 use crate::application::port::AuthenticationPort;
 use crate::domain::{ApiKeyRepository, ProjectMemberRepository, ProjectRepository, TaskRepository, UserRepository};
@@ -19,6 +20,11 @@ use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
     Role, User,
 };
+
+#[derive(Deserialize)]
+struct CompleteTaskWrapper {
+    task: Task,
+}
 
 pub struct HttpBackend {
     base_url: String,
@@ -596,7 +602,8 @@ impl TaskTransitionPort for HttpBackend {
             .json(&body))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let wrapper: CompleteTaskWrapper = read_json_or_error(resp).await?;
+        Ok(wrapper.task)
     }
 
     async fn cancel_task(

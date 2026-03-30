@@ -1370,14 +1370,14 @@ async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
         return print_dry_run(&cli.output, &DryRunOperation { command: "complete".into(), operations: result.operations });
     }
 
-    let updated = task_service.complete_task(project_id, id, skip_pr_check).await?;
+    let result = task_service.complete_task(project_id, id, skip_pr_check).await?;
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(updated))?);
+            println!("{}", serde_json::to_string_pretty(&TaskResponse::from(result.task))?);
         }
         OutputFormat::Text => {
-            println!("Completed task #{}: {}", updated.id(), updated.title());
+            println!("Completed task #{}: {}", result.task.id(), result.task.title());
         }
     }
 

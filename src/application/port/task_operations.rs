@@ -4,10 +4,18 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, Task, TaskStatus, UnblockedTask, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 
 use super::TaskBackend;
+
+/// Result of completing a task, including newly unblocked tasks.
+#[derive(Debug, Clone)]
+pub struct CompleteResult {
+    pub task: Task,
+    pub unblocked: Vec<UnblockedTask>,
+}
 
 /// Result of previewing a status transition without executing it.
 #[derive(Debug, Clone)]
@@ -49,7 +57,7 @@ pub trait TaskOperations: Send + Sync {
         project_id: i64,
         id: i64,
         skip_pr_check: bool,
-    ) -> Result<Task>;
+    ) -> Result<CompleteResult>;
     async fn cancel_task(
         &self,
         project_id: i64,

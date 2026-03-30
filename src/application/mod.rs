@@ -11,5 +11,5 @@ pub use hook_trigger::HookTrigger;
 pub use project_service::ProjectService;
 pub use crate::domain::task::ListTasksFilter;
 pub use port::{PreviewResult, TaskOperations};
-pub use task_service::TaskService;
+pub use task_service::{CompleteResult, TaskService};
 pub use user_service::UserService;

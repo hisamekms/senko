@@ -9,8 +9,15 @@ use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, Task, TaskEvent, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
+
+/// Result of completing a task, including newly unblocked tasks.
+#[derive(Debug, Clone)]
+pub struct CompleteResult {
+    pub task: Task,
+    pub unblocked: Vec<UnblockedTask>,
+}
 use crate::domain::validator::has_cycle_async;
 
 use super::HookTrigger;
@@ -190,7 +197,7 @@ impl TaskOperations for TaskService {
         project_id: i64,
         id: i64,
         skip_pr_check: bool,
-    ) -> Result<Task> {
+    ) -> Result<CompleteResult> {
         let task = self.backend.get_task(project_id, id).await?;
 
         // PR workflow checks (domain policy decides whether to check).
@@ -229,7 +236,7 @@ impl TaskOperations for TaskService {
         let unblocked_opt = if unblocked.is_empty() {
             None
         } else {
-            Some(unblocked)
+            Some(unblocked.clone())
         };
 
         self.hooks
@@ -241,7 +248,7 @@ impl TaskOperations for TaskService {
             )
             .await;
 
-        Ok(task)
+        Ok(CompleteResult { task, unblocked })
     }
 
     async fn cancel_task(

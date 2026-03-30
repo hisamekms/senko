@@ -32,8 +32,8 @@ use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role,
 };
 use super::dto::{
-    ApiKeyResponse, ApiKeyWithSecretResponse, ConfigResponse, PreviewTransitionResponse,
-    ProjectMemberResponse, ProjectResponse, TaskResponse, UserResponse,
+    ApiKeyResponse, ApiKeyWithSecretResponse, CompleteTaskResponse, ConfigResponse,
+    PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse, TaskResponse, UserResponse,
 };
 
 #[derive(Clone)]
@@ -219,6 +219,11 @@ struct AddDepBody {
 }
 
 #[derive(Deserialize)]
+struct SetDepsBody {
+    dep_ids: Vec<i64>,
+}
+
+#[derive(Deserialize)]
 struct PreviewTransitionQuery {
     target: String,
 }
@@ -386,7 +391,7 @@ pub async fn serve(
         // Dependencies
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/deps",
-            get(list_deps).post(add_dep),
+            get(list_deps).post(add_dep).put(set_deps),
         )
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}",
@@ -697,11 +702,11 @@ async fn complete_task(
     auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
     body: Option<Json<CompleteBody>>,
-) -> Result<Json<TaskResponse>, ApiError> {
+) -> Result<Json<CompleteTaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let skip_pr_check = body.map(|b| b.skip_pr_check).unwrap_or(false);
-    let updated = state.task_service.complete_task(project_id, id, skip_pr_check).await.map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let result = state.task_service.complete_task(project_id, id, skip_pr_check).await.map_err(classify_error)?;
+    Ok(Json(CompleteTaskResponse::from(result)))
 }
 
 // POST /api/v1/projects/{project_id}/tasks/{id}/cancel
@@ -793,6 +798,18 @@ async fn remove_dep(
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state.task_service.remove_dependency(project_id, id, dep_id).await.map_err(classify_error)?;
+    Ok(Json(TaskResponse::from(task)))
+}
+
+// PUT /api/v1/projects/{project_id}/tasks/{id}/deps
+async fn set_deps(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((project_id, id)): Path<(i64, i64)>,
+    Json(body): Json<SetDepsBody>,
+) -> Result<Json<TaskResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let task = state.task_service.set_dependencies(project_id, id, &body.dep_ids).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(task)))
 }
 
