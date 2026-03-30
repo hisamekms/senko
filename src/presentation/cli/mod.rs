@@ -649,9 +649,9 @@ pub async fn run(cli: Cli) -> Result<()> {
                 port, host,
                 ..Default::default()
             });
-            let (backend, using_http) = create_backend(&root, &config)?;
+            let (backend, _) = create_backend(&root, &config)?;
             let project_id = crate::bootstrap::resolve_project_id(&*backend, &config).await?;
-            let task_service = std::sync::Arc::new(crate::bootstrap::create_local_task_operations(backend, &config, using_http, &root));
+            let task_service: std::sync::Arc<dyn crate::application::TaskOperations> = std::sync::Arc::from(crate::bootstrap::create_task_operations(&root, &config)?);
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
             crate::presentation::web::serve(root, effective_port, port_is_explicit, &config, task_service, project_id).await?;

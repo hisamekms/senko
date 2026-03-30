@@ -5,12 +5,13 @@ use anyhow::{bail, Context, Result};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
 use crate::application::port::auth::AuthProvider;
-use crate::application::port::{HookExecutor, PrVerifier};
+use crate::application::port::{HookExecutor, PrVerifier, TaskOperations};
 use crate::application::{HookTestService, LocalTaskOperations, ProjectService, UserService};
 use crate::domain::task::CompletionPolicy;
 use crate::application::port::TaskBackend;
 use crate::infra::config::{Config, HookMode, LogConfig, LogFormat, RawConfig};
 use crate::infra::http::HttpBackend;
+use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::hook::executor::ShellHookExecutor;
 use crate::infra::hook::test_executor::ShellHookTestExecutor;
 use crate::infra::hook::{RuntimeMode, BackendInfo};
@@ -160,6 +161,37 @@ pub fn create_local_task_operations(
     let pr_verifier: Arc<dyn PrVerifier> = Arc::new(GhCliPrVerifier);
     let completion_policy = CompletionPolicy::new(config.workflow.completion_mode, config.workflow.auto_merge);
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
+}
+
+pub fn create_remote_task_operations(
+    config: &Config,
+    project_root: &Path,
+) -> RemoteTaskOperations {
+    let url = config.backend.api_url.as_ref().expect("api_url must be set for remote ops");
+    let api_key = config.backend.api_key.clone();
+    let backend_info = resolve_backend_info(config, project_root);
+    // RemoteTaskOperations needs a hook executor. The ShellHookExecutor requires
+    // an Arc<dyn TaskBackend> for context. Create a lightweight HttpBackend for this.
+    let hook_backend: Arc<dyn TaskBackend> = match &api_key {
+        Some(key) => Arc::new(HttpBackend::with_api_key(url, key.clone())),
+        None => Arc::new(HttpBackend::new(url)),
+    };
+    let hooks = create_hook_executor(config.clone(), true, RuntimeMode::Cli, backend_info, hook_backend);
+    RemoteTaskOperations::new(url, api_key, hooks)
+}
+
+/// Create the appropriate `TaskOperations` implementation based on config.
+/// Returns `RemoteTaskOperations` for HTTP backends, `LocalTaskOperations` otherwise.
+pub fn create_task_operations(
+    project_root: &Path,
+    config: &Config,
+) -> Result<Box<dyn TaskOperations>> {
+    if config.backend.api_url.is_some() {
+        Ok(Box::new(create_remote_task_operations(config, project_root)))
+    } else {
+        let (backend, using_http) = create_backend(project_root, config)?;
+        Ok(Box::new(create_local_task_operations(backend, config, using_http, project_root)))
+    }
 }
 
 pub fn create_project_service(backend: Arc<dyn TaskBackend>) -> ProjectService {

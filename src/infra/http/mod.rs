@@ -1,3 +1,5 @@
+pub mod remote_task_ops;
+
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
@@ -98,7 +100,7 @@ impl HttpBackend {
 }
 
 /// Extract error message from a JSON error response body.
-async fn extract_error(resp: reqwest::Response) -> String {
+pub(crate) async fn extract_error(resp: reqwest::Response) -> String {
     resp.json::<serde_json::Value>()
         .await
         .ok()
@@ -107,7 +109,7 @@ async fn extract_error(resp: reqwest::Response) -> String {
 }
 
 /// Read a successful JSON response, or bail with the error body on non-2xx.
-async fn read_json_or_error<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
+pub(crate) async fn read_json_or_error<T: serde::de::DeserializeOwned>(resp: reqwest::Response) -> Result<T> {
     if resp.status().is_success() {
         Ok(resp.json().await?)
     } else {
@@ -116,7 +118,7 @@ async fn read_json_or_error<T: serde::de::DeserializeOwned>(resp: reqwest::Respo
 }
 
 /// Check that a response is successful (2xx), ignoring the body. Bail on error.
-async fn check_success(resp: reqwest::Response) -> Result<()> {
+pub(crate) async fn check_success(resp: reqwest::Response) -> Result<()> {
     if resp.status().is_success() {
         Ok(())
     } else {
@@ -125,7 +127,7 @@ async fn check_success(resp: reqwest::Response) -> Result<()> {
 }
 
 /// Build the JSON body for `PUT /tasks/{id}` from `UpdateTaskParams`.
-fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
+pub(crate) fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
     if let Some(ref title) = params.title {
@@ -177,7 +179,7 @@ fn update_params_to_json(params: &UpdateTaskParams) -> serde_json::Value {
 }
 
 /// Build the JSON body for `PUT /tasks/{id}` from `UpdateTaskArrayParams`.
-fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
+pub(crate) fn array_params_to_json(params: &UpdateTaskArrayParams) -> serde_json::Value {
     let mut map = serde_json::Map::new();
 
     macro_rules! array_field {

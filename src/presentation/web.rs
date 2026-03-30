@@ -12,14 +12,14 @@ use tower_http::trace::TraceLayer;
 
 use pulldown_cmark::{Options, Parser};
 
-use crate::application::{ListTasksFilter, LocalTaskOperations, TaskOperations};
+use crate::application::{ListTasksFilter, TaskOperations};
 use crate::infra::config::Config;
 use crate::bootstrap;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 
 #[derive(Clone)]
 struct AppState {
-    task_service: Arc<LocalTaskOperations>,
+    task_service: Arc<dyn TaskOperations>,
     project_id: i64,
 }
 
@@ -36,7 +36,7 @@ pub async fn serve(
     port: u16,
     port_is_explicit: bool,
     config: &Config,
-    task_service: Arc<LocalTaskOperations>,
+    task_service: Arc<dyn TaskOperations>,
     project_id: i64,
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);

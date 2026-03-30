@@ -80,10 +80,6 @@ impl LocalTaskOperations {
 
 #[async_trait]
 impl TaskOperations for LocalTaskOperations {
-    fn backend(&self) -> &dyn TaskBackend {
-        self.backend.as_ref()
-    }
-
     // --- Task CRUD with business logic ---
 
     async fn create_task(

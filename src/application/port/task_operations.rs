@@ -8,8 +8,6 @@ use crate::domain::task::{
     UpdateTaskParams,
 };
 
-use super::TaskBackend;
-
 /// Result of completing a task, including newly unblocked tasks.
 #[derive(Debug, Clone)]
 pub struct CompleteResult {
@@ -144,8 +142,4 @@ pub trait TaskOperations: Send + Sync {
     ) -> Result<Vec<Task>>;
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
     async fn ready_count(&self, project_id: i64) -> Result<i64>;
-
-    // --- Accessor ---
-
-    fn backend(&self) -> &dyn TaskBackend;
 }
