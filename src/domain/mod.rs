@@ -11,3 +11,5 @@ pub use repository::*;
 pub use task::*;
 pub use user::*;
 pub use validator::*;
+
+pub const DEFAULT_USER_ID: i64 = 1;

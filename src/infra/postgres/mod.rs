@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use sha2::{Digest, Sha256};
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 
@@ -45,12 +44,6 @@ impl PostgresBackend {
 
 fn now_utc() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
-}
-
-fn hash_api_key(key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(key.as_bytes());
-    format!("{:x}", hasher.finalize())
 }
 
 const MIGRATION_SQL: &str = include_str!("migrations/20260328000000_initial_schema.sql");
@@ -516,9 +509,8 @@ impl ProjectRepository for PostgresBackend {
         ))
     }
 
-    async fn get_user_by_api_key(&self, key: &str) -> Result<User> {
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
         let pool = self.pool().await?;
-        let key_hash = hash_api_key(key);
 
         sqlx::query(
             "UPDATE api_keys SET last_used_at = $2 WHERE key_hash = $1",

@@ -1,0 +1,12 @@
+{
+  "layers": {
+    "domain": "src/domain",
+    "application": "src/application",
+    "infrastructure": "src/infra",
+    "presentation": "src/presentation"
+  },
+  "output": [
+    { "type": "text" },
+    { "type": "file", "path": "docs/arch-review/{date}.md" }
+  ]
+}
