@@ -136,6 +136,9 @@ impl From<AuthError> for ApiError {
 }
 
 fn classify_error(e: anyhow::Error) -> ApiError {
+    if e.downcast_ref::<crate::auth::AuthError>().is_some() {
+        return ApiError::Forbidden(e.to_string());
+    }
     let msg = e.to_string();
     if msg.contains("not found") || msg.contains("no eligible task") {
         ApiError::NotFound(msg)
@@ -475,7 +478,8 @@ async fn delete_project(
     Path(project_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    state.project_service.delete_project(project_id).await.map_err(classify_error)?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
+    state.project_service.delete_project(project_id, caller_user_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -837,8 +841,9 @@ async fn add_member(
     Json(body): Json<AddMemberBody>,
 ) -> Result<(StatusCode, Json<crate::domain::user::ProjectMember>), ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
     let params = AddProjectMemberParams::new(body.user_id, body.role);
-    let member = state.project_service.add_project_member(project_id, &params).await.map_err(classify_error)?;
+    let member = state.project_service.add_project_member(project_id, &params, caller_user_id).await.map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(member)))
 }
 
@@ -861,7 +866,8 @@ async fn update_member_role(
     Json(body): Json<UpdateRoleBody>,
 ) -> Result<Json<crate::domain::user::ProjectMember>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    let member = state.project_service.update_member_role(project_id, user_id, body.role).await.map_err(classify_error)?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
+    let member = state.project_service.update_member_role(project_id, user_id, body.role, caller_user_id).await.map_err(classify_error)?;
     Ok(Json(member))
 }
 
@@ -872,7 +878,8 @@ async fn remove_member(
     Path((project_id, user_id)): Path<(i64, i64)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
-    state.project_service.remove_project_member(project_id, user_id).await.map_err(classify_error)?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
+    state.project_service.remove_project_member(project_id, user_id, caller_user_id).await.map_err(classify_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

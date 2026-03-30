@@ -1366,7 +1366,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
             }
         }
         ProjectAction::Delete { id } => {
-            project_service.delete_project(*id).await?;
+            project_service.delete_project(*id, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::json!({"deleted": id}));
@@ -1464,7 +1464,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         MemberAction::Add { user_id, role } => {
             let params = AddProjectMemberParams::new(*user_id, *role);
             let member = project_service
-                .add_project_member(DEFAULT_PROJECT_ID, &params)
+                .add_project_member(DEFAULT_PROJECT_ID, &params, None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
@@ -1480,7 +1480,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::Remove { user_id } => {
             project_service
-                .remove_project_member(DEFAULT_PROJECT_ID, *user_id)
+                .remove_project_member(DEFAULT_PROJECT_ID, *user_id, None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {
@@ -1496,7 +1496,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::SetRole { user_id, role } => {
             let member = project_service
-                .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role)
+                .update_member_role(DEFAULT_PROJECT_ID, *user_id, *role, None)
                 .await?;
             match cli.output {
                 OutputFormat::Json => {

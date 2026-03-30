@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::auth::{Permission, require_project_role};
 use crate::domain::repository::TaskBackend;
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::user::{
@@ -33,7 +34,10 @@ impl ProjectService {
         self.backend.get_project_by_name(name).await
     }
 
-    pub async fn delete_project(&self, id: i64) -> Result<()> {
+    pub async fn delete_project(&self, id: i64, caller_user_id: Option<i64>) -> Result<()> {
+        if let Some(uid) = caller_user_id {
+            require_project_role(self.backend.as_ref(), uid, id, Permission::Admin).await?;
+        }
         self.backend.delete_project(id).await
     }
 
@@ -50,7 +54,11 @@ impl ProjectService {
         &self,
         project_id: i64,
         params: &AddProjectMemberParams,
+        caller_user_id: Option<i64>,
     ) -> Result<ProjectMember> {
+        if let Some(uid) = caller_user_id {
+            require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
+        }
         self.backend.add_project_member(project_id, params).await
     }
 
@@ -58,7 +66,11 @@ impl ProjectService {
         &self,
         project_id: i64,
         user_id: i64,
+        caller_user_id: Option<i64>,
     ) -> Result<()> {
+        if let Some(uid) = caller_user_id {
+            require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
+        }
         self.backend.remove_project_member(project_id, user_id).await
     }
 
@@ -75,7 +87,11 @@ impl ProjectService {
         project_id: i64,
         user_id: i64,
         role: Role,
+        caller_user_id: Option<i64>,
     ) -> Result<ProjectMember> {
+        if let Some(uid) = caller_user_id {
+            require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
+        }
         self.backend.update_member_role(project_id, user_id, role).await
     }
 }
