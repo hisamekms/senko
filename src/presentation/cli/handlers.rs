@@ -164,8 +164,9 @@ pub async fn cmd_list(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
+    let task_service = create_task_service(backend, &config, using_http, &root);
 
     let statuses = status
         .into_iter()
@@ -180,7 +181,7 @@ pub async fn cmd_list(
         ready,
     };
 
-    let tasks = backend.list_tasks(project_id, &filter).await?;
+    let tasks = task_service.list_tasks(project_id, &filter).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -201,9 +202,10 @@ pub async fn cmd_list(
 pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (backend, _) = create_backend(&root, &config)?;
+    let (backend, using_http) = create_backend(&root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
-    let task = backend.get_task(project_id, task_id).await?;
+    let task_service = create_task_service(backend, &config, using_http, &root);
+    let task = task_service.get_task(project_id, task_id).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -1023,11 +1025,12 @@ pub async fn cmd_edit(
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &project_root)?;
-    let (backend, _) = create_backend(&project_root, &config)?;
+    let (backend, using_http) = create_backend(&project_root, &config)?;
     let project_id = resolve_project_id(&*backend, &config).await?;
+    let task_service = create_task_service(backend, &config, using_http, &project_root);
 
     // Verify task exists (even in dry-run)
-    let _task = backend.get_task(project_id, id).await?;
+    let _task = task_service.get_task(project_id, id).await?;
 
     // Resolve effective plan: --plan-file takes precedence over --plan (they conflict via clap)
     let effective_plan = if let Some(path) = plan_file {
@@ -1154,9 +1157,9 @@ pub async fn cmd_edit(
         remove_out_of_scope: remove_out_of_scope.to_vec(),
     };
 
-    backend.update_task(project_id, id, &scalar_params).await?;
-    backend.update_task_arrays(project_id, id, &array_params).await?;
-    let task = backend.get_task(project_id, id).await?;
+    task_service.edit_task(project_id, id, &scalar_params).await?;
+    task_service.edit_task_arrays(project_id, id, &array_params).await?;
+    let task = task_service.get_task(project_id, id).await?;
 
     match cli.output {
         OutputFormat::Json => {
