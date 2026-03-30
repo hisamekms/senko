@@ -6,7 +6,7 @@ use sqlx::postgres::PgPool;
 use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
-use crate::application::port::TaskQueryPort;
+use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
@@ -484,6 +484,29 @@ impl UserRepository for PostgresBackend {
 }
 
 #[async_trait]
+impl AuthenticationPort for PostgresBackend {
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
+        let pool = self.pool().await?;
+
+        sqlx::query(
+            "UPDATE api_keys SET last_used_at = $2 WHERE key_hash = $1",
+        )
+        .bind(&key_hash)
+        .bind(now_utc())
+        .execute(pool)
+        .await?;
+
+        let row = sqlx::query("SELECT user_id FROM api_keys WHERE key_hash = $1")
+            .bind(&key_hash)
+            .fetch_optional(pool)
+            .await?
+            .context("invalid api key")?;
+        let user_id: i64 = row.get("user_id");
+        self.get_user(user_id).await
+    }
+}
+
+#[async_trait]
 impl ApiKeyRepository for PostgresBackend {
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let pool = self.pool().await?;
@@ -508,26 +531,6 @@ impl ApiKeyRepository for PostgresBackend {
             name.to_string(),
             row.get("created_at"),
         ))
-    }
-
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
-        let pool = self.pool().await?;
-
-        sqlx::query(
-            "UPDATE api_keys SET last_used_at = $2 WHERE key_hash = $1",
-        )
-        .bind(&key_hash)
-        .bind(now_utc())
-        .execute(pool)
-        .await?;
-
-        let row = sqlx::query("SELECT user_id FROM api_keys WHERE key_hash = $1")
-            .bind(&key_hash)
-            .fetch_optional(pool)
-            .await?
-            .context("invalid api key")?;
-        let user_id: i64 = row.get("user_id");
-        self.get_user(user_id).await
     }
 
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {

@@ -9,6 +9,7 @@ use crate::application::port::TaskTransitionPort;
 use crate::domain::error::DomainError;
 use crate::domain::task::TaskStatus;
 use crate::presentation::dto::PreviewTransitionResponse;
+use crate::application::port::AuthenticationPort;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
@@ -364,23 +365,26 @@ impl UserRepository for HttpBackend {
 }
 
 #[async_trait]
-impl ApiKeyRepository for HttpBackend {
+impl AuthenticationPort for HttpBackend {
     fn supports_api_key_auth(&self) -> bool {
         false
-    }
-
-    async fn create_api_key(&self, user_id: i64, name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
-        let resp = self.auth(
-            self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
-                .json(&json!({ "name": name }))
-        ).send().await?;
-        read_json_or_error(resp).await
     }
 
     async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
         Err(DomainError::UnsupportedOperation {
             operation: "get_user_by_api_key".into(),
         }.into())
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for HttpBackend {
+    async fn create_api_key(&self, user_id: i64, name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
+        let resp = self.auth(
+            self.client.post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
+                .json(&json!({ "name": name }))
+        ).send().await?;
+        read_json_or_error(resp).await
     }
 
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {

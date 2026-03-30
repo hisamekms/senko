@@ -1356,7 +1356,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::application::port::TaskQueryPort;
+use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::infra::config::Config;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 
@@ -1489,16 +1489,19 @@ impl UserRepository for SqliteBackend {
 }
 
 #[async_trait]
+impl AuthenticationPort for SqliteBackend {
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
+        let key_hash = key_hash.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key_hash))
+    }
+}
+
+#[async_trait]
 impl ApiKeyRepository for SqliteBackend {
     async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         let name = name.to_owned();
         let new_key = new_key.clone();
         blocking!(self, |conn: &Connection| create_api_key(conn, user_id, &name, &new_key))
-    }
-
-    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User> {
-        let key_hash = key_hash.to_owned();
-        blocking!(self, |conn: &Connection| get_user_by_api_key(conn, &key_hash))
     }
 
     async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {

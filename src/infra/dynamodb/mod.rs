@@ -8,7 +8,7 @@ use chrono::Utc;
 use tokio::sync::OnceCell;
 
 use crate::domain::project::{CreateProjectParams, Project};
-use crate::application::port::TaskQueryPort;
+use crate::application::port::{AuthenticationPort, TaskQueryPort};
 use crate::domain::error::DomainError;
 use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
@@ -786,24 +786,27 @@ impl UserRepository for DynamoDbBackend {
 }
 
 #[async_trait]
-impl ApiKeyRepository for DynamoDbBackend {
-    fn supports_api_key_management(&self) -> bool {
+impl AuthenticationPort for DynamoDbBackend {
+    fn supports_api_key_auth(&self) -> bool {
         false
     }
 
-    fn supports_api_key_auth(&self) -> bool {
+    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
+        Err(DomainError::UnsupportedOperation {
+            operation: "get_user_by_api_key".into(),
+        }.into())
+    }
+}
+
+#[async_trait]
+impl ApiKeyRepository for DynamoDbBackend {
+    fn supports_api_key_management(&self) -> bool {
         false
     }
 
     async fn create_api_key(&self, _user_id: i64, _name: &str, _new_key: &NewApiKey) -> Result<ApiKeyWithSecret> {
         Err(DomainError::UnsupportedOperation {
             operation: "create_api_key".into(),
-        }.into())
-    }
-
-    async fn get_user_by_api_key(&self, _key_hash: &str) -> Result<User> {
-        Err(DomainError::UnsupportedOperation {
-            operation: "get_user_by_api_key".into(),
         }.into())
     }
 
