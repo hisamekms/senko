@@ -1415,7 +1415,7 @@ use async_trait::async_trait;
 
 use crate::application::port::TaskQueryPort;
 use crate::infra::config::Config;
-use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 
 pub struct SqliteBackend {
     conn: Arc<std::sync::Mutex<Connection>>,

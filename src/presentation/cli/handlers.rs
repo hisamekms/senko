@@ -1522,7 +1522,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
 mod tests {
     use super::*;
     use super::super::{Command, OutputFormat};
-    use crate::domain::repository::TaskRepository;
+    use crate::domain::TaskRepository;
 
     #[tokio::test]
     async fn cmd_add_with_flags() {

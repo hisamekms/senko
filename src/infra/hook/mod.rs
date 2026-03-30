@@ -681,7 +681,7 @@ mod tests {
     };
     use crate::infra::sqlite::SqliteBackend;
     use crate::application::port::TaskQueryPort;
-    use crate::domain::repository::{ProjectRepository, TaskRepository};
+    use crate::domain::{ProjectRepository, TaskRepository};
     use std::sync::Mutex;
 
     /// Mutex to serialize tests that modify environment variables.

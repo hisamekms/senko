@@ -6,7 +6,7 @@ use serde_json::json;
 
 use crate::application::port::TaskQueryPort;
 use crate::domain::error::DomainError;
-use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, Task, UpdateTaskArrayParams, UpdateTaskParams,

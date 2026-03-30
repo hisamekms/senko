@@ -2358,7 +2358,7 @@ mod tests {
     use clap::Parser;
 
     use super::*;
-    use senko::domain::repository::{ProjectRepository, TaskRepository};
+    use senko::domain::{ProjectRepository, TaskRepository};
 
     #[test]
     fn parse_add_subcommand() {

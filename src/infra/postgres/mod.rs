@@ -7,7 +7,7 @@ use sqlx::Row;
 
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::application::port::TaskQueryPort;
-use crate::domain::repository::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
+use crate::domain::{ApiKeyRepository, ProjectRepository, TaskRepository, UserRepository};
 use crate::domain::task::{
     CreateTaskParams, DodItem, ListTasksFilter, Priority, Task, TaskStatus, UpdateTaskArrayParams,
     UpdateTaskParams,

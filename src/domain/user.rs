@@ -1,6 +1,8 @@
 use std::fmt;
 use std::str::FromStr;
 
+use anyhow::Result;
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -242,4 +244,31 @@ pub fn hash_api_key(key: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(key.as_bytes());
     format!("{:x}", hasher.finalize())
+}
+
+#[async_trait]
+pub trait UserRepository: Send + Sync {
+    async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
+    async fn get_user(&self, id: i64) -> Result<User>;
+    async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn list_users(&self) -> Result<Vec<User>>;
+    async fn delete_user(&self, id: i64) -> Result<()>;
+}
+
+#[async_trait]
+pub trait ApiKeyRepository: Send + Sync {
+    /// Whether this backend supports API key CRUD (create, list, delete).
+    fn supports_api_key_management(&self) -> bool {
+        true
+    }
+
+    /// Whether this backend supports API key authentication (lookup by hash).
+    fn supports_api_key_auth(&self) -> bool {
+        true
+    }
+
+    async fn create_api_key(&self, user_id: i64, name: &str, new_key: &NewApiKey) -> Result<ApiKeyWithSecret>;
+    async fn get_user_by_api_key(&self, key_hash: &str) -> Result<User>;
+    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>>;
+    async fn delete_api_key(&self, key_id: i64) -> Result<()>;
 }
