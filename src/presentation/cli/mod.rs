@@ -520,7 +520,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # hook_mode = "server"  # "server" (default), "client", or "both"
 
 [storage]
-# db_path = "/custom/path/to/data.db"  # override SQLite database path (default: $XDG_DATA_HOME/senko/data.db)
+# db_path = "/custom/path/to/data.db"  # override SQLite database path (default: $XDG_DATA_HOME/senko/projects/<hash>/data.db)
 
 [log]
 # dir = "/custom/path/to/logs"  # override log output directory (default: $XDG_STATE_HOME/senko)

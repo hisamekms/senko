@@ -37,12 +37,12 @@ For each section, explain every item's **current value**, whether it's the **def
 **storage**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `db_path` | auto (`.senko/data.db`) | file path | Path to the SQLite database file. |
+| `db_path` | auto (`$XDG_DATA_HOME/senko/projects/<hash>/data.db`) | file path | Path to the SQLite database file. |
 
 **log**
 | Key | Default | Options | Description |
 |---|---|---|---|
-| `dir` | auto (`.senko/logs/`) | directory path | Directory for log files. |
+| `dir` | auto (`$XDG_STATE_HOME/senko`) | directory path | Directory for log files. |
 | `level` | `info` | `trace`, `debug`, `info`, `warn`, `error` | Minimum log level. |
 | `format` | `json` | `json`, `text` | Log output format. |
 
