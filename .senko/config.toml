@@ -1,0 +1,36 @@
+# senko configuration
+# Config layering (priority high -> low):
+#   1. CLI flag (--config)
+#   2. SENKO_CONFIG env var
+#   3. Project config (.senko/config.toml)
+#   4. User config (~/.config/senko/config.toml)
+
+[project]
+name = "senko"
+
+# [workflow]
+# completion_mode = "merge_then_complete"
+# auto_merge = true
+# branch_mode = "worktree"
+# merge_strategy = "rebase"
+
+# [backend]
+# api_url = "http://127.0.0.1:3142"
+# hook_mode = "server"
+
+# [storage]
+# db_path = "/custom/path/to/data.db"
+
+# [log]
+# level = "info"
+# format = "json"
+# dir = "/custom/path/to/logs"
+
+# [web]
+# host = "127.0.0.1"
+# port = 3141
+
+# [hooks]
+# [hooks.on_task_completed.notify]
+# command = "echo 'task completed'"
+# enabled = true
