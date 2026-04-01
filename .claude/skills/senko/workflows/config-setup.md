@@ -20,7 +20,9 @@ For each section below, use `AskUserQuestion` to ask the user about their prefer
 Walk through sections in this order:
 
 1. **project** — Project name (used for hooks/identification)
-2. **user** — User name (for task assignment)
+2. **user** — User name (for task assignment). **Do not write to config.toml.** Instead, ask the user how they want to set their name:
+   - **Option A: config.local.toml** — Ask the user for their name, then write `[user]` section with `name` to `.senko/config.local.toml` (create if it doesn't exist, merge if it does).
+   - **Option B: Environment variable `SENKO_USER`** — Do nothing in config-setup. Inform the user they can set `export SENKO_USER="Name"` in their shell profile.
 3. **workflow** — How tasks are completed and branches managed:
    - `completion_mode`: merge first then complete, or PR-based completion?
    - `auto_merge`: require PR approval before completion?
@@ -50,15 +52,16 @@ After all sections are covered, generate the TOML and write it to `.senko/config
    - `storage` — Database path
    - `log` — Logging configuration
    - `project` — Project name
-   - `user` — User name
+   - `user` — User name (stored in config.local.toml or environment variable, not config.toml)
    - `web` — Web server settings
    - `hooks` — Task lifecycle hooks
-3. For the selected section(s), walk through the same questions as Create Mode, showing current values.
-4. Update only the modified sections in the config file using the Edit tool.
+3. For the selected section(s), walk through the same questions as Create Mode, showing current values. For `user`, follow the same Option A / Option B flow as Create Mode (write to config.local.toml or advise on environment variable).
+4. Update only the modified sections in the appropriate config file using the Edit tool (config.toml for most sections, config.local.toml for user).
 
 ### Notes
 
-- **Scope**: Only project-level config (`.senko/config.toml`). Do not modify user-level config (`~/.config/senko/config.toml`).
+- **Scope**: Only project-level config (`.senko/config.toml` and `.senko/config.local.toml`). Do not modify user-level config (`~/.config/senko/config.toml`).
+- **User name**: Always write to `.senko/config.local.toml` (git-ignored), never to `.senko/config.toml`. Alternatively, advise using the `SENKO_USER` environment variable.
 - **Defaults**: Only write sections/keys where the user wants non-default values. Comment out defaults for reference.
 - **Validation**: Ensure values are valid (e.g., `completion_mode` must be `merge_then_complete` or `pr_then_complete`).
 - **Hooks**: Each hook entry needs a unique name under the event key (e.g., `[hooks.on_task_ready.my-hook]`).
