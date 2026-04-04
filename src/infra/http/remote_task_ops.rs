@@ -162,6 +162,7 @@ impl TaskOperations for RemoteTaskOperations {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
 
@@ -169,7 +170,7 @@ impl TaskOperations for RemoteTaskOperations {
             .auth(
                 self.client
                     .post(self.project_url(project_id, &format!("/tasks/{id}/start")))
-                    .json(&json!({ "session_id": session_id, "user_id": user_id })),
+                    .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
             )
             .send()
             .await?;
@@ -192,12 +193,13 @@ impl TaskOperations for RemoteTaskOperations {
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         let resp = self
             .auth(
                 self.client
                     .post(self.project_url(project_id, "/tasks/next"))
-                    .json(&json!({ "session_id": session_id, "user_id": user_id })),
+                    .json(&json!({ "session_id": session_id, "user_id": user_id, "metadata": metadata })),
             )
             .send()
             .await?;

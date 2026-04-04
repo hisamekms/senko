@@ -123,9 +123,10 @@ impl TaskOperations for LocalTaskOperations {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         let prev_status = self.backend.get_task(project_id, id).await?.status();
-        let task = self.backend.start_task(project_id, id, session_id, user_id).await?;
+        let task = self.backend.start_task(project_id, id, session_id, user_id, metadata).await?;
 
         self.hooks
             .fire(
@@ -144,6 +145,7 @@ impl TaskOperations for LocalTaskOperations {
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task> {
         let task = match self.backend.next_task(project_id).await? {
             Some(t) => t,
@@ -166,7 +168,7 @@ impl TaskOperations for LocalTaskOperations {
         let task = if task.status() == TaskStatus::InProgress {
             task
         } else {
-            self.backend.start_task(project_id, task.id(), session_id, user_id).await?
+            self.backend.start_task(project_id, task.id(), session_id, user_id, metadata).await?
         };
 
         self.hooks

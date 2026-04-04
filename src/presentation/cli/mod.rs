@@ -165,6 +165,9 @@ pub enum Command {
         session_id: Option<String>,
         #[arg(long)]
         user_id: Option<i64>,
+        /// JSON string to set as task metadata
+        #[arg(long)]
+        metadata: Option<String>,
     },
     /// Transition a task from draft to todo
     Ready {
@@ -179,6 +182,9 @@ pub enum Command {
         session_id: Option<String>,
         #[arg(long)]
         user_id: Option<i64>,
+        /// JSON string to set as task metadata
+        #[arg(long)]
+        metadata: Option<String>,
     },
     /// Edit a task
     Edit {
@@ -587,9 +593,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             ready,
         } => handlers::cmd_list(&cli, status.clone(), tag.clone(), *depends_on, ready).await,
         Command::Get { task_id } => handlers::cmd_get(&cli, task_id).await,
-        Command::Next { ref session_id, user_id } => handlers::cmd_next(&cli, session_id.clone(), user_id).await,
+        Command::Next { ref session_id, user_id, ref metadata } => handlers::cmd_next(&cli, session_id.clone(), user_id, metadata.clone()).await,
         Command::Ready { id } => handlers::cmd_ready(&cli, id).await,
-        Command::Start { id, ref session_id, user_id } => handlers::cmd_start(&cli, id, session_id.clone(), user_id).await,
+        Command::Start { id, ref session_id, user_id, ref metadata } => handlers::cmd_start(&cli, id, session_id.clone(), user_id, metadata.clone()).await,
         Command::Edit {
             id,
             ref title,
@@ -916,6 +922,29 @@ mod tests {
                 assert_eq!(session_id.as_deref(), Some("abc"));
             }
             _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn parse_start_with_metadata() {
+        let cli = Cli::parse_from(["senko", "start", "5", "--metadata", r#"{"key":"val"}"#]);
+        match cli.command {
+            Command::Start { id, metadata, .. } => {
+                assert_eq!(id, 5);
+                assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
+            }
+            _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn parse_next_with_metadata() {
+        let cli = Cli::parse_from(["senko", "next", "--metadata", r#"{"key":"val"}"#]);
+        match cli.command {
+            Command::Next { metadata, .. } => {
+                assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
+            }
+            _ => panic!("expected Next"),
         }
     }
 

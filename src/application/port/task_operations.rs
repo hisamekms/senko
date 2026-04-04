@@ -43,12 +43,14 @@ pub trait TaskOperations: Send + Sync {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task>;
     async fn next_task(
         &self,
         project_id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task>;
     async fn complete_task(
         &self,

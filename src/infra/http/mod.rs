@@ -495,7 +495,7 @@ impl TaskTransitionPort for HttpBackend {
         bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
     }
 
-    async fn start_task(&self, _project_id: i64, _id: i64, _session_id: Option<String>, _user_id: Option<i64>) -> Result<Task> {
+    async fn start_task(&self, _project_id: i64, _id: i64, _session_id: Option<String>, _user_id: Option<i64>, _metadata: Option<serde_json::Value>) -> Result<Task> {
         bail!("task transitions should use RemoteTaskOperations, not HttpBackend")
     }
 

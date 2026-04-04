@@ -891,7 +891,7 @@ command = "echo completed"
         .unwrap();
         let t1 = backend.get_task(1, 1).await.unwrap();
         let (t1, _) = t1.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-        let (t1, _) = t1.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (t1, _) = t1.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
         backend.save(&t1).await.unwrap();
 
         backend.create_task(

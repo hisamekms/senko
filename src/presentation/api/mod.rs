@@ -194,6 +194,7 @@ struct ListTasksQuery {
 struct StartBody {
     session_id: Option<String>,
     user_id: Option<i64>,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -211,6 +212,7 @@ struct CancelBody {
 struct NextBody {
     session_id: Option<String>,
     user_id: Option<i64>,
+    metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -692,7 +694,7 @@ async fn start_task(
     Json(body): Json<StartBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let updated = state.task_service.start_task(project_id, id, body.session_id, body.user_id).await.map_err(classify_error)?;
+    let updated = state.task_service.start_task(project_id, id, body.session_id, body.user_id, body.metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
 
@@ -730,10 +732,10 @@ async fn next_task(
     body: Option<Json<NextBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let (session_id, user_id) = body
-        .map(|b| (b.0.session_id, b.0.user_id))
-        .unwrap_or((None, None));
-    let updated = state.task_service.next_task(project_id, session_id, user_id).await.map_err(classify_error)?;
+    let (session_id, user_id, metadata) = body
+        .map(|b| (b.0.session_id, b.0.user_id, b.0.metadata))
+        .unwrap_or((None, None, None));
+    let updated = state.task_service.next_task(project_id, session_id, user_id, metadata).await.map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
 }
 

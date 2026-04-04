@@ -1343,7 +1343,7 @@ mod tests {
         assert_eq!(task.status(), TaskStatus::Todo);
 
         // Todo → InProgress
-        let (task, _) = task.start(None, None, now_utc()).unwrap();
+        let (task, _) = task.start(None, None, now_utc(), None).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task.status(), TaskStatus::InProgress);

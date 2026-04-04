@@ -19,6 +19,7 @@ pub trait TaskTransitionPort: Send + Sync {
         id: i64,
         session_id: Option<String>,
         user_id: Option<i64>,
+        metadata: Option<serde_json::Value>,
     ) -> Result<Task>;
     async fn complete_task(
         &self,
@@ -55,9 +56,10 @@ pub async fn default_start_task(
     id: i64,
     session_id: Option<String>,
     user_id: Option<i64>,
+    metadata: Option<serde_json::Value>,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
-    let (task, _events) = task.start(session_id, user_id, now_rfc3339())?;
+    let (task, _events) = task.start(session_id, user_id, now_rfc3339(), metadata)?;
     repo.save(&task).await?;
     Ok(task)
 }
@@ -99,8 +101,9 @@ macro_rules! impl_task_transition_default {
                 id: i64,
                 session_id: Option<String>,
                 user_id: Option<i64>,
+                metadata: Option<serde_json::Value>,
             ) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_start_task(self, project_id, id, session_id, user_id).await
+                $crate::application::port::task_transition::default_start_task(self, project_id, id, session_id, user_id, metadata).await
             }
             async fn complete_task(
                 &self,

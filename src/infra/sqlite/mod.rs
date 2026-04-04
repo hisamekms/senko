@@ -1670,12 +1670,12 @@ mod tests {
             }
             TaskStatus::InProgress => {
                 let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
                 let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
-                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.start(None, None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
                 let (task, _) = task.complete("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
@@ -1860,7 +1860,7 @@ mod tests {
         assert_eq!(updated.status(), TaskStatus::Todo);
 
         // todo -> in_progress
-        let (task, _) = updated.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = updated.start(Some("session-1".into()), None, "2025-01-01T00:00:00Z".to_string(), None).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert_eq!(updated.status(), TaskStatus::InProgress);
@@ -2811,7 +2811,7 @@ mod tests {
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Todo);
 
-        let (task, _) = task_got.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task_got.start(Some("sess-1".into()), None, "2026-01-01T00:00:00Z".to_string(), None).unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::InProgress);

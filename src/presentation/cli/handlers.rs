@@ -310,7 +310,7 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
+pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: Option<i64>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, backend) = create_task_operations(&root, &config)?;
@@ -319,6 +319,10 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         Some(id) => Some(id),
         None => Some(resolve_user_id(&*backend, &config).await?),
     };
+    let metadata: Option<serde_json::Value> = metadata
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
 
     if cli.dry_run {
         let mut result = task_ops.preview_transition(project_id, id, TaskStatus::InProgress).await?;
@@ -331,10 +335,13 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
         if let Some(uid) = user_id {
             result.operations.push(format!("Set assignee_user_id to {}", uid));
         }
+        if metadata.is_some() {
+            result.operations.push("Set metadata".to_string());
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "start".into(), operations: result.operations });
     }
 
-    let updated = task_ops.start_task(project_id, id, session_id, user_id).await?;
+    let updated = task_ops.start_task(project_id, id, session_id, user_id, metadata).await?;
 
     match cli.output {
         OutputFormat::Json => {
@@ -348,7 +355,7 @@ pub async fn cmd_start(cli: &Cli, id: i64, session_id: Option<String>, user_id: 
     Ok(())
 }
 
-pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>) -> Result<()> {
+pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64>, metadata: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, backend) = create_task_operations(&root, &config)?;
@@ -357,6 +364,10 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         Some(id) => Some(id),
         None => Some(resolve_user_id(&*backend, &config).await?),
     };
+    let metadata: Option<serde_json::Value> = metadata
+        .map(|s| serde_json::from_str(&s))
+        .transpose()
+        .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
 
     if cli.dry_run {
         let result = task_ops.preview_next(project_id).await?;
@@ -367,10 +378,13 @@ pub async fn cmd_next(cli: &Cli, session_id: Option<String>, user_id: Option<i64
         if let Some(uid) = user_id {
             operations.push(format!("Set assignee_user_id to {}", uid));
         }
+        if metadata.is_some() {
+            operations.push("Set metadata".to_string());
+        }
         return print_dry_run(&cli.output, &DryRunOperation { command: "next".into(), operations });
     }
 
-    let updated = task_ops.next_task(project_id, session_id, user_id).await?;
+    let updated = task_ops.next_task(project_id, session_id, user_id, metadata).await?;
 
     match cli.output {
         OutputFormat::Json => {
