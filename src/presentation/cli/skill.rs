@@ -43,6 +43,8 @@ const SCRIPT_REBASE_MERGE: &str =
     include_str!("../../../.claude/skills/senko/scripts/rebase-merge.sh");
 const SCRIPT_SQUASH_MERGE: &str =
     include_str!("../../../.claude/skills/senko/scripts/squash-merge.sh");
+const SCRIPT_BUILD_START_METADATA: &str =
+    include_str!("../../../.claude/skills/senko/scripts/build-start-metadata.sh");
 
 /// File to install with its relative path under `.claude/` and content.
 pub struct InstallableFile {
@@ -123,6 +125,10 @@ pub const INSTALLABLE_FILES: &[InstallableFile] = &[
     InstallableFile {
         segments: &["skills", "senko", "scripts", "squash-merge.sh"],
         content: SCRIPT_SQUASH_MERGE,
+    },
+    InstallableFile {
+        segments: &["skills", "senko", "scripts", "build-start-metadata.sh"],
+        content: SCRIPT_BUILD_START_METADATA,
     },
     // Agent
     InstallableFile {
@@ -410,6 +416,7 @@ mod tests {
             "generate-plan-sections.sh",
             "rebase-merge.sh",
             "squash-merge.sh",
+            "build-start-metadata.sh",
         ] {
             assert!(scripts_dir.join(name).exists(), "missing script: {name}");
         }
