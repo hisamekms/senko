@@ -45,13 +45,13 @@
 
 | 方式 | 位置づけ | 詳細 |
 |---|---|---|
-| **OIDC (OAuth PKCE)** | **本番の人間ユーザ認証の推奨方式** | [guides/server-remote/auth-oidc.md](../guides/server-remote/auth-oidc.md) |
-| API キー | CI / bot / 試用用。人間のログインには OIDC を推奨 | [guides/server-remote/auth-api-key.md](../guides/server-remote/auth-api-key.md) |
-| 信頼ヘッダ | API Gateway 配下 | [guides/server-remote/auth-trusted-headers.md](../guides/server-remote/auth-trusted-headers.md) |
+| **OIDC** | **本番運用の推奨**。人間は PKCE、bot は Client Credentials (M2M)、どちらも同じ `[server.auth.oidc]` で受ける | [guides/server-remote/auth-oidc.md](../guides/server-remote/auth-oidc.md) |
+| 信頼ヘッダ | API Gateway 配下で JWT 検証を前段に逃がす構成 | [guides/server-remote/auth-trusted-headers.md](../guides/server-remote/auth-trusted-headers.md) |
+| API キー | 試用・初期動作確認のみ | [guides/server-remote/auth-api-key.md](../guides/server-remote/auth-api-key.md) |
 
-## セットアップ手順 (OIDC 構成の例)
+## セットアップ手順 (OIDC 構成)
 
-OIDC が最も現場で使いやすいため、ここでは OIDC 構成を主例にします。API キーのみで始めたい場合は [auth-api-key.md](../guides/server-remote/auth-api-key.md) へ。
+人間 (PKCE) と bot (M2M) を 1 つの OIDC 設定で受ける。API キーのみの試用セットアップは [auth-api-key.md](../guides/server-remote/auth-api-key.md) を参照。
 
 ### Step 1: PostgreSQL を用意
 
@@ -73,16 +73,23 @@ postgres://senko:****@db.internal:5432/senko?sslmode=require
 
 ### Step 2: OIDC IdP を設定
 
-Google / Cognito / Keycloak / Auth0 等で **Public OAuth Client** を登録:
+Google / Cognito / Keycloak / Auth0 等で **2 つの OAuth Client** を登録:
 
+**人間ユーザ用 (Public / PKCE)**
 - Grant: authorization_code (PKCE)
 - Redirect URIs: `http://127.0.0.1:<port>/callback` (`callback_ports` と合わせる)
 - Scopes: `openid profile email`
 - client secret: 不要
 
+**bot / サービスアカウント用 (Confidential / Client Credentials)**
+- Grant: client_credentials
+- Audience: senko サーバの URL (例: `https://senko.example.com`)
+- client_id + client_secret: secret store (CI 変数 / Secrets Manager) に保管
+
 メモしておく値:
 - Issuer URL
-- Client ID
+- 人間用 Client ID
+- bot 用 Client ID (+ secret は secret store へ)
 
 ### Step 3: senko サーバを起動
 
@@ -101,9 +108,11 @@ max_connections = 10
 
 [server.auth.oidc]
 issuer_url     = "https://accounts.example.com"
-client_id      = "senko-cli"
+client_id      = "senko-cli"                       # 人間用 Public client。CLI ログインで使う
 scopes         = ["openid", "profile", "email"]
 callback_ports = ["8400", "9000-9010"]
+# username_claim を "sub" にしておくと人間も M2M も同じ設定で通る
+username_claim = "sub"
 
 [server.auth.oidc.session]
 ttl          = "30d"
@@ -227,31 +236,42 @@ senko task list           # リモート DB からタスク取得
 
 ### Step 7: CI / bot のセットアップ (任意)
 
-CI 環境は OIDC を使わず API キーで:
+人間ユーザと同じく OIDC で通します (Client Credentials フロー)。IdP から JWT を取得して `SENKO_CLI_REMOTE_TOKEN` に注入するだけ。
 
-```bash
-# master key で CI 用のユーザと API キーを発行
-curl -X POST https://senko.example.com/api/v1/users \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -d '{"username":"ci-bot"}'
-curl -X POST https://senko.example.com/api/v1/projects/2/members \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -d '{"user_id":3,"role":"member"}'
-curl -X POST https://senko.example.com/api/v1/users/3/api-keys \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -d '{"name":"ci-bot"}'
-# => key を CI secret に保存
-```
-
-CI ジョブでは:
+GitHub Actions 例:
 
 ```yaml
 env:
   SENKO_CLI_REMOTE_URL: https://senko.example.com
-  SENKO_CLI_REMOTE_TOKEN: ${{ secrets.SENKO_CI_TOKEN }}
 steps:
+  - name: Get OIDC access token (M2M)
+    run: |
+      TOKEN=$(curl -s https://accounts.example.com/oauth/token \
+        -H "Content-Type: application/json" \
+        -d '{
+          "client_id":     "senko-bot",
+          "client_secret": "'"${{ secrets.SENKO_BOT_CLIENT_SECRET }}"'",
+          "audience":      "https://senko.example.com",
+          "grant_type":    "client_credentials"
+        }' | jq -r '.access_token')
+      echo "SENKO_CLI_REMOTE_TOKEN=$TOKEN" >> $GITHUB_ENV
+
   - run: senko task list --status todo --output json
 ```
+
+初回アクセス時に senko 側で bot ユーザ (`username` = JWT の `sub` = client_id) が JIT 登録されるので、あらかじめ member 登録して role を絞っておきます:
+
+```bash
+# 1 度だけ
+curl -s -X POST https://senko.example.com/api/v1/users \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"username":"senko-bot","sub":"senko-bot"}'
+curl -s -X POST https://senko.example.com/api/v1/projects/2/members \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -d '{"user_id":3,"role":"member"}'
+```
+
+claim 設計や JWT の短命 (TTL 更新) など詳細は [auth-oidc.md: CI / bot (OAuth Client Credentials / M2M)](../guides/server-remote/auth-oidc.md#ci--bot-oauth-client-credentials--m2m) を参照。
 
 ## セキュリティチェックリスト
 

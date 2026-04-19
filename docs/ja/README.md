@@ -65,7 +65,7 @@ senko skill-install
 
 **サーバ運用者 (`senko serve`)** — [guides/server-remote/](guides/server-remote/)
 - [デプロイ](guides/server-remote/deploy.md)
-- [API キー認証](guides/server-remote/auth-api-key.md) — 試用 / CI / bot 用
+- [API キー認証](guides/server-remote/auth-api-key.md) — 試用・初期動作確認のみ (本番は人間・bot とも OIDC)
 - [OIDC 認証](guides/server-remote/auth-oidc.md) — 本番人間ユーザの推奨方式
 - [信頼ヘッダ認証](guides/server-remote/auth-trusted-headers.md) — API Gateway 配下
 - [AWS デプロイ](guides/server-remote/aws-deployment.md) — API Gateway + Cognito + Lambda

@@ -2,10 +2,10 @@
 
 シンプルな Bearer トークン認証。
 
-> **位置づけ**: API キー認証は **試用 / 初期動作確認 / CI / bot 用途** です。本番で人間のユーザが日常的にログインする構成としては [OIDC 認証](auth-oidc.md) を推奨します。
+> **位置づけ**: API キー認証は **試用・初期動作確認** 用途に限定されます。本番運用では人間・bot ともに [OIDC 認証](auth-oidc.md) を推奨します (人間は OAuth Authorization Code + PKCE、bot は OAuth Client Credentials = M2M)。
 >
-> - `master_key` はどの認証モードと併用しても **bootstrap 用** として常備する
-> - OIDC を導入後も、CI / bot 用の個別 API キーは引き続き発行して使ってよい
+> - `master_key` はどの認証モードでも **bootstrap 用** (ユーザ/API キーの初回発行) として常備する
+> - IdP で Client Credentials を用意できない、あるいは JWT の短 TTL 運用を避けたい限定ケースでのみ、個別 API キーの継続利用を検討
 
 ## セットアップ
 
@@ -70,7 +70,7 @@ token = "sk_abc123..."
 
 ## master key の管理
 
-- **インターネットに出さない**。発行時も CI の環境変数か Secrets Manager 経由で注入
+- **インターネットに出さない**。発行時も Secrets Manager 経由で注入
 - **ローテーション**: `master_key_arn` を使っていれば Secrets Manager 側でローテート → サーバ再起動で反映
 - **revoke 不可**: master key 自体には失効の仕組みなし。漏洩したら別の値に差し替えて再配布するしかない。通常の API キーと違い DB には保存されていない
 
@@ -102,7 +102,7 @@ curl -s -X DELETE -H "Authorization: Bearer $MASTER_KEY" \
 
 - **デバイス別に発行**: 開発者は自分の端末ごとに別 API キーを作る (`name` に `"alice-laptop"` / `"alice-ci"` など)。紛失時に影響範囲を絞れる
 - **master key は起動時のみの鍵として扱う**: 1 人目のユーザと最初の API キーを作ったら、以降 master key は使わない運用
-- **漏洩対策**: CI ログに `Authorization: Bearer ...` が出力されないよう注意
+- **漏洩対策**: ログに `Authorization: Bearer ...` が出力されないよう注意
 
 ## トラブルシューティング
 

@@ -1,8 +1,8 @@
 # OIDC 認証
 
-OAuth 2.0 Authorization Code + PKCE フローによるログイン。社内 SSO や Google / Cognito / Keycloak / Auth0 等の IdP 配下で使う想定。
+OAuth 2.0 / OIDC の JWT を Bearer として受け付ける認証モード。社内 SSO や Google / Cognito / Keycloak / Auth0 等の IdP 配下で使う想定。
 
-> **本番の人間ユーザ認証としての推奨方式** です。CI / bot からは [API キー認証](auth-api-key.md) を併用してください (`master_key` の有無に関わらず OIDC と API キーは共存可)。
+> **本番運用の推奨方式**。人間ユーザは **OAuth Authorization Code + PKCE** で、CI/bot/サービスアカウントは **OAuth Client Credentials (M2M)** でそれぞれ JWT を取得して senko に送る。senko 側は JWT 検証だけを行うので、同じ `[server.auth.oidc]` 設定でどちらの経路もカバーできます。API キー認証は試用用途のみに留めてください。
 
 ## どう動くか
 
@@ -40,11 +40,25 @@ max_per_user = 10       # 1 ユーザあたりセッション上限
 
 ## IdP 側の設定
 
-IdP に "Public OAuth Client" として登録:
+### 人間ユーザ用 (PKCE)
+
+Public OAuth Client として登録:
 
 - **grant types**: authorization_code (PKCE)
 - **redirect URIs**: `http://127.0.0.1:<port>/callback` (callback_ports と一致させる)
 - **scopes**: `openid profile email`
+- client secret: 不要
+
+### bot / サービスアカウント用 (Client Credentials / M2M)
+
+Confidential (Machine-to-Machine) Client として別途登録:
+
+- **grant types**: client_credentials
+- **audience** (Auth0 等): senko サーバの URL
+- **scopes**: 権限を絞りたければ (senko 自体は scope を見ないが、IdP 側の access control に使える)
+- **client_id + client_secret**: bot の secret store (CI 変数 / Secrets Manager 等) に保管
+
+senko サーバ側の `[server.auth.oidc]` は 1 つで両方を受ける (issuer / audience / required_claims が一致していれば OK)。ただし `username_claim` / `required_claims` は **M2M トークンでも成立する claim** を選ぶこと (後述)。
 
 ## クライアント側 (CLI)
 
@@ -85,7 +99,51 @@ senko auth revoke --all       # 全セッション revoke
 - Linux: libsecret / gnome-keyring の `senko` エントリ
 - Windows: Credential Manager の `senko`
 
-CI / headless 環境では keychain が使えないため、事前に発行した API キーを env で注入する運用に切り替えてください (→ [auth-api-key.md](auth-api-key.md))。
+## CI / bot (OAuth Client Credentials / M2M)
+
+`senko auth login` は対話フローなので CI や headless 環境では使えません。代わりに IdP から **Client Credentials** で JWT を直接取得し、`SENKO_CLI_REMOTE_TOKEN` として注入します。
+
+```bash
+# IdP から JWT 取得 (Auth0 の例)
+JWT=$(curl -s https://accounts.example.com/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id":     "senko-bot",
+    "client_secret": "'"$SENKO_BOT_CLIENT_SECRET"'",
+    "audience":      "https://senko.example.com",
+    "grant_type":    "client_credentials"
+  }' | jq -r '.access_token')
+
+# senko に送る
+export SENKO_CLI_REMOTE_URL="https://senko.example.com"
+export SENKO_CLI_REMOTE_TOKEN="$JWT"
+senko task list
+```
+
+GitHub Actions 等では secret に client_secret を入れて、ジョブ開始時にこのステップを挟むだけで OK。
+
+### claim 設計の注意
+
+人間の JWT と M2M の JWT で claim が違うので、senko 側の `username_claim` / `required_claims` は両方で成立するものを選ぶ:
+
+| 想定 | 人間 JWT | M2M JWT |
+|---|---|---|
+| `sub` | ユーザ ID (IdP 固有) | client_id |
+| `email` / `email_verified` | あり | **なし** |
+| `preferred_username` / `name` | あり | なし (IdP 次第) |
+| カスタム claim (`username`, `service` 等) | IdP の mapping 次第 | IdP の mapping 次第 |
+
+- `username_claim = "sub"` が最もシンプル。M2M なら `senko-bot` のような client_id が username として登録される
+- `required_claims = { email_verified = "true" }` のような人間前提の制約は M2M を弾くので付けない
+- 人間と bot で権限を分けたければ、IdP のカスタム claim (例: `"type": "service"`) + senko 側 JIT 登録後にプロジェクトの role を調整
+
+### JWT の短命問題
+
+Client Credentials で取得した access token は通常 1 時間程度で失効。長時間走るジョブでは取り直しが必要です:
+
+- ジョブステップごとに JWT を取り直す (短いジョブなら十分)
+- 数時間かかる場合は bash ヘルパで `exp` claim を見て残り 5 分を切ったら refetch
+- どうしても長命 token が必要なら限定的に [API キー認証](auth-api-key.md) を検討
 
 ## セッション管理
 

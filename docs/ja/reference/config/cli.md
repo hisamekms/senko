@@ -83,15 +83,28 @@ token は `senko auth login` で keychain に保存する。
 
 ### CI で bot 実行
 
+本番運用では OIDC Client Credentials (M2M) で取得した JWT を env で注入します。設定ファイルに書くのは URL のみ:
+
 ```toml
-# .senko/config.toml に書くのは URL のみ
 [cli.remote]
 url = "https://senko.example.com"
 ```
 
-token は CI の secret から env で注入:
+CI ジョブ:
 
 ```bash
-export SENKO_CLI_REMOTE_TOKEN="$SENKO_CI_TOKEN"
+# IdP から M2M で JWT 取得
+JWT=$(curl -s https://accounts.example.com/oauth/token \
+  -H "Content-Type: application/json" \
+  -d '{
+    "client_id":     "senko-bot",
+    "client_secret": "'"$SENKO_BOT_CLIENT_SECRET"'",
+    "audience":      "https://senko.example.com",
+    "grant_type":    "client_credentials"
+  }' | jq -r '.access_token')
+
+export SENKO_CLI_REMOTE_TOKEN="$JWT"
 senko task list --status todo --output json
 ```
+
+セットアップの全体手順は [auth-oidc.md](../../guides/server-remote/auth-oidc.md) の "CI / bot (OAuth Client Credentials / M2M)" 節。試用時の API キー運用は [auth-api-key.md](../../guides/server-remote/auth-api-key.md)。
