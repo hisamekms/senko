@@ -10,7 +10,7 @@ senko は **AI エージェントが自律的に作業を進めるためのワ�
 senko は AI エージェントの自律的動作を、以下 3 つの柱で支えます。
 
 1. **イベントドリブンなワークフロー** — プロジェクト固有のルール (DoD / ブランチ規則 / 必須 metadata / 段階ごとの指示) を、エージェントの行動に合わせて自動で注入・検証する。hook と workflow stage がこの役割を担う
-2. **タスク分割 + 順次/並列実行** — 大きな作業を依存関係と優先度を持つタスクに分割し、エージェントは「次にやる 1 件」だけに集中できる。ワンショットの巨大プロンプトに詰め込まない。複数セッションで並列 pick も可
+2. **「次の 1 件」に集中できる実行モデル** — 大きな作業を依存関係と優先度を持つタスクに分割し、エージェントは常に「次の 1 件」だけに取り組む。ワンショットの巨大プロンプトに詰め込まず、タスクごとに context をリセットできる。依存が解けた複数タスクは複数 session から並列 pick も可能
 3. **Contract で全体像を保持** — 個々のタスクは短命 (分〜時間) で context をリセットしながら進むが、Contract (週〜月の寿命) と Notes が長期の文脈と知見を保持し、作業の全体像を見失わせない
 
 → 深掘り: [コアコンセプト: 3 つの柱](explanation/core-concept.md)
@@ -48,7 +48,7 @@ senko skill-install
 
 - [コアコンセプト: 3 つの柱](explanation/core-concept.md) — 最初に読む
 - [イベントドリブンなワークフロー](explanation/event-driven-workflow.md) — 柱 1: hook と workflow stage の仕組み
-- [タスク分割と順次/並列実行](explanation/task-decomposition.md) — 柱 2: 依存・優先度・並列 pick
+- [「次の 1 件」に集中できる実行モデル](explanation/task-decomposition.md) — 柱 2: 依存・優先度・並列 pick
 - [Contract による全体像の保持](explanation/contract.md) — 柱 3: 長期文脈と Notes
 - [Runtime の使い分け](explanation/runtimes.md) — cli / server.remote / server.relay のデリバリ基盤
 - [4 層アーキテクチャ](explanation/architecture.md) — コード構造 (domain / application / infra / presentation)
