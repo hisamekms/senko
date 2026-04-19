@@ -4,8 +4,8 @@
 
 > **位置づけ**: API キー認証は **試用・初期動作確認** 用途に限定されます。本番運用では人間・bot ともに [OIDC 認証](auth-oidc.md) を推奨します (人間は OAuth Authorization Code + PKCE、bot は OAuth Client Credentials = M2M)。
 >
-> - `master_key` はどの認証モードでも **bootstrap 用** (ユーザ/API キーの初回発行) として常備する
-> - IdP で Client Credentials を用意できない、あるいは JWT の短 TTL 運用を避けたい限定ケースでのみ、個別 API キーの継続利用を検討
+> - 認証モード 3 つ (`api_key` / `oidc` / `trusted_headers`) は **同時に 1 つだけ** 有効化できる。複数設定すると起動時エラー
+> - したがって `master_key` は **API キーモードを選んだ場合のみ** 存在する概念。OIDC や trusted_headers モードで master 権限を与えたい場合は [`master_group`](auth-oidc.md) (グループクレーム) を使う
 
 ## セットアップ
 

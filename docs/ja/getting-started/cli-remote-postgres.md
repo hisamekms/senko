@@ -36,10 +36,10 @@
 
 | コンポーネント | 役割 | secrets の所在 |
 |---|---|---|
-| senko CLI | 開発者が日常使うクライアント | OIDC セッション or 個人 API キー |
-| senko serve (direct) | 中央の senko サーバ | PostgreSQL credential / master key |
+| senko CLI | 開発者が日常使うクライアント | keychain (OIDC セッション) |
+| senko serve (direct) | 中央の senko サーバ | PostgreSQL credential |
 | PostgreSQL | データ永続層 | (DB 内部) |
-| OIDC IdP (任意) | SSO 認証 | (IdP 側) |
+| OIDC IdP | SSO 認証 | (IdP 側) |
 
 認証方式 (ユーザ用):
 
@@ -119,9 +119,9 @@ ttl          = "30d"
 inactive_ttl = "7d"
 max_per_user = 10
 
-# ユーザ作成用の bootstrap 鍵 (通常の API 操作には使わない)
-[server.auth.api_key]
-master_key_arn = "arn:aws:secretsmanager:ap-northeast-1:123:secret:senko/master-key"
+# 任意: IdP の group claim で super-admin 権限を与える場合
+# groups_claim = "groups"
+# master_group = "senko-admins"
 
 [log]
 format = "json"
@@ -136,7 +136,7 @@ command = "logger -t senko-audit 'task_complete'"
 mode = "async"
 ```
 
-> **注**: `api_key` と `oidc` は **同時有効可**。`api_key` は master key (bootstrap 専用) 用途で、通常の認証は OIDC が担う。
+> **注**: 認証モード (`api_key` / `oidc` / `trusted_headers`) は **同時に 1 つだけ** 有効化できる。OIDC を選んだなら `[server.auth.api_key]` は設定しない (起動時エラーになる)。super-admin 権限が必要なら `master_group` を併用する。
 
 systemd で常駐:
 
@@ -174,31 +174,40 @@ server {
 }
 ```
 
-### Step 5: プロジェクトメンバーを準備
+### Step 5: プロジェクトを作成 (self-bootstrap)
 
-master key で最初のユーザ + プロジェクトメンバーを追加:
+OIDC モードでは **初回ログインで user が自動登録 (JIT)** されます。master key は不要。流れは 2 通り:
+
+**パターン A: 小規模チーム (master_group なし)**
+
+1. 管理者担当の開発者 (alice) が `senko auth login` → JIT user 作成
+2. alice が `senko project create --name backend-team` → alice が owner の project が作成される
+3. 他のメンバー (bob, carol) も各自 `senko auth login` で JIT 登録
+4. 各メンバーは自分の user_id を `senko auth status` で確認し、alice に共有
+5. alice が `senko project members add --user-id <id> --role member` で追加
 
 ```bash
-export MASTER_KEY="$(aws secretsmanager get-secret-value --secret-id senko/master-key --query SecretString --output text)"
+# alice (管理者) 側
+senko auth login
+senko project create --name backend-team       # => id=2, alice が owner
+senko project members add --user-id 3 --role member
 
-# ユーザ (OIDC login すれば自動 JIT 登録もされるが、明示的な作成も可)
-curl -s -X POST https://senko.example.com/api/v1/users \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"alice","sub":"alice@example.com"}'
-
-# プロジェクトを作って
-curl -s -X POST https://senko.example.com/api/v1/projects \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"backend-team"}'
-
-# alice を member に
-curl -s -X POST https://senko.example.com/api/v1/projects/2/members \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":2,"role":"member"}'
+# bob 側 (初回だけ自分の user_id を alice に伝えるため)
+senko auth login
+senko auth status                                # => user.id を確認して共有
 ```
+
+**パターン B: super-admin を置く (master_group あり)**
+
+Step 3 の config で `master_group` を設定しておくと、そのグループに属する JWT 所持者は **user 一覧を取得でき、全プロジェクトの member 管理を master 権限で行える** ようになります。
+
+```bash
+# admin が JIT ログイン済み & master_group のメンバー
+senko user list                                  # 全ユーザを列挙できる
+senko project members add --user-id 3 --role member
+```
+
+運用規模に応じて選んでください。社内ポリシーで super-admin が必要でなければ A で十分です。
 
 ### Step 6: 開発者の CLI を設定
 
@@ -259,16 +268,12 @@ steps:
   - run: senko task list --status todo --output json
 ```
 
-初回アクセス時に senko 側で bot ユーザ (`username` = JWT の `sub` = client_id) が JIT 登録されるので、あらかじめ member 登録して role を絞っておきます:
+bot ユーザも **初回 M2M アクセス時に JIT 登録** されます (username は JWT の `sub` = client_id)。登録後にプロジェクトへ招待しておく:
 
 ```bash
-# 1 度だけ
-curl -s -X POST https://senko.example.com/api/v1/users \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -d '{"username":"senko-bot","sub":"senko-bot"}'
-curl -s -X POST https://senko.example.com/api/v1/projects/2/members \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -d '{"user_id":3,"role":"member"}'
+# bot を 1 度走らせて JIT 登録させてから
+# プロジェクト owner (alice) 側で
+senko project members add --user-id <bot_user_id> --role member
 ```
 
 claim 設計や JWT の短命 (TTL 更新) など詳細は [auth-oidc.md: CI / bot (OAuth Client Credentials / M2M)](../guides/server-remote/auth-oidc.md#ci--bot-oauth-client-credentials--m2m) を参照。
@@ -277,8 +282,9 @@ claim 設計や JWT の短命 (TTL 更新) など詳細は [auth-oidc.md: CI / b
 
 - [ ] TLS 終端 (nginx / ALB / Cloudflare など) が前段に居る
 - [ ] PostgreSQL の credential は Secrets Manager or EnvironmentFile で注入、ログに出ていない
-- [ ] master key は **通常運用で使わない**。ユーザ発行 bootstrap 専用
+- [ ] 認証モードが **1 つだけ** 有効化されている (`api_key` / `oidc` / `trusted_headers` の排他)
 - [ ] OIDC セッション TTL (`ttl` / `inactive_ttl`) が組織ポリシーに沿っている
+- [ ] super-admin を置くなら `master_group` + IdP 側のグループマッピングが機能している
 - [ ] `[server.remote.*]` で監査 hook が仕込まれている
 - [ ] DB バックアップが取れている (`pg_dump` / RDS snapshot)
 

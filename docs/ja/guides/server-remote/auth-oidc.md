@@ -25,6 +25,8 @@ issuer_url = "https://accounts.example.com"
 client_id  = "senko-cli"
 scopes     = ["openid", "profile", "email"]
 # username_claim = "preferred_username"   # 指定しないと sub を使う
+# groups_claim   = "groups"               # master_group 判定に使う claim (既定 "groups")
+# master_group   = "senko-admins"         # このグループに属する JWT は is_master=true
 # required_claims = { email_verified = "true" }
 callback_ports = ["8400", "9000-9010"]    # CLI ログイン時にブラウザが開くローカル callback ポート候補
 
@@ -37,6 +39,40 @@ max_per_user = 10       # 1 ユーザあたりセッション上限
 - `issuer_url` から `.well-known/openid-configuration` が取得できる必要がある
 - `client_id` は IdP 側で "Public client / PKCE" として登録する (secret 不要)
 - `callback_ports` は **CLI 側のマシンで開くポート候補**。個別 or range 指定可
+
+> **他モードとの排他**: `[server.auth.api_key]`(`master_key`) / `[server.auth.oidc]` / `[server.auth.trusted_headers]` は **同時に 1 つだけ** しか有効化できません。OIDC モードを選んだなら `master_key` は設定しない。
+
+## ユーザの自動登録 (JIT)
+
+OIDC モードでは **初回認証時にユーザが自動作成** されます。事前にユーザを発行する必要はありません。
+
+- JWT の `sub` → `users.sub` に保存
+- `username_claim` で指定した claim が `username` (未指定なら `preferred_username` → `email` → `sub` の順)
+- `name` / `email` claim があれば `display_name` / `email` にも入る
+
+初回ログインした人は senko 上でまだ **どのプロジェクトの member でもない** ので、操作できるのは以下のみ:
+
+- 自分のプロフィール取得 (`/auth/me`)
+- **新規プロジェクトの作成** (`POST /api/v1/projects`、作成者が自動で owner になる)
+- `master_group` のクレームを持っていれば、全プロジェクト・全ユーザを操作可能 (後述)
+
+したがって **OIDC モードは self-bootstrap が可能** — 最初のユーザがログインして自分のプロジェクトを作り、そこに他の member を招待すれば運用開始できます。master_key は不要。
+
+## master 権限: `master_group`
+
+OIDC モードでは **グループクレーム** によって master 権限を与えます (API キーモードの `master_key` とは別機構):
+
+```toml
+[server.auth.oidc]
+groups_claim = "groups"              # JWT のどの claim を見るか (既定 "groups")
+master_group = "senko-admins"        # この group に属するユーザは is_master=true
+```
+
+- `groups_claim` は JWT 内で **文字列配列** を持つ claim 名。Cognito なら `cognito:groups`、Auth0 なら mapping で `groups` を出すよう設定
+- `master_group` に一致するエントリが配列に含まれると、その JWT で認証した caller は `is_master=true`
+- `is_master=true` のユーザは **全プロジェクトのメンバーシップ検査を bypass**、`POST /api/v1/users` (ユーザ CRUD) も使える
+
+master_group を設定しない構成でも OIDC は動きます。その場合 senko 上に master はおらず、運用は各プロジェクト owner 単位で完結します (多くのチームではこれで十分)。
 
 ## IdP 側の設定
 

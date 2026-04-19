@@ -62,14 +62,13 @@ App client を作成:
 ### 環境変数
 
 ```
-SENKO_POSTGRES_URL                = (set by rds_secrets_arn instead)
-SENKO_AUTH_API_KEY_MASTER_KEY_ARN = arn:aws:secretsmanager:...:secret:senko/master-key
-PORT                              = 8080    # Lambda Web Adapter が見るポート
+SENKO_POSTGRES_URL = (set by rds_secrets_arn instead)
+PORT               = 8080    # Lambda Web Adapter が見るポート
 ```
 
 ### IAM
 
-- `secretsmanager:GetSecretValue` (master key + RDS secret)
+- `secretsmanager:GetSecretValue` (RDS secret)
 - VPC 内の Lambda にして RDS にアクセスするなら VPC 設定
 - CloudWatch Logs 書き込み権限
 
@@ -91,11 +90,13 @@ subject_header      = "x-senko-user-sub"
 name_header         = "x-senko-user-name"
 email_header        = "x-senko-user-email"
 groups_header       = "x-senko-user-groups"
+# super-admin を持たせる場合: Cognito のグループ名と一致させる
+master_group        = "senko-admins"
 oidc_issuer_url     = "https://cognito-idp.ap-northeast-1.amazonaws.com/ap-northeast-1_XXXXXXXXX"
 oidc_client_id      = "your-app-client-id"
 
-[server.auth.api_key]
-master_key_arn = "arn:aws:secretsmanager:...:secret:senko/master-key"
+# 認証モードは 3 つ (api_key / oidc / trusted_headers) のうち 1 つだけ有効化可能。
+# trusted_headers を使うので [server.auth.api_key] や [server.auth.oidc] は書かない。
 
 [log]
 format = "json"
@@ -162,7 +163,7 @@ senko auth login
 - **Cold start**: 初回 Lambda 起動で 1-3 秒 + DB 接続コスト。ProvisionedConcurrency を検討
 - **Connection pool**: Lambda は同時実行数分だけ新しいインスタンスが立ち上がるため、各 Lambda が直接 RDS に `max_connections` 分プールすると **RDS 側が瞬時に枯渇** しうる。**RDS Proxy を間に挟むのが推奨構成** (Proxy が接続プールを共有し、Lambda 側はそこに短命接続で繋ぐ)。Proxy を使わない場合は `[backend.postgres] max_connections` を 1〜3 程度に抑え、同時実行を ProvisionedConcurrency / reserved concurrency で制限する
 - **Migration**: 新バージョンの Lambda がデプロイされると自動で未適用マイグレーションが走る。canary デプロイで前バージョンとの共存時間を最小化。Proxy を挟んでいれば複数バージョンの Lambda が共存しても接続枯渇は緩和される
-- **master key ローテーション**: Secrets Manager 側でローテートすれば Lambda は次回 cold start 時に新値を取得
+- **super-admin 運用**: Cognito Groups で `senko-admins` 等を作り、`master_group` と揃える。初回メンバーをこのグループに入れておくと、ログインした瞬間から user 一覧・プロジェクト管理が可能
 - **監査ログ**: `[server.remote.*.hooks.audit]` で Lambda から CloudWatch Metrics や EventBridge に流す
 
 ## トラブルシューティング

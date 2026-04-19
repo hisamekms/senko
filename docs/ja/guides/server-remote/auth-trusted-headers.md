@@ -63,24 +63,25 @@ CLI 側の `senko auth login` は、サーバから `GET /auth/config` で取得
 
 ## 認可 (member / role)
 
-trusted_headers で認証したユーザは、**プロジェクトメンバーでないとリソース操作できません**。最初は master key で次の操作を:
+trusted_headers で認証したユーザは、**プロジェクトメンバーでないとリソース操作できません**。ただし任意の認証済みユーザは `POST /api/v1/projects` で新規プロジェクトを作成できる (作成者が owner として自動登録される) ので、OIDC モードと同じく **self-bootstrap** が可能です。
 
-```bash
-# ユーザが JIT 登録されるためには 1 回アクセスが必要。
-# 仮登録されているかを確認:
-curl -H "Authorization: Bearer $MASTER_KEY" https://senko.example.com/api/v1/users | jq .
+全体運用で "super-admin" 的な権限を持たせたい場合は `master_group` を使います:
 
-# プロジェクトメンバーに追加
-curl -X POST -H "Authorization: Bearer $MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": 2, "role": "member"}' \
-  https://senko.example.com/api/v1/projects/1/members
+```toml
+[server.auth.trusted_headers]
+subject_header = "x-senko-user-sub"
+groups_header  = "x-senko-user-groups"     # カンマ区切りのグループ名を受ける
+master_group   = "senko-admins"            # このグループに属するユーザは is_master=true
 ```
+
+- `groups_header` が運んでくる値を **カンマ区切り** でパースし、`master_group` と一致するものがあれば `is_master=true`
+- `is_master=true` のユーザは **全プロジェクトのメンバーシップ検査を bypass**、`POST /api/v1/users` 等の master 限定エンドポイントも使える
+
+API Gateway 側の Parameter Mapping で JWT の `cognito:groups` / `roles` などを `x-senko-user-groups` に流し込む設定を入れてください。
 
 ## 他の認証モードとの排他性
 
-- `[server.auth.api_key]` の `master_key` は **併存可** (trusted_headers + master key)。master key は User 紐付けがない bootstrap 用鍵なので共存を許容
-- `[server.auth.oidc]` と `[server.auth.trusted_headers]` は **同時有効化できない**
+**3 つの認証モード (`api_key` / `oidc` / `trusted_headers`) は同時に 1 つだけ** しか有効化できません (起動時に mutual exclusive を検査、違反すると bail)。したがって trusted_headers モードで `[server.auth.api_key] master_key` を併記すると **起動エラー** になります。trusted_headers で master 権限を与えたい場合は上記の `master_group` を使ってください。
 
 ## トラブルシューティング
 

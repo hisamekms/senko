@@ -87,7 +87,11 @@ draft → todo → in_progress → completed
 - **User** はシステム全体で一意 (`username`, `sub`)
 - **Member** は `(project, user, role)` の 3 つ組。role は `owner` / `member` / `viewer`
 - **API key** は User に紐づき、複数発行可。`device_name` で個々を識別
-- **Master key** (`[server.auth.api_key] master_key`) は User に紐づかず、`POST /users` 等のブートストラップ用
+- **`is_master`**: 特定の操作 (ユーザ CRUD、全プロジェクト membership 検査の bypass) を行える特権フラグ。どの認証モードでも "master" 概念は存在するが、**機構が違う**:
+  - API キーモード: `[server.auth.api_key] master_key` の **値を所持** するリクエストが master
+  - OIDC モード: `[server.auth.oidc] master_group` で指定した **グループに属する** JWT が master
+  - 信頼ヘッダモード: `groups_header` が運ぶ groups に `master_group` の値が含まれていれば master
+- 3 つの認証モード (`api_key` / `oidc` / `trusted_headers`) は **pairwise 排他**。起動時に 2 つ以上設定されていれば bail する
 
 権限ロール:
 

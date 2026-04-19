@@ -63,35 +63,31 @@ Relay が預かる本物の credential:
 | 層 | 役割 | 稼働場所 | secrets |
 |---|---|---|---|
 | CLI | AI エージェントが叩くクライアント | サンドボックス内 | sandbox-local token のみ |
-| Relay | sandbox → upstream の認証差し替え・監査 | 信頼ホスト (VPC 内の独立コンテナ) | upstream service token |
-| Remote | 実データを持つ senko serve | 別ホスト (or 同 VPC) | master key / DB credential |
+| Relay | sandbox → upstream の認証差し替え・監査 | 信頼ホスト (VPC 内の独立コンテナ) | upstream への認証情報 (OIDC M2M の client_secret or 上流 API キー) |
+| Remote | 実データを持つ senko serve | 別ホスト (or 同 VPC) | PostgreSQL credential (+ master_group / OIDC IdP 連携) |
 | PostgreSQL | データ永続層 | RDS / Aurora / 自前 | DB 接続情報 |
 
 ## セットアップ手順
 
 ### 前提
 
-[CLI → Remote → PostgreSQL](cli-remote-postgres.md) の Step 1〜5 (PostgreSQL 準備、senko serve 起動、master key 設定、プロジェクト作成) が完了していること。
+[CLI → Remote → PostgreSQL](cli-remote-postgres.md) の構成 (PostgreSQL + OIDC 認証 senko serve + プロジェクト作成) が完了していること。
 
-### Step 1: Relay 用の upstream service account を発行
+### Step 1: upstream 側で relay 用の認証経路を用意
 
-upstream 側で relay 専用のユーザ + API キーを作成:
+`[server.relay] token` は **長命な静的値** であり、relay は自動でリフレッシュしません。そのため relay → upstream の認証は以下 2 択になります:
+
+**パターン 1: upstream も API キーモードで動かす** (シンプル、推奨)
+
+upstream を一時的に `[server.auth.api_key] master_key` で起動し、relay 専用ユーザと API キーを発行。その後 upstream を OIDC に戻す場合、**API キーは使えなくなる** (モード排他) ため、このパターンは upstream が継続して API キーモードでいる構成向け。
 
 ```bash
-# master key で relay 専用ユーザを作る
+# upstream 側 (API キーモード運用時)
 curl -s -X POST https://senko-upstream.example.com/api/v1/users \
   -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
   -H "Content-Type: application/json" \
   -d '{"username":"relay-sandbox-alpha"}' | jq .
-# => {"id": 7, ...}
 
-# プロジェクト member に追加
-curl -s -X POST https://senko-upstream.example.com/api/v1/projects/2/members \
-  -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":7,"role":"member"}'
-
-# API キー発行
 curl -s -X POST https://senko-upstream.example.com/api/v1/users/7/api-keys \
   -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
   -H "Content-Type: application/json" \
@@ -99,7 +95,11 @@ curl -s -X POST https://senko-upstream.example.com/api/v1/users/7/api-keys \
 # => {"key": "sk_UPSTREAM_SERVICE_TOKEN...", ...}
 ```
 
-この `sk_UPSTREAM_SERVICE_TOKEN` を **relay 側でだけ** 使います。
+**パターン 2: upstream は OIDC、relay 前段で JWT リフレッシュサイドカーを運用**
+
+upstream を OIDC (人間ユーザは PKCE、bot は M2M) で運用しつつ、relay 前段にサイドカーを置いて M2M で JWT を定期取得し、relay プロセスに env 経由で供給する。senko 本体の機能ではなく、運用基盤 (ECS task / K8s Deployment + init + periodic refresh) 側で実装する必要があります。
+
+複雑さの割に得られる利点は "実ユーザ identity の relay 監査ログへの反映" 程度なので、シンプルに **パターン 1** を推奨します。本ガイドの残りは パターン 1 前提で進めます。
 
 ### Step 2: Relay をデプロイ
 

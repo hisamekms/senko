@@ -4,16 +4,21 @@
 
 ## 認証
 
-すべての `/api/v1/*` エンドポイントは認証必須 (`/api/v1/health` を除く)。認証方式はサーバの設定次第:
+すべての `/api/v1/*` エンドポイントは認証必須 (`/api/v1/health` を除く)。認証モードはサーバ側の設定で **3 つのうちのどれか 1 つ** (pairwise 排他):
 
-| 方式 | クライアント側の送り方 | サーバ設定 |
+| モード | クライアント側の送り方 | サーバ設定 |
 |---|---|---|
-| API キー | `Authorization: Bearer <key>` | `[server.auth.api_key]` |
+| API キー | `Authorization: Bearer <key>` (API キー or master_key) | `[server.auth.api_key]` |
 | OIDC JWT | `Authorization: Bearer <jwt>` | `[server.auth.oidc]` |
 | 信頼ヘッダ | `x-senko-user-sub: ...` 等 (API Gateway が注入) | `[server.auth.trusted_headers]` |
-| Master key | `Authorization: Bearer <master_key>` | `[server.auth.api_key] master_key` |
 
-**master key** は一部エンドポイント (POST /users 等) でのみ許可される特権キー。
+**master 権限** (`is_master`) は一部エンドポイント (ユーザ CRUD 等) で必須。どう与えるかはモードごとに異なる:
+
+- API キーモード: `[server.auth.api_key] master_key` の値を Bearer で送ったリクエスト
+- OIDC モード: `[server.auth.oidc] master_group` に指定したグループを JWT の `groups_claim` に含む
+- 信頼ヘッダモード: `[server.auth.trusted_headers] master_group` に指定した値が `groups_header` に含まれる
+
+OIDC / 信頼ヘッダモードでは **初回認証時にユーザが JIT 自動登録** されるため、事前のユーザ作成は不要。API キーモードでのみ master_key を使った明示的な user 発行が必要 (または行なうと便利)。
 
 ## エラーレスポンス形式
 
@@ -66,11 +71,11 @@ X-Senko-Version: 1.0.0
 
 | Method | Path | 備考 |
 |---|---|---|
-| GET | `/api/v1/users` | 一覧 |
-| POST | `/api/v1/users` | **master key 必須** |
-| GET | `/api/v1/users/{id}` | 取得 |
-| PUT | `/api/v1/users/{id}` | 更新 |
-| DELETE | `/api/v1/users/{id}` | 削除 |
+| GET | `/api/v1/users` | 一覧 (**master 権限必須**) |
+| POST | `/api/v1/users` | 明示的な user 発行 (**master 権限必須**)。OIDC / 信頼ヘッダモードでは JIT 自動登録があるため多くの場合不要 |
+| GET | `/api/v1/users/{id}` | 取得 (**master 権限必須**) |
+| PUT | `/api/v1/users/{id}` | 更新 (**master 権限必須**) |
+| DELETE | `/api/v1/users/{id}` | 削除 (**master 権限必須**) |
 
 ### API キー管理
 
