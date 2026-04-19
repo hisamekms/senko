@@ -290,7 +290,6 @@ claim 設計や JWT の短命 (TTL 更新) など詳細は [auth-oidc.md: CI / b
 | 401 Unauthorized | セッション TTL 切れ → 再 `senko auth login` |
 | 403 Forbidden | プロジェクト member 登録が漏れている |
 | 初回起動でマイグレーション失敗 | DB ユーザに CREATE TABLE 権限があるか |
-| 複数 Lambda インスタンスから繋いで DB 接続枯渇 | `[backend.postgres] max_connections` を絞る |
 
 ## AWS にデプロイする場合
 

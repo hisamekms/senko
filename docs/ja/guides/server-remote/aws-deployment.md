@@ -79,7 +79,10 @@ Lambda 内の `.senko/config.toml` に:
 
 ```toml
 [backend.postgres]
-rds_secrets_arn = "arn:aws:secretsmanager:...:secret:rds/senko"
+# 推奨: RDS Proxy のエンドポイントを指す secret。Proxy が接続プールを集約するので
+# Lambda からは短命接続で済む。Proxy なしで直接 RDS に繋ぐ場合は max_connections を
+# 1〜3 程度に絞り、同時実行数を別途制限すること。
+rds_secrets_arn = "arn:aws:secretsmanager:...:secret:rds-proxy/senko"
 sslrootcert     = "/opt/rds-ca-bundle.pem"
 max_connections = 5
 
@@ -157,8 +160,8 @@ senko auth login
 ## 運用 Tips
 
 - **Cold start**: 初回 Lambda 起動で 1-3 秒 + DB 接続コスト。ProvisionedConcurrency を検討
-- **Connection pool**: `max_connections = 5` 程度に抑えて、複数 Lambda インスタンスで RDS 側が枯渇しないように
-- **Migration**: 新バージョンの Lambda がデプロイされると自動で未適用マイグレーションが走る。canary デプロイで前バージョンとの共存時間を最小化
+- **Connection pool**: Lambda は同時実行数分だけ新しいインスタンスが立ち上がるため、各 Lambda が直接 RDS に `max_connections` 分プールすると **RDS 側が瞬時に枯渇** しうる。**RDS Proxy を間に挟むのが推奨構成** (Proxy が接続プールを共有し、Lambda 側はそこに短命接続で繋ぐ)。Proxy を使わない場合は `[backend.postgres] max_connections` を 1〜3 程度に抑え、同時実行を ProvisionedConcurrency / reserved concurrency で制限する
+- **Migration**: 新バージョンの Lambda がデプロイされると自動で未適用マイグレーションが走る。canary デプロイで前バージョンとの共存時間を最小化。Proxy を挟んでいれば複数バージョンの Lambda が共存しても接続枯渇は緩和される
 - **master key ローテーション**: Secrets Manager 側でローテートすれば Lambda は次回 cold start 時に新値を取得
 - **監査ログ**: `[server.remote.*.hooks.audit]` で Lambda から CloudWatch Metrics や EventBridge に流す
 
@@ -168,9 +171,10 @@ senko auth login
 |---|---|
 | 401 Unauthorized | API Gateway の Authorizer 設定を確認 (JWT audience / issuer) |
 | senko が `user unknown` エラー | Parameter Mapping が効いていない。API Gateway ログで x-senko-* が付いているか確認 |
-| RDS に繋がらない | Lambda の Security Group / Subnet / RDS の SG を確認 |
+| RDS に繋がらない | Lambda の Security Group / Subnet / RDS (or RDS Proxy) の SG を確認 |
 | `secretsmanager:GetSecretValue` denied | Lambda の IAM role と VPC endpoint ポリシーを確認 |
-| cold start が重い | ProvisionedConcurrency + `max_connections` を絞る |
+| RDS の `max_connections` 枯渇 | **RDS Proxy** を間に挟むのが第一選択。未導入なら `[backend.postgres] max_connections` を絞り、ProvisionedConcurrency / reserved concurrency で同時実行数を制限 |
+| cold start が重い | ProvisionedConcurrency を検討 |
 
 ## 次のステップ
 
