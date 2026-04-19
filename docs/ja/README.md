@@ -13,7 +13,7 @@ senko は AI エージェントの自律的動作を、以下 3 つの柱で支�
 2. **タスク分割 + 順次/並列実行** — 大きな作業を依存関係と優先度を持つタスクに分割し、エージェントは「次にやる 1 件」だけに集中できる。ワンショットの巨大プロンプトに詰め込まない。複数セッションで並列 pick も可
 3. **Contract で全体像を保持** — 個々のタスクは短命 (分〜時間) で context をリセットしながら進むが、Contract (週〜月の寿命) と Notes が長期の文脈と知見を保持し、作業の全体像を見失わせない
 
-→ 深掘りは [explanation/core-concept.md](explanation/core-concept.md)
+→ 深掘り: [コアコンセプト: 3 つの柱](explanation/core-concept.md)
 
 ## 30 秒で試す
 
@@ -30,8 +30,6 @@ senko skill-install
 #    /senko
 ```
 
-初回実行時に SQLite DB が `$XDG_DATA_HOME/senko/projects/<dir>/data.db` (通常は `~/.local/share/senko/projects/<dir>/data.db`) に自動作成されます。プロジェクトディレクトリ配下には書かれません。
-
 ## ドキュメント構成
 
 読者の目的別に 4 層に分かれています。
@@ -40,43 +38,64 @@ senko skill-install
 
 3 つの典型構成について、概要・構成図・エンドツーエンドのセットアップ手順を示します。
 
-- [local-sqlite.md](use-cases/local-sqlite.md) — ローカル SQLite (個人開発、1 人)
-- [cli-remote-postgres.md](use-cases/cli-remote-postgres.md) — CLI → Remote サーバ → PostgreSQL (チーム運用)
-- [cli-relay-remote-postgres.md](use-cases/cli-relay-remote-postgres.md) — CLI → Relay → Remote → PostgreSQL (AI サンドボックス構成、CLI はシークレットレス)
+- [ローカル SQLite](use-cases/local-sqlite.md) — 個人開発、1 人で完結
+- [CLI → Remote → PostgreSQL](use-cases/cli-remote-postgres.md) — チームでサーバを共有
+- [CLI → Relay → Remote → PostgreSQL](use-cases/cli-relay-remote-postgres.md) — AI サンドボックス (CLI シークレットレス / Relay にシークレット集約)
 
 ### 考え方を理解したい — [explanation/](explanation/)
 
 3 つの柱を軸に、senko が「なぜこう設計されているか」を説明します。
 
-- [core-concept.md](explanation/core-concept.md) — **3 つの柱と全体マップ** (最初に読む)
-- [event-driven-workflow.md](explanation/event-driven-workflow.md) — 柱 1: hook × workflow stage
-- [task-decomposition.md](explanation/task-decomposition.md) — 柱 2: 分割・依存・優先度・並列
-- [contract.md](explanation/contract.md) — 柱 3: Contract と Notes
-- [runtimes.md](explanation/runtimes.md) — デリバリ基盤 (CLI / server.remote / server.relay)
-- [architecture.md](explanation/architecture.md) — 4 層アーキテクチャ (コード構造)
+- [コアコンセプト: 3 つの柱](explanation/core-concept.md) — 最初に読む
+- [イベントドリブンなワークフロー](explanation/event-driven-workflow.md) — 柱 1: hook と workflow stage の仕組み
+- [タスク分割と順次/並列実行](explanation/task-decomposition.md) — 柱 2: 依存・優先度・並列 pick
+- [Contract による全体像の保持](explanation/contract.md) — 柱 3: 長期文脈と Notes
+- [Runtime の使い分け](explanation/runtimes.md) — cli / server.remote / server.relay のデリバリ基盤
+- [4 層アーキテクチャ](explanation/architecture.md) — コード構造 (domain / application / infra / presentation)
 
 ### 設定・デプロイ方法を知りたい — [guides/](guides/)
 
 デプロイ形態別に目的の How-To を引きます。
 
-- **CLI を使う人** — [guides/cli/](guides/cli/): skill-install / workflow-stages / hooks / backends
-- **サーバ運用者** — [guides/server-remote/](guides/server-remote/): deploy / 認証 3 種 / AWS / hooks
-- **リレー運用者** — [guides/server-relay/](guides/server-relay/): deploy / token-relay / hooks
+**CLI を使う人** — [guides/cli/](guides/cli/)
+- [Skill のインストールと更新](guides/cli/skill-install.md)
+- [Workflow stage の実例](guides/cli/workflow-stages.md)
+- [`[cli.*]` hook の実例](guides/cli/hooks.md)
+- [CLI backend の切替](guides/cli/backends.md) — SQLite / PostgreSQL / HTTP
+
+**サーバ運用者 (`senko serve`)** — [guides/server-remote/](guides/server-remote/)
+- [デプロイ](guides/server-remote/deploy.md)
+- [API キー認証](guides/server-remote/auth-api-key.md) — 試用 / CI / bot 用
+- [OIDC 認証](guides/server-remote/auth-oidc.md) — 本番人間ユーザの推奨方式
+- [信頼ヘッダ認証](guides/server-remote/auth-trusted-headers.md) — API Gateway 配下
+- [AWS デプロイ](guides/server-remote/aws-deployment.md) — API Gateway + Cognito + Lambda
+- [`[server.remote.*]` hook の実例](guides/server-remote/hooks.md)
+
+**リレー運用者 (`senko serve --proxy`)** — [guides/server-relay/](guides/server-relay/)
+- [デプロイ](guides/server-relay/deploy.md)
+- [トークン中継パターン](guides/server-relay/token-relay.md)
+- [`[server.relay.*]` hook の実例](guides/server-relay/hooks.md)
 
 ### 仕様を引きたい — [reference/](reference/)
 
-- [cli.md](reference/cli.md) — CLI サブコマンド全量
-- [api.md](reference/api.md) — REST API エンドポイント全量
-- [data-model.md](reference/data-model.md) — DB スキーマ
-- [hooks.md](reference/hooks.md) — Hook envelope / trigger マトリクス
-- [config/](reference/config/) — 設定 section を runtime 別に (overview / cli / server-remote / server-relay / workflow / common)
+- [CLI リファレンス](reference/cli.md) — サブコマンド全量
+- [REST API リファレンス](reference/api.md) — エンドポイント全量
+- [データモデル](reference/data-model.md) — DB スキーマ
+- [Hooks リファレンス](reference/hooks.md) — envelope / trigger マトリクス
+- **設定リファレンス** — [reference/config/](reference/config/)
+  - [概論](reference/config/overview.md) — ファイル配置・優先順位・runtime フィルタ
+  - [`[cli.*]`](reference/config/cli.md)
+  - [`[server.remote.*]` / `[backend.*]` / `[server.auth.*]`](reference/config/server-remote.md)
+  - [`[server.relay.*]`](reference/config/server-relay.md)
+  - [`[workflow.*]`](reference/config/workflow.md)
+  - [`[project]` / `[user]` / `[log]` / `[web]`](reference/config/common.md)
 
 ### コントリビュート — [contributing/](contributing/)
 
-- [development.md](contributing/development.md) — 開発環境
-- [testing.md](contributing/testing.md) — unit / e2e
-- [releasing.md](contributing/releasing.md) — リリース手順
-- [worktree.md](contributing/worktree.md) — worktree ワークフロー
+- [開発環境セットアップ](contributing/development.md)
+- [テスト](contributing/testing.md) — unit / e2e
+- [リリース手順](contributing/releasing.md)
+- [Worktree ワークフロー](contributing/worktree.md)
 
 ## ライセンス
 
