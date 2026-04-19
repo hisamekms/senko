@@ -19,18 +19,18 @@ senko バイナリは同じ 1 つですが、起動の仕方で **4 つの runti
 Q1. サーバを立てる予定はある？
     │
     ├─ No → [cli] を使う (ローカル SQLite)
-    │        → getting-started/local.md
+    │        → getting-started/local-sqlite.md
     │
     └─ Yes
         │
         Q2. クライアントが直接 DB に繋いでいい？
         │
         ├─ Yes → [server.remote]  (= senko serve)
-        │         → getting-started/server.md
+        │         → getting-started/cli-remote-postgres.md
         │
         └─ No (AI サンドボックス内など、上流サーバへ中継したい)
               → [server.relay]  (= senko serve --proxy)
-                 → guides/server-relay/deploy.md
+                 → getting-started/cli-relay-remote-postgres.md
 ```
 
 ## それぞれの位置づけ

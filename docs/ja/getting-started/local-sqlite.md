@@ -1,6 +1,8 @@
-# ユースケース: ローカル SQLite
+# ローカル SQLite
 
-**個人開発者 1 人がローカルマシンだけで使う** 最小構成。サーバは立てない。
+**個人開発者 1 人がローカルマシンだけで使う** 構成。サーバは立てず、senko CLI がローカルの SQLite を直接触る。
+
+→ この構成で 3 つの柱がどう動くかは [コアコンセプト](../explanation/core-concept.md) 参照。
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -151,6 +153,5 @@ scp "$DB" other-host:"$DB"
 
 ## 参考
 
-- 詳細な初期セットアップ → [getting-started/local.md](../getting-started/local.md)
 - workflow stage の設定 → [guides/cli/workflow-stages.md](../guides/cli/workflow-stages.md)
 - hook 実例 → [guides/cli/hooks.md](../guides/cli/hooks.md)

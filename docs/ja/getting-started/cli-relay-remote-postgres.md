@@ -1,6 +1,8 @@
-# ユースケース: CLI → Relay → Remote サーバ → PostgreSQL (AI サンドボックス構成)
+# CLI → Relay → Remote → PostgreSQL (AI サンドボックス)
 
 AI エージェントが動くサンドボックス環境で senko を使いつつ、本番 senko サーバへの認証情報 (= 強いサービス token) を **サンドボックス内に一切置かない** 構成。
+
+→ この構成で 3 つの柱がどう動くかは [コアコンセプト](../explanation/core-concept.md) 参照。
 
 ```
 ┌─────────────────────────┐      ┌────────────────────┐      ┌─────────────────┐
@@ -160,7 +162,7 @@ Relay を起動:
 senko serve --proxy --host 0.0.0.0 --port 3142
 ```
 
-> `aws-secrets` feature 有効ビルドなら `[server.relay]` 側で `token_arn` 相当の env (`SENKO_SERVER_RELAY_TOKEN_ARN`) から Secrets Manager 参照が可能 (現行実装の確認要 — 未対応なら Secrets Manager → 起動スクリプトで env 注入)。
+> **Secrets Manager からの直接解決は `[server.relay]` には未対応**。`[server.auth.api_key].master_key_arn` や `[backend.postgres].url_arn` のような ARN 系キーは relay config には存在しない。AWS 配下で動かす場合は Secrets Manager の値を取得する起動スクリプト (例: `aws secretsmanager get-secret-value ... --query SecretString --output text`) 経由で `SENKO_SERVER_RELAY_TOKEN` に注入するか、ECS Task Definition の secret 参照機能などを使ってください。
 
 ### Step 3: Sandbox 側の CLI を設定
 

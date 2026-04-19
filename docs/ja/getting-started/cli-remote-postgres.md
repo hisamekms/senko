@@ -1,6 +1,8 @@
-# ユースケース: CLI → Remote サーバ → PostgreSQL
+# CLI → Remote → PostgreSQL
 
 チーム共有の senko サーバを立て、開発者の CLI から接続する構成。多くのチーム運用で標準的な形。
+
+→ この構成で 3 つの柱がどう動くかは [コアコンセプト](../explanation/core-concept.md) 参照。
 
 ```
 ┌──────────────────┐        HTTPS (Bearer auth)
@@ -278,5 +280,4 @@ API Gateway + Cognito + Lambda Web Adapter を使った構成の詳細は [guide
 
 - サーバ起動詳細 → [guides/server-remote/deploy.md](../guides/server-remote/deploy.md)
 - 認証モード各種 → [guides/server-remote/auth-api-key.md](../guides/server-remote/auth-api-key.md) / [auth-oidc.md](../guides/server-remote/auth-oidc.md)
-- CLI 側の接続詳細 → [getting-started/remote-cli.md](../getting-started/remote-cli.md)
 - サーバ側 hook 実例 → [guides/server-remote/hooks.md](../guides/server-remote/hooks.md)

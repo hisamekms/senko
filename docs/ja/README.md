@@ -34,13 +34,13 @@ senko skill-install
 
 読者の目的別に 4 層に分かれています。
 
-### まず手を動かしたい — [use-cases/](use-cases/)
+### まず手を動かしたい — [getting-started/](getting-started/)
 
 3 つの典型構成について、概要・構成図・エンドツーエンドのセットアップ手順を示します。
 
-- [ローカル SQLite](use-cases/local-sqlite.md) — 個人開発、1 人で完結
-- [CLI → Remote → PostgreSQL](use-cases/cli-remote-postgres.md) — チームでサーバを共有
-- [CLI → Relay → Remote → PostgreSQL](use-cases/cli-relay-remote-postgres.md) — AI サンドボックス (CLI シークレットレス / Relay にシークレット集約)
+- [ローカル SQLite](getting-started/local-sqlite.md) — 個人開発、1 人で完結
+- [CLI → Remote → PostgreSQL](getting-started/cli-remote-postgres.md) — チームでサーバを共有
+- [CLI → Relay → Remote → PostgreSQL](getting-started/cli-relay-remote-postgres.md) — AI サンドボックス (CLI シークレットレス / Relay にシークレット集約)
 
 ### 考え方を理解したい — [explanation/](explanation/)
 
