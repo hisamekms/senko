@@ -1,107 +1,110 @@
 # トークン中継 (Token Relay) パターン
 
-クライアントの credential と、上流 senko サーバが受け付ける credential を **分離** したいケース。relay が仲介して token を差し替えます。
+relay が `[server.relay] token` を保持してクライアントの Authorization ヘッダを差し替える運用 (substitution mode) の深掘り。relay 全般の挙動は [deploy.md](deploy.md) を参照。
 
-## なぜ必要か
+> **前提**: relay は inbound 認証をしません (`auth_mode: None` 固定)。閉鎖ネットワーク内でしか動かせません。このページは **relay → upstream** の認証経路だけを扱います。
 
-**典型シナリオ**: AI エージェントを sandbox 内で動かし、サンドボックス外の senko (本番 DB) にタスクを記録させたい。
+## なぜ token 差し替えが要るか
 
-- サンドボックス内エージェントに本番 senko の token を直接持たせたくない (スコープ過大)
-- でも全操作を無視したいわけではなく、「決められた操作だけ許可」したい
-- サンドボックス側で発行する使い捨てトークンで relay を認証し、relay が上流のサービスアカウント token に差し替える
+典型シナリオ: AI サンドボックス内のエージェントが本番 senko の strong credential を持てない。
 
-## 3 つのパターン
+- sandbox 内にクライアント credential を置きたくない (漏洩した時の影響範囲を relay 境界内に閉じる)
+- upstream 側は普通の OIDC / API キーで認証している
+- → relay が credential を預かり、upstream リクエストで差し替える
 
-### A. 透過 passthrough
+クライアント側は relay に **素で到達** すればよく、credential を持つ必要がない。relay と upstream の間だけが認証された経路になる。
 
-```toml
-[server.relay]
-url = "https://senko-upstream.example.com"
-# token は書かない
-```
+## substitution vs passthrough
 
-- クライアントの `Authorization` ヘッダがそのまま上流へ
-- 上流側で個別ユーザ認証したい時に使う
-- 例: 上流が OIDC で、relay はネットワーク経路上の通過点にすぎないケース
+| 項目 | substitution (`token` 設定あり) | passthrough (`token` 未設定) |
+|---|---|---|
+| クライアントの Authorization | **捨てる** | そのまま上流へ透過 |
+| 上流に届く identity | relay の 1 identity (全リクエスト共通) | クライアントが送ってきた credential の identity |
+| sandbox で credential 秘匿 | 可能 | 不可 (クライアント側で credential が必要) |
+| 上流ログの actor | relay 固定 | クライアントごと |
+| audit | **relay 側で必須** | 上流側で十分 |
 
-### B. 一括サービストークン (最もよく使う)
+AI サンドボックスは **substitution が適切**。上流を公開 SaaS として共有したい単純な中継は passthrough が便利。
 
-```toml
-[server.relay]
-url   = "https://senko-upstream.example.com"
-token = "upstream-service-account-token"
-```
+## substitution 用の relay credential を上流に用意する
 
-- 上流から見ると全リクエストが同一の service account 由来
-- 実ユーザの identity は **失われる** ので、relay 側で監査が必要
-- クライアントの token は relay の `[server.auth.*]` で検証するが、上流には伝わらない
+upstream がどの認証モードかで発行手順が変わります。
 
-### C. ヘッダ書き換え (現状未対応、回避策あり)
+### upstream が OIDC モードの場合 (推奨)
 
-クライアント JWT の claim を見て、上流へは対応する service token に切り替える動的な挙動は現状 relay 単体では未対応。必要なら:
+IdP に **OAuth Client Credentials (M2M)** クライアントを登録:
 
-- relay の **前段** で API Gateway / Lambda を挟んで動的に書き換える
-- または上流側で `trusted_headers` を有効化し、relay で `x-senko-user-sub` 等を注入する構成に変える
+- grant: `client_credentials`
+- audience: upstream の URL
+- client_id / client_secret を relay の secret store に保管
 
-## サービストークンの発行 (上流側)
+relay の entrypoint で IdP に M2M リクエストを送り、返ってきた JWT を `SENKO_SERVER_RELAY_TOKEN` に入れて `senko serve --proxy` を起動します。JWT は短命なので **定期的に relay を restart** して更新 (実装サンプルは [CLI → Relay → Remote → PostgreSQL: Step 2](../../getting-started/cli-relay-remote-postgres.md) にあります)。
 
-relay 用の service account を作って専用 token を発行:
+upstream 側では relay が最初のリクエストで JWT を送ってくると **JIT で user が自動登録** されます (`username` = JWT の `sub` = client_id)。登録後、upstream プロジェクトの owner が member に追加:
 
 ```bash
-# 1. 上流で専用ユーザを作る
+# upstream 側
+senko project members add --user-id <relay-bot-id> --role member
+```
+
+### upstream が API キーモードの場合 (試用用)
+
+API キーモードの upstream (= 試用構成) に繋ぐ場合は master_key で通常 API キーを発行し、それを `SENKO_SERVER_RELAY_TOKEN` として使います:
+
+```bash
+# upstream (API キーモード運用時) で
 curl -s -X POST https://senko-upstream.example.com/api/v1/users \
   -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"username":"relay-sandbox-a"}'
-
-# 2. そのユーザを対象プロジェクトのメンバーに
+  -d '{"username":"relay-bot"}'
 curl -s -X POST https://senko-upstream.example.com/api/v1/projects/1/members \
   -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id": 7, "role": "member"}'
-
-# 3. API キーを発行
+  -d '{"user_id":7,"role":"member"}'
 curl -s -X POST https://senko-upstream.example.com/api/v1/users/7/api-keys \
   -H "Authorization: Bearer $UPSTREAM_MASTER_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"relay-sandbox-a"}'
-# => key を relay の SENKO_SERVER_RELAY_TOKEN に設定
+  -d '{"name":"relay-bot"}'
+# => key を SENKO_SERVER_RELAY_TOKEN に
 ```
+
+API キーは長命なので relay 再起動による定期更新は不要です。ただし API キーモードの upstream は試用用途なので、本番では OIDC + M2M + 定期リフレッシュを選んでください。
 
 ## 監査の戻し方
 
-relay 経由だと上流ログで実ユーザが特定できないため、relay 側で hook を仕込む:
+substitution mode では upstream ログから実クライアントが特定できません。**relay 側の hook で audit ログを吐く** のが定石:
 
 ```toml
 [server.relay.task_add.hooks.audit]
 command = '''
 jq -c "{
   ts: .event.timestamp,
+  runtime: .runtime,
   actor: .user.name,
-  actor_id: .user.id,
+  project: .project.name,
   action: \"task_add\",
-  task: .event.task.id,
-  title: .event.task.title
-}" >> /var/log/senko-relay-audit.jsonl
+  task: .event.task.id
+}" >> /var/log/senko-relay/audit.jsonl
 '''
 mode = "async"
 ```
 
-`.user` は **relay 側で認証された** identity (= sandbox 内のユーザ)。これを監査ログに残しておけば、上流 DB の task id と突き合わせて追跡可能。
+ただし **relay は inbound 認証をしないため、envelope の `.user` / `.project` は relay コンテナの `[user] name` / `[project] name` (起動時 env / config) の値** が反映されます。クライアントごとの区別は取れません。
 
-## セキュリティ考慮
+複数クライアントを単一 relay で区別したい場合は相当できません。sandbox ごとに **relay インスタンスを分ける** のが実用的解決策 (各 relay に別 `[user]` env を与える)。
 
-- 上流トークンが漏洩するとプロジェクト全体が危険。Secrets Manager + `[server.relay] token` を env or ARN で注入
-- relay 自身の認証は API キー推奨 (OIDC は CLI 起動の UX が sandbox で扱いにくい)
-- sandbox 内で短命トークンを発行 → relay を通す仕組みで、再ログインのハードルを下げつつ有効期限でガード
+## ヘッダ書き換え (動的 identity mapping) は未対応
+
+クライアント JWT の claim を見て、upstream へ対応する service token に動的切り替える機能は **現状 relay 単体では未対応**。必要なら:
+
+- relay の **前段** に reverse proxy / API Gateway / Lambda を挟んで動的に書き換える
+- または upstream 側で `trusted_headers` を有効化し、前段が `x-senko-user-sub` 等を注入する構成
 
 ## よくある間違い
 
-- **上流側の `[cli.remote]` で relay URL を指定する** — これは CLI (人間/エージェント) が relay に繋ぐときの設定。**relay 自体の上流設定は `[server.relay]`**。混同しやすい
-- **relay と上流で `[server.auth.api_key] master_key` が同じ** — 分けること。relay 側は relay 管理用、上流側は上流管理用
-- **token を透過しながら上流で trusted_headers を期待** — trusted_headers は Authorization ヘッダではなく別のヘッダ (`x-senko-*`) を見るので、透過 passthrough と matching しない。関連構成を使うなら API Gateway を前段に置く
+- **`[cli.remote]` の URL と `[server.relay]` を混同する** — 前者は CLI (人間/エージェント) が relay に繋ぐ設定、後者は relay 自身の上流設定
+- **relay に認証があると思って `[server.auth.api_key]` を書く** — proxy mode では読まれない。認可はネットワーク境界で確保するしかない
+- **substitution + passthrough を同時に期待する** — `token` 設定があれば一律 substitution。クライアントの Authorization は捨てられる
 
 ## 次のステップ
 
 - relay 全般の運用 → [deploy.md](deploy.md)
-- hook で監査ログ → [hooks.md](hooks.md)
+- hook 実例 → [hooks.md](hooks.md)
+- AI サンドボックスの end-to-end → [CLI → Relay → Remote → PostgreSQL](../../getting-started/cli-relay-remote-postgres.md)

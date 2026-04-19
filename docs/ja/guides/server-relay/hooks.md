@@ -8,31 +8,34 @@ relay サーバ (`senko serve --proxy`) の経路で発火する hook の実践�
 
 relay は上流へリクエストを転送するだけで DB を持たないので、**"relay で発火させたい hook"** の多くは **監査・観測** 目的になります:
 
-- どの actor が何時どの action を通したか (= 実ユーザ identity は relay 側でしか追跡できない)
-- relay → 上流でエラー率が上がっていないか
+- relay を経由したリクエストの発生頻度・パターンを記録
+- relay → 上流でエラー率 (転送側) が上がっていないか
 - 特定条件のリクエストを別系統にも流したい (ログ集約、DLQ など)
+
+> **identity の限界**: relay は **inbound 認証をしない** ため (`auth_mode: None` 固定)、hook envelope の `.user` / `.project` は **relay コンテナ自身の `[user] name` / `[project] name`** (起動 env / config で決まる値) が入ります。クライアントごとの識別は取れません。クライアント単位の audit が必要なら **relay インスタンスをクライアント単位に分ける** のが定石です。
 
 重い処理 (外部連携、通知) は **上流側** の `[server.remote.*]` に書く方が構造的にきれい。relay ではなるべく "見るだけ" に留める。
 
-## 監査ログ
+## 監査ログ (relay instance 単位)
 
-実ユーザの identity が残らない (= 上流のログには relay の service account だけ残る) 構成の場合、relay 側で監査ログを取るのが必須:
+substitution mode では上流ログに relay の M2M identity しか残らないので、relay 側で audit を取るのが必須:
 
 ```toml
 [server.relay.task_add.hooks.audit]
 command = '''
 jq -c "{
   ts: .event.timestamp,
-  actor: .user.name,
-  actor_id: .user.id,
+  via: .user.name,
   project: .project.name,
   action: .event.event,
   task: .event.task.id,
   title: .event.task.title
-}" >> /var/log/senko-relay-audit.jsonl
+}" >> /var/log/senko-relay/audit.jsonl
 '''
 mode = "async"
 ```
+
+`via` (relay 名) で「どの relay を通ったか」が分かります。
 
 同じ hook を各 action (`task_ready`, `task_start`, `task_complete`, `task_cancel`, `contract_*`) に展開すれば全経路の監査が取れます。
 
@@ -66,25 +69,35 @@ required = true
 
 > **重要**: relay hook は **上流への転送が成功した後** に発火します。上流が 5xx を返した場合は hook は発火しません。失敗率を取るなら nginx / reverse proxy 側の HTTP ログを集計する方が正確。
 
-## クライアント identity をすべて残す
+## relay instance を actor identifier として使う
 
-`token` 書き換えモードで使っている場合、上流に届くのは service account 名だけ。relay 側で実 actor を残す:
+`.user.name` はその relay コンテナの起動時 `[user] name` / `SENKO_USER` で決まる固定値です。sandbox を複数走らせるなら relay も複数に分け、各 relay に異なる `SENKO_USER` を与えて audit に反映させます:
+
+```bash
+# sandbox A 用 relay
+podman run -e SENKO_USER=sandbox-A ... senko-relay
+
+# sandbox B 用 relay
+podman run -e SENKO_USER=sandbox-B ... senko-relay
+```
+
+どちらの relay を通ったかは hook envelope の `.user.name` で区別可能:
 
 ```toml
 [server.relay.task_complete.hooks.who_did_it]
 command = '''
-echo "$(date -u +%FT%TZ) task_complete project=$(jq -r '.project.name') task=$(jq -r '.event.task.id') actor=$(jq -r '.user.name')" \
-  >> /var/log/senko-relay-actors.log
+echo "$(date -u +%FT%TZ) task_complete project=$(jq -r '.project.name') task=$(jq -r '.event.task.id') via=$(jq -r '.user.name')" \
+  >> /var/log/senko-relay/actors.log
 '''
 mode = "async"
 ```
 
-これを S3 に push する、Splunk に流す、等の運用で "上流ログ × relay ログ" の突合せが可能になります。
+これを S3 / Splunk 等に push すれば「上流ログ × relay ログ」の突合わせができます。
 
 ## Hook を書く時の注意
 
 - **stdin に来る envelope の `runtime` は `"server.relay"`**。cli / server.remote と混在する hook スクリプトを書くならここで分岐
-- relay の `project` / `user` は **relay 側で認証されたもの**。上流 DB の project/user id と一致するとは限らない (ID はサーバ間で別)
+- envelope の `.project` / `.user` は **relay コンテナ自身の `[project]` / `[user]` 設定値**。クライアントの identity ではない (relay は認証しない)
 - hook は fire-and-forget でも **サーバプロセスの死活** には影響しない。ただし非常に大量の log を書く command を sync で走らせるとレイテンシが悪化する → `async` を原則に
 
 ## 上流側 hook と使い分ける

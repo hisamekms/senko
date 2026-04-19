@@ -75,7 +75,7 @@ relay の entrypoint は起動時に `client_secret` を使って IdP から **a
 
 | 層 | 役割 | 稼働場所 | secrets |
 |---|---|---|---|
-| CLI | AI エージェントが叩くクライアント | サンドボックス内 (podman compose の 1 コンテナ) | sandbox-local token のみ |
+| CLI | AI エージェントが叩くクライアント | サンドボックス内 (podman compose の 1 コンテナ) | なし (relay に素で到達) |
 | Relay | sandbox → upstream の認証差し替え・監査 | 信頼境界の外 (同 compose 内の別コンテナ / 別ホスト) | OIDC M2M の client_secret (entrypoint で JWT に交換) |
 | Remote | 実データを持つ senko serve | 別ホスト (or 同 VPC) | PostgreSQL credential (+ master_group / OIDC IdP 連携) |
 | PostgreSQL | データ永続層 | RDS / Aurora / 自前 | DB 接続情報 |
