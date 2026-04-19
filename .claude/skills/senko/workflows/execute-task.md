@@ -2,16 +2,39 @@
 
 ## Pre-check
 
-> Skip this step if coming from `senko task next` (already validated).
+> Skip this entire section if coming from `senko task next` (already validated — the selected task is already in `in_progress` with dependencies satisfied). Proceed directly to **Execution Steps**.
 
 ```bash
 senko task get <id>
 ```
 
-- Verify `status` is `todo`. If not, inform the user and stop.
-- Check `dependencies` for incomplete tasks. If any, inform the user and stop.
+### Default (no `--force`)
+
+- Verify `status` is **`todo`**. If it is anything else (`draft`, `in_progress`, `completed`, `canceled`), inform the user (include the actual status) and stop. For example:
+  - `draft` → tell the user to run `senko task ready <id>` first.
+  - `in_progress` → tell the user that work is already in progress; if they truly want to resume, rerun with `--force`.
+  - `completed` / `canceled` → tell the user the task is already finished and refuse to proceed.
+- Verify that **every** entry in `dependencies` has `status == completed`. If any dependency is still incomplete, list the offending dependency IDs / statuses and stop.
+- On success, continue to **Build metadata** below, then start the task and move to **Execution Steps**.
+
+### With `--force`
+
+`--force` has one and only one purpose: **resume an `in_progress` task** whose work was interrupted in a previous session.
+
+- If `status` is **not** `in_progress`, reject and stop — `--force` does NOT accept any other status:
+  - `draft` → reject (ask the user to `senko task ready <id>` first, then rerun **without** `--force`).
+  - `todo` → reject (rerun **without** `--force`; `--force` is not a way to start a fresh task).
+  - `completed` / `canceled` → reject (the task is already finished; finished tasks cannot be re-opened with `--force`).
+- `--force` is **not** a dependency bypass. It only changes the status check; dependencies are already assumed to have been validated when the task was first started.
+- When `status == in_progress`:
+  - Do **not** run the **Build metadata** step below — it belongs to the `todo → in_progress` transition and has already run in the prior session.
+  - Do **not** run `senko task start <id>` — the task is already `in_progress`, so calling `start` again would fail / no-op.
+  - Skip directly to **Execution Steps**. In Step 2, **reuse the existing worktree** for `branch` — it should already exist from the previous session. If it is genuinely missing, confirm with the user before creating a fresh one.
+  - Continue into Step 3 (Plan Mode) to resume the work.
 
 ### Build metadata
+
+> Only run this subsection on the **default** path (status was `todo`). Skip entirely on the `--force` path.
 
 Run the metadata builder script to read `[workflow.task_start].metadata_fields` from config:
 
@@ -52,6 +75,8 @@ Surface the Contract's title, description, DoD checklist, and the full note list
 ### Step 2: Create Worktree
 
 Use the `branch` field from `senko task get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Use the `/wth` skill to create a worktree.
+
+> **`--force` resume**: If you entered via `--force` on an `in_progress` task, the worktree for this branch most likely already exists from the prior session. Reuse it — do not recreate it. Only create a fresh worktree if it is genuinely missing, and confirm with the user before doing so.
 
 ### Step 3: Plan Mode
 
