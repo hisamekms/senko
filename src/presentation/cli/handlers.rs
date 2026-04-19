@@ -2052,6 +2052,8 @@ pub async fn cmd_auth_login(cli: &Cli, device_name: Option<String>) -> Result<()
             })
             .unwrap_or_default(),
         session: Default::default(),
+        groups_claim: "groups".to_string(),
+        master_group: None,
     };
 
     let result = super::oidc_login::perform_login(

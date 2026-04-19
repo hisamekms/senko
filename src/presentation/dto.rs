@@ -364,22 +364,41 @@ impl From<User> for UserResponse {
 // --- ProjectMember ---
 
 #[derive(Serialize)]
+pub struct MemberUserInfo {
+    id: i64,
+    name: String,
+    display_name: Option<String>,
+}
+
+impl From<&User> for MemberUserInfo {
+    fn from(u: &User) -> Self {
+        Self {
+            id: u.id(),
+            name: u.username().to_owned(),
+            display_name: u.display_name().map(|s| s.to_owned()),
+        }
+    }
+}
+
+#[derive(Serialize)]
 pub struct ProjectMemberResponse {
     id: i64,
     project_id: i64,
     user_id: i64,
     role: String,
     created_at: String,
+    user: Option<MemberUserInfo>,
 }
 
-impl From<ProjectMember> for ProjectMemberResponse {
-    fn from(m: ProjectMember) -> Self {
+impl ProjectMemberResponse {
+    pub fn from_parts(m: ProjectMember, user: Option<&User>) -> Self {
         Self {
             id: m.id(),
             project_id: m.project_id(),
             user_id: m.user_id(),
             role: m.role().to_string(),
             created_at: m.created_at().to_owned(),
+            user: user.map(MemberUserInfo::from),
         }
     }
 }

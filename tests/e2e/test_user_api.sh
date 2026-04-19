@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# E2E tests for user API endpoints (master key restriction)
+# E2E tests for user API endpoints (master-only authorization).
+#
+# All /users endpoints (list, get, create, update, delete) require the caller
+# to be master. Non-master callers receive 403.
 source "$(dirname "$0")/helpers.sh"
 
 setup_test_env
@@ -60,30 +63,40 @@ STATUS=$(status_with_token "$USER_API_KEY" -X POST "$BASE/users" -d '{"username"
 assert_eq "403" "$STATUS" "POST /users with user API key returns 403"
 
 echo ""
-echo "=== PUT /users/{id} self-update with user API key returns 200 ==="
-STATUS=$(status_with_token "$USER_API_KEY" -X PUT "$BASE/users/$USER_ID" -d '{"username":"updated-user"}')
-assert_eq "200" "$STATUS" "PUT /users/{id} self-update returns 200"
+echo "=== GET /users with user API key returns 403 (master-only) ==="
+STATUS=$(status_with_token "$USER_API_KEY" "$BASE/users")
+assert_eq "403" "$STATUS" "GET /users with user API key returns 403"
+
+echo ""
+echo "=== GET /users with master key returns 200 ==="
+STATUS=$(status_with_token "$MASTER_KEY" "$BASE/users")
+assert_eq "200" "$STATUS" "GET /users with master key returns 200"
+
+echo ""
+echo "=== GET /users/{id} with user API key returns 403 (master-only) ==="
+STATUS=$(status_with_token "$USER_API_KEY" "$BASE/users/$USER_ID")
+assert_eq "403" "$STATUS" "GET /users/{id} with user API key returns 403"
+
+echo ""
+echo "=== GET /users/{id} with master key returns 200 ==="
+STATUS=$(status_with_token "$MASTER_KEY" "$BASE/users/$USER_ID")
+assert_eq "200" "$STATUS" "GET /users/{id} with master key returns 200"
+
+echo ""
+echo "=== PUT /users/{id} self-update with user API key returns 403 (master-only) ==="
+STATUS=$(status_with_token "$USER_API_KEY" -X PUT "$BASE/users/$USER_ID" -d '{"username":"self-updated"}')
+assert_eq "403" "$STATUS" "PUT /users/{id} with user API key returns 403"
+
+echo ""
+echo "=== PUT /users/{id} with master key returns 200 ==="
+STATUS=$(status_with_token "$MASTER_KEY" -X PUT "$BASE/users/$USER_ID" -d '{"username":"master-updated"}')
+assert_eq "200" "$STATUS" "PUT /users/{id} with master key returns 200"
 
 echo ""
 echo "=== PUT /users/{id} verify updated username ==="
-UPDATED_USER=$(curl -sf -H "Authorization: Bearer $USER_API_KEY" "$BASE/users/$USER_ID")
+UPDATED_USER=$(curl -sf -H "Authorization: Bearer $MASTER_KEY" "$BASE/users/$USER_ID")
 UPDATED_USERNAME=$(echo "$UPDATED_USER" | jq -r '.username')
-assert_eq "updated-user" "$UPDATED_USERNAME" "username was updated"
-
-echo ""
-echo "=== PUT /users/{id} update other user with user API key returns 403 ==="
-# Create another user
-OTHER_USER=$(curl -sf -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $MASTER_KEY" \
-  -X POST "$BASE/users" -d '{"username":"other-user"}')
-OTHER_USER_ID=$(echo "$OTHER_USER" | jq -r '.id')
-STATUS=$(status_with_token "$USER_API_KEY" -X PUT "$BASE/users/$OTHER_USER_ID" -d '{"username":"hacked"}')
-assert_eq "403" "$STATUS" "PUT /users/{other_id} with user API key returns 403"
-
-echo ""
-echo "=== PUT /users/{id} with master key can update any user ==="
-STATUS=$(status_with_token "$MASTER_KEY" -X PUT "$BASE/users/$OTHER_USER_ID" -d '{"username":"master-updated"}')
-assert_eq "200" "$STATUS" "PUT /users/{id} with master key returns 200"
+assert_eq "master-updated" "$UPDATED_USERNAME" "username was updated"
 
 echo ""
 echo "=== PUT /users/{id} without auth returns 401 ==="
@@ -91,11 +104,15 @@ STATUS=$(status_no_auth -X PUT "$BASE/users/$USER_ID" -d '{"username":"no-auth"}
 assert_eq "401" "$STATUS" "PUT /users/{id} without auth returns 401"
 
 # ---------------------------------------------------------------------------
-# DELETE /users/{id} authorization (regression test for Vuln 2 / task 313)
+# DELETE /users/{id} authorization — master-only
 # ---------------------------------------------------------------------------
 
 echo ""
-echo "=== Setup: issue an API key for OTHER_USER_ID and add them to project 1 ==="
+echo "=== Setup: another user + api-key, add to project 1 ==="
+OTHER_USER=$(curl -sf -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $MASTER_KEY" \
+  -X POST "$BASE/users" -d '{"username":"other-user"}')
+OTHER_USER_ID=$(echo "$OTHER_USER" | jq -r '.id')
 OTHER_API_KEY_RESP=$(curl -sf -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MASTER_KEY" \
   -X POST "$BASE/users/$OTHER_USER_ID/api-keys" -d '{"name":"other-key"}')
@@ -103,7 +120,6 @@ OTHER_USER_KEY_COUNT_BEFORE=$(curl -sf -H "Authorization: Bearer $MASTER_KEY" \
   "$BASE/users/$OTHER_USER_ID/api-keys" | jq 'length')
 assert_eq "1" "$OTHER_USER_KEY_COUNT_BEFORE" "OTHER_USER has 1 api-key before DELETE attempt"
 
-# Add OTHER_USER_ID to project 1 via CLI (so we can verify CASCADE didn't fire)
 run_lf project members add --user-id "$OTHER_USER_ID" --role member >/dev/null
 
 echo ""
@@ -129,12 +145,7 @@ STATUS=$(status_with_token "$MASTER_KEY" "$BASE/projects/1/members/$OTHER_USER_I
 assert_eq "200" "$STATUS" "GET /projects/1/members/{other_id} still returns 200"
 
 echo ""
-echo "=== DELETE /users/{id} without auth returns 401 ==="
-STATUS=$(status_no_auth -X DELETE "$BASE/users/$OTHER_USER_ID")
-assert_eq "401" "$STATUS" "DELETE /users/{id} without auth returns 401"
-
-echo ""
-echo "=== Self-delete: user can delete their own account (returns 204) ==="
+echo "=== DELETE /users/{id} self-delete with user API key returns 403 (master-only) ==="
 SELF_DEL_USER=$(curl -sf -H "Content-Type: application/json" \
   -H "Authorization: Bearer $MASTER_KEY" \
   -X POST "$BASE/users" -d '{"username":"self-delete-user"}')
@@ -144,7 +155,12 @@ SELF_DEL_KEY_RESP=$(curl -sf -H "Content-Type: application/json" \
   -X POST "$BASE/users/$SELF_DEL_USER_ID/api-keys" -d '{"name":"self-key"}')
 SELF_DEL_KEY=$(echo "$SELF_DEL_KEY_RESP" | jq -r '.key')
 STATUS=$(status_with_token "$SELF_DEL_KEY" -X DELETE "$BASE/users/$SELF_DEL_USER_ID")
-assert_eq "204" "$STATUS" "DELETE /users/{self_id} with own API key returns 204"
+assert_eq "403" "$STATUS" "DELETE /users/{self_id} with own API key returns 403"
+
+echo ""
+echo "=== DELETE /users/{id} without auth returns 401 ==="
+STATUS=$(status_no_auth -X DELETE "$BASE/users/$OTHER_USER_ID")
+assert_eq "401" "$STATUS" "DELETE /users/{id} without auth returns 401"
 
 echo ""
 echo "=== Master-key delete: master can delete any user (returns 204) ==="

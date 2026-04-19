@@ -10,12 +10,15 @@ BASE="http://127.0.0.1:$PORT/api/v1"
 AUTH_BASE="http://127.0.0.1:$PORT/auth"
 PBASE="$BASE/projects/1"
 
-# Start the API server with trusted_headers auth
+# Start the API server with trusted_headers auth.
+# master_group=admin is configured so that callers whose groups_header
+# contains "admin" are promoted to master (required for /users endpoints).
 SENKO_AUTH_TRUSTED_HEADERS_SUBJECT_HEADER="x-senko-user-sub" \
 SENKO_AUTH_TRUSTED_HEADERS_NAME_HEADER="x-senko-user-name" \
 SENKO_AUTH_TRUSTED_HEADERS_EMAIL_HEADER="x-senko-user-email" \
 SENKO_AUTH_TRUSTED_HEADERS_GROUPS_HEADER="x-senko-user-groups" \
 SENKO_AUTH_TRUSTED_HEADERS_SCOPE_HEADER="x-senko-user-scope" \
+SENKO_AUTH_TRUSTED_HEADERS_MASTER_GROUP="admin" \
 "$SENKO" --project-root "$TEST_PROJECT_ROOT" --db-path "$TEST_PROJECT_ROOT/.senko/data.db" serve --port "$PORT" &
 SERVER_PID=$!
 trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
@@ -115,15 +118,17 @@ ALICE_ID=$(echo "$ALICE" | jq -r '.id')
 # =============================================
 # 5. Second user auto-provisioning
 # =============================================
+# bob is a non-master caller (no "admin" group), so hit /auth/me — a non-
+# master endpoint — to trigger auto-provisioning.
 
 echo ""
-echo "=== Second user auto-provisioning ==="
+echo "=== Second user auto-provisioning (via /auth/me) ==="
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "x-senko-user-sub: bob" \
   -H "x-senko-user-name: Bob Jones" \
   -H "x-senko-user-email: bob@example.com" \
-  "$BASE/users")
-assert_eq "200" "$STATUS" "bob auto-provisioned and request succeeds"
+  "$AUTH_BASE/me")
+assert_eq "200" "$STATUS" "bob auto-provisioned via /auth/me"
 
 USERS=$(api_get "$BASE/users")
 BOB=$(echo "$USERS" | jq '.[] | select(.sub == "bob")')
@@ -154,11 +159,30 @@ STATUS=$(api_status "$BASE/users")
 assert_eq "200" "$STATUS" "request with groups/scope headers succeeds"
 
 echo ""
-echo "=== Auth succeeds with only subject header (no groups/scope) ==="
+echo "=== Auth succeeds with only subject header (no groups/scope) — non-master endpoint ==="
+# No groups header → not master, so hit /auth/me instead of /users.
 STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
   -H "x-senko-user-sub: alice" \
-  "$BASE/users")
+  "$AUTH_BASE/me")
 assert_eq "200" "$STATUS" "request with only subject header succeeds"
+
+# =============================================
+# 7b. master_group promotion
+# =============================================
+
+echo ""
+echo "=== master_group grants master (GET /users returns 200 for admin group) ==="
+# alice has "admin,dev" groups; admin matches master_group → 200
+STATUS=$(api_status "$BASE/users")
+assert_eq "200" "$STATUS" "caller in master_group can list users"
+
+echo ""
+echo "=== Non-master caller gets 403 on /users ==="
+STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
+  -H "x-senko-user-sub: carol" \
+  -H "x-senko-user-groups: dev,ops" \
+  "$BASE/users")
+assert_eq "403" "$STATUS" "caller outside master_group is forbidden on /users"
 
 # =============================================
 # 8. Task CRUD with trusted headers auth

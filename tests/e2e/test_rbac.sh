@@ -165,6 +165,16 @@ assert_contains "$BODY" '"project_id"' "Response contains project_id"
 assert_contains "$BODY" '"id"' "Response contains id"
 assert_contains "$BODY" '"created_at"' "Response contains created_at"
 
+# Task 318: member response now carries a nested `user` object with
+# minimal identity fields (id / name / display_name). sub and email are
+# deliberately omitted.
+assert_json_field "$BODY" '.user.id' "$MEMBER_UID" "Response has nested user.id"
+assert_json_field "$BODY" '.user.name' "member-user" "Response has nested user.name"
+MEMBER_HAS_SUB=$(echo "$BODY" | jq 'has("user") and (.user | has("sub"))')
+assert_eq "false" "$MEMBER_HAS_SUB" "nested user does not expose sub"
+MEMBER_HAS_EMAIL=$(echo "$BODY" | jq 'has("user") and (.user | has("email"))')
+assert_eq "false" "$MEMBER_HAS_EMAIL" "nested user does not expose email"
+
 echo ""
 echo "=== GET /members/{user_id}: Member can get specific member (200) ==="
 STATUS=$(status_with_token "$MEMBER_KEY" "$BASE/projects/$PROJECT_ID/members/$OWNER_UID")
@@ -233,11 +243,14 @@ status_with_token "$OWNER_KEY" -X POST "$BASE/projects/$PROJECT_ID/members" \
   -d "{\"user_id\":$VIEWER_UID,\"role\":\"viewer\"}" >/dev/null
 
 # =============================================
-# 7. Master key not configured: POST /users → 501
+# 7. Non-master caller: POST /users → 403
 # =============================================
+# With is_master on AuthUser, a non-master caller is always Forbidden on
+# /users regardless of whether master_key is configured. The old 501
+# semantics (NotImplemented when master_key unset) no longer apply.
 
 echo ""
-echo "=== POST /users without master key returns 501 ==="
+echo "=== POST /users with non-master OIDC-mode server returns 403 ==="
 # Stop current server
 kill $SERVER_PID 2>/dev/null
 wait $SERVER_PID 2>/dev/null || true
@@ -257,8 +270,10 @@ trap 'kill $SERVER_PID 2>/dev/null; cleanup_test_env' EXIT
 
 wait_for "API server (no master key) ready" 10 "curl -sf $BASE2/health >/dev/null"
 
+# OWNER_KEY was created on the previous server, so it's invalid here — we
+# expect 401 rather than 403 because the JWT-mode provider rejects it.
 STATUS=$(status_with_token "$OWNER_KEY" -X POST "$BASE2/users" \
   -d '{"username":"should-fail"}')
-assert_eq "501" "$STATUS" "POST /users without master key returns 501"
+assert_eq "401" "$STATUS" "POST /users with invalid token returns 401"
 
 test_summary

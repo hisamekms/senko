@@ -62,7 +62,6 @@ struct AppState {
     metadata_service: Arc<dyn MetadataFieldOperations>,
     contract_service: Arc<dyn ContractOperations>,
     auth_mode: Option<Arc<AuthMode>>,
-    master_key_configured: bool,
     proxy_mode: bool,
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
@@ -82,26 +81,26 @@ impl AppState {
 }
 
 /// Check project-level authorization. No-op when auth is disabled.
-/// Master key users (id == 0) bypass project membership checks.
+/// Master users bypass project membership checks.
 async fn check_project_permission(
     state: &AppState,
     auth: &OptionalAuthUser,
     project_id: i64,
     permission: Permission,
 ) -> Result<(), ApiError> {
-    if let Some(user) = require_auth_user(auth, state.auth_enabled())? {
-        if user.id() == 0 {
+    if let Some(caller) = require_auth_user(auth, state.auth_enabled())? {
+        if caller.is_master {
             return Ok(());
         }
+        let user_id = caller.user.id();
         let member = state
             .project_service
-            .get_project_member(project_id, user.id())
+            .get_project_member(project_id, user_id)
             .await
             .map_err(|_| {
                 AuthError::Forbidden(format!(
                     "user {} is not a member of project {}",
-                    user.id(),
-                    project_id
+                    user_id, project_id
                 ))
             })?;
         let allowed = match permission {
@@ -120,40 +119,31 @@ async fn check_project_permission(
     Ok(())
 }
 
-/// For endpoints that require authentication: returns the user or 401.
-fn require_auth_user(
-    auth: &OptionalAuthUser,
+/// For endpoints that require authentication: returns the authenticated
+/// caller (including `is_master`) or 401.
+fn require_auth_user<'a>(
+    auth: &'a OptionalAuthUser,
     auth_enabled: bool,
-) -> Result<Option<&crate::domain::user::User>, ApiError> {
+) -> Result<Option<&'a AuthUser>, ApiError> {
     if !auth_enabled {
         return Ok(None);
     }
     match &auth.0 {
-        Some(a) => Ok(Some(&a.user)),
+        Some(a) => Ok(Some(a)),
         None => Err(ApiError::Unauthorized("authentication required".into())),
     }
 }
 
-/// For endpoints restricted to master key holders.
-/// Returns 501 when auth is enabled but no master key is configured (OIDC-only),
-/// 403 when the caller is authenticated but not the master key user,
-/// and 401 when the caller is not authenticated at all.
-fn require_master_key(
-    auth: &OptionalAuthUser,
-    auth_enabled: bool,
-    master_key_configured: bool,
-) -> Result<(), ApiError> {
+/// For endpoints restricted to master callers (master API key, OIDC master
+/// group, or trusted-headers master group).
+/// Returns 401 when unauthenticated, 403 when authenticated but not master.
+fn require_master(auth: &OptionalAuthUser, auth_enabled: bool) -> Result<(), ApiError> {
     if !auth_enabled {
         return Ok(());
     }
-    if !master_key_configured {
-        return Err(ApiError::NotImplemented(
-            "user creation requires master key, but no master key is configured".into(),
-        ));
-    }
     match &auth.0 {
-        Some(a) if a.user.id() == 0 => Ok(()),
-        Some(_) => Err(ApiError::Forbidden("master key required".into())),
+        Some(a) if a.is_master => Ok(()),
+        Some(_) => Err(ApiError::Forbidden("master privilege required".into())),
         None => Err(ApiError::Unauthorized("authentication required".into())),
     }
 }
@@ -509,7 +499,6 @@ pub async fn serve(
         metadata_service: Arc::new(MetadataFieldService::new(backend.clone())),
         contract_service: Arc::new(LocalContractOperations::new(backend, hook_executor)),
         auth_mode: auth_mode.map(Arc::new),
-        master_key_configured: config.server.auth.api_key.master_key.is_some(),
         proxy_mode: false,
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
@@ -565,7 +554,6 @@ pub async fn serve_proxy(
             hook_executor,
         )),
         auth_mode: None,
-        master_key_configured: false,
         proxy_mode: true,
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
@@ -1636,7 +1624,7 @@ async fn list_users(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
 ) -> Result<Json<Vec<UserResponse>>, ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    require_master(&auth, state.auth_enabled())?;
     let users = state
         .user_service
         .list_users()
@@ -1651,7 +1639,7 @@ async fn create_user(
     auth: OptionalAuthUser,
     Json(params): Json<CreateUserParams>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
-    require_master_key(&auth, state.auth_enabled(), state.master_key_configured)?;
+    require_master(&auth, state.auth_enabled())?;
     let user = state
         .user_service
         .create_user(&params)
@@ -1666,7 +1654,7 @@ async fn get_user(
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    require_auth_user(&auth, state.auth_enabled())?;
+    require_master(&auth, state.auth_enabled())?;
     let user = state
         .user_service
         .get_user(user_id)
@@ -1688,15 +1676,7 @@ async fn update_user(
     Path(user_id): Path<i64>,
     Json(body): Json<UpdateUserBody>,
 ) -> Result<Json<UserResponse>, ApiError> {
-    let caller = require_auth_user(&auth, state.auth_enabled())?;
-    if let Some(caller) = caller
-        && caller.id() != user_id
-        && caller.id() != 0
-    {
-        return Err(ApiError::Forbidden(
-            "can only update your own profile".into(),
-        ));
-    }
+    require_master(&auth, state.auth_enabled())?;
     let params = UpdateUserParams {
         username: body.username,
         display_name: body.display_name,
@@ -1715,15 +1695,7 @@ async fn delete_user(
     auth: OptionalAuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    let caller = require_auth_user(&auth, state.auth_enabled())?;
-    if let Some(caller) = caller
-        && caller.id() != user_id
-        && caller.id() != 0
-    {
-        return Err(ApiError::Forbidden(
-            "can only delete your own account".into(),
-        ));
-    }
+    require_master(&auth, state.auth_enabled())?;
     state
         .user_service
         .delete_user(user_id)
@@ -1757,12 +1729,12 @@ async fn list_members(
         .list_project_members(project_id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(
-        members
-            .into_iter()
-            .map(ProjectMemberResponse::from)
-            .collect(),
-    ))
+    let mut responses = Vec::with_capacity(members.len());
+    for member in members {
+        let user = state.user_service.get_user(member.user_id()).await.ok();
+        responses.push(ProjectMemberResponse::from_parts(member, user.as_ref()));
+    }
+    Ok(Json(responses))
 }
 
 // POST /api/v1/projects/{project_id}/members
@@ -1780,9 +1752,10 @@ async fn add_member(
         .add_project_member(project_id, &params, caller_user_id)
         .await
         .map_err(classify_error)?;
+    let user = state.user_service.get_user(member.user_id()).await.ok();
     Ok((
         StatusCode::CREATED,
-        Json(ProjectMemberResponse::from(member)),
+        Json(ProjectMemberResponse::from_parts(member, user.as_ref())),
     ))
 }
 
@@ -1798,7 +1771,8 @@ async fn get_member(
         .get_project_member(project_id, user_id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(ProjectMemberResponse::from(member)))
+    let user = state.user_service.get_user(member.user_id()).await.ok();
+    Ok(Json(ProjectMemberResponse::from_parts(member, user.as_ref())))
 }
 
 // PUT /api/v1/projects/{project_id}/members/{user_id}
@@ -1815,7 +1789,8 @@ async fn update_member_role(
         .update_member_role(project_id, user_id, body.role, caller_user_id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(ProjectMemberResponse::from(member)))
+    let user = state.user_service.get_user(member.user_id()).await.ok();
+    Ok(Json(ProjectMemberResponse::from_parts(member, user.as_ref())))
 }
 
 // DELETE /api/v1/projects/{project_id}/members/{user_id}
@@ -1916,8 +1891,8 @@ async fn create_api_key(
 ) -> Result<(StatusCode, Json<ApiKeyWithSecretResponse>), ApiError> {
     let caller = require_auth_user(&auth, state.auth_enabled())?;
     if let Some(caller) = caller
-        && caller.id() != user_id
-        && caller.id() != 0
+        && !caller.is_master
+        && caller.user.id() != user_id
     {
         return Err(ApiError::Forbidden(
             "can only create API keys for your own account".into(),
@@ -1946,8 +1921,8 @@ async fn delete_api_key(
 ) -> Result<StatusCode, ApiError> {
     let caller = require_auth_user(&auth, state.auth_enabled())?;
     if let Some(caller) = caller
-        && caller.id() != user_id
-        && caller.id() != 0
+        && !caller.is_master
+        && caller.user.id() != user_id
     {
         return Err(ApiError::Forbidden(
             "can only delete your own api keys".into(),
@@ -2160,7 +2135,9 @@ mod tests {
 
     // --- has_auth_credentials tests ---
 
-    use crate::application::port::auth::{AuthError as PortAuthError, AuthProvider};
+    use crate::application::port::auth::{
+        AuthError as PortAuthError, AuthProvider, AuthResult,
+    };
     use crate::infra::config::TrustedHeadersConfig;
 
     struct DummyAuthProvider;
@@ -2170,7 +2147,7 @@ mod tests {
         async fn authenticate(
             &self,
             _token: &str,
-        ) -> std::result::Result<crate::domain::user::User, PortAuthError> {
+        ) -> std::result::Result<AuthResult, PortAuthError> {
             Err(PortAuthError::InvalidToken)
         }
     }
@@ -2189,6 +2166,7 @@ mod tests {
             scope_header: None,
             oidc_issuer_url: None,
             oidc_client_id: None,
+            master_group: None,
         }
     }
 

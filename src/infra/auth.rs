@@ -10,7 +10,7 @@ use tokio::sync::{OnceCell, RwLock};
 use zeroize::Zeroizing;
 
 use crate::application::port::TaskBackend;
-use crate::application::port::auth::{AuthError, AuthProvider};
+use crate::application::port::auth::{AuthError, AuthProvider, AuthResult};
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{CreateUserParams, hash_api_key};
 use crate::infra::config::SessionConfig;
@@ -46,18 +46,21 @@ impl AuthProvider for ApiKeyProvider {
     async fn authenticate(
         &self,
         token: &str,
-    ) -> std::result::Result<crate::domain::user::User, AuthError> {
+    ) -> std::result::Result<AuthResult, AuthError> {
         if let Some(ref master_key) = self.master_api_key
             && constant_time_key_eq(token, master_key)
         {
-            return Ok(crate::domain::user::User::new(
-                0,
-                "master".to_string(),
-                "master".to_string(),
-                None,
-                None,
-                String::new(),
-            ));
+            return Ok(AuthResult {
+                user: crate::domain::user::User::new(
+                    0,
+                    "master".to_string(),
+                    "master".to_string(),
+                    None,
+                    None,
+                    String::new(),
+                ),
+                is_master: true,
+            });
         }
 
         let key_hash = hash_api_key(token);
@@ -92,7 +95,10 @@ impl AuthProvider for ApiKeyProvider {
             }
         }
 
-        Ok(auth_result.user)
+        Ok(AuthResult {
+            user: auth_result.user,
+            is_master: false,
+        })
     }
 }
 
@@ -117,6 +123,8 @@ pub struct JwtAuthProvider {
     client_id: String,
     username_claim: Option<String>,
     required_claims: HashMap<String, String>,
+    groups_claim: String,
+    master_group: Option<String>,
     jwks_uri: OnceCell<String>,
     jwks_cache: RwLock<Option<JwksCache>>,
     last_force_refresh: RwLock<Option<Instant>>,
@@ -129,6 +137,8 @@ impl JwtAuthProvider {
         client_id: String,
         username_claim: Option<String>,
         required_claims: HashMap<String, String>,
+        groups_claim: String,
+        master_group: Option<String>,
         backend: Arc<dyn TaskBackend>,
     ) -> Self {
         Self {
@@ -137,6 +147,8 @@ impl JwtAuthProvider {
             client_id,
             username_claim,
             required_claims,
+            groups_claim,
+            master_group,
             jwks_uri: OnceCell::new(),
             jwks_cache: RwLock::new(None),
             last_force_refresh: RwLock::new(None),
@@ -296,7 +308,7 @@ impl AuthProvider for JwtAuthProvider {
     async fn authenticate(
         &self,
         token: &str,
-    ) -> std::result::Result<crate::domain::user::User, AuthError> {
+    ) -> std::result::Result<AuthResult, AuthError> {
         let token_data = self.verify_jwt(token).await?;
 
         // Validate required claims (all conditions must be satisfied)
@@ -356,9 +368,20 @@ impl AuthProvider for JwtAuthProvider {
                 .unwrap_or(sub)
         };
 
+        let is_master = self
+            .master_group
+            .as_deref()
+            .is_some_and(|group| {
+                token_data
+                    .claims
+                    .get(self.groups_claim.as_str())
+                    .and_then(|v| v.as_array())
+                    .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(group)))
+            });
+
         // Try to find existing user by sub; auto-create if not found (standard OIDC provisioning)
-        match self.backend.get_user_by_sub(sub).await {
-            Ok(user) => Ok(user),
+        let user = match self.backend.get_user_by_sub(sub).await {
+            Ok(user) => user,
             Err(_) => {
                 let display_name = token_data
                     .claims
@@ -382,9 +405,11 @@ impl AuthProvider for JwtAuthProvider {
                     .map_err(|e| {
                         tracing::warn!(error = %e, "failed to auto-provision OIDC user");
                         AuthError::InvalidToken
-                    })
+                    })?
             }
-        }
+        };
+
+        Ok(AuthResult { user, is_master })
     }
 }
 
@@ -394,6 +419,7 @@ pub struct TrustedHeadersAuthResult {
     pub user: crate::domain::user::User,
     pub groups: Vec<String>,
     pub scopes: Vec<String>,
+    pub is_master: bool,
 }
 
 pub struct TrustedHeadersAuthProvider {
@@ -404,6 +430,7 @@ pub struct TrustedHeadersAuthProvider {
     email_header: Option<String>,
     groups_header: Option<String>,
     scope_header: Option<String>,
+    master_group: Option<String>,
 }
 
 impl TrustedHeadersAuthProvider {
@@ -415,6 +442,7 @@ impl TrustedHeadersAuthProvider {
         email_header: Option<String>,
         groups_header: Option<String>,
         scope_header: Option<String>,
+        master_group: Option<String>,
     ) -> Self {
         Self {
             backend,
@@ -424,6 +452,7 @@ impl TrustedHeadersAuthProvider {
             email_header,
             groups_header,
             scope_header,
+            master_group,
         }
     }
 
@@ -469,7 +498,7 @@ impl TrustedHeadersAuthProvider {
             .or_else(|| name_value.clone())
             .or_else(|| email.clone());
 
-        let groups = self
+        let groups: Vec<String> = self
             .groups_header
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
@@ -482,7 +511,7 @@ impl TrustedHeadersAuthProvider {
             })
             .unwrap_or_default();
 
-        let scopes = self
+        let scopes: Vec<String> = self
             .scope_header
             .as_ref()
             .and_then(|h| headers.get(h.as_str()))
@@ -514,10 +543,16 @@ impl TrustedHeadersAuthProvider {
             }
         };
 
+        let is_master = self
+            .master_group
+            .as_deref()
+            .is_some_and(|mg| groups.iter().any(|g| g == mg));
+
         Ok(TrustedHeadersAuthResult {
             user,
             groups,
             scopes,
+            is_master,
         })
     }
 }
@@ -557,10 +592,11 @@ mod tests {
             SessionConfig::default(),
         );
 
-        let user = provider.authenticate("master-secret").await.unwrap();
+        let result = provider.authenticate("master-secret").await.unwrap();
 
-        assert_eq!(user.id(), 0);
-        assert_eq!(user.username(), "master");
+        assert_eq!(result.user.id(), 0);
+        assert_eq!(result.user.username(), "master");
+        assert!(result.is_master);
     }
 
     #[tokio::test]
@@ -572,9 +608,10 @@ mod tests {
             SessionConfig::default(),
         );
 
-        let user = provider.authenticate(&raw_key).await.unwrap();
+        let result = provider.authenticate(&raw_key).await.unwrap();
 
-        assert_eq!(user.username(), "testuser");
+        assert_eq!(result.user.username(), "testuser");
+        assert!(!result.is_master);
     }
 
     #[tokio::test]
@@ -596,9 +633,10 @@ mod tests {
         let (backend, raw_key) = setup_backend_with_api_key().await;
         let provider = ApiKeyProvider::new(backend, None, SessionConfig::default());
 
-        let user = provider.authenticate(&raw_key).await.unwrap();
+        let result = provider.authenticate(&raw_key).await.unwrap();
 
-        assert_eq!(user.username(), "testuser");
+        assert_eq!(result.user.username(), "testuser");
+        assert!(!result.is_master);
     }
 
     #[tokio::test]
@@ -624,6 +662,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -633,6 +672,7 @@ mod tests {
         assert_eq!(result.user.username(), "alice");
         assert!(result.groups.is_empty());
         assert!(result.scopes.is_empty());
+        assert!(!result.is_master);
     }
 
     #[tokio::test]
@@ -641,6 +681,7 @@ mod tests {
         let provider = TrustedHeadersAuthProvider::new(
             backend,
             "x-senko-user-sub".to_string(),
+            None,
             None,
             None,
             None,
@@ -662,6 +703,7 @@ mod tests {
             Some("x-senko-user-name".to_string()),
             None,
             Some("x-senko-user-email".to_string()),
+            None,
             None,
             None,
         );
@@ -697,6 +739,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -717,6 +760,7 @@ mod tests {
             None,
             Some("x-senko-user-groups".to_string()),
             Some("x-senko-user-scope".to_string()),
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -728,6 +772,51 @@ mod tests {
         assert_eq!(result.user.username(), "carol");
         assert_eq!(result.groups, vec!["admin", "dev", "ops"]);
         assert_eq!(result.scopes, vec!["read", "write"]);
+        assert!(!result.is_master);
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_master_group_sets_is_master() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
+            None,
+            Some("x-senko-user-groups".to_string()),
+            None,
+            Some("admin".to_string()),
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-senko-user-sub", "erin".parse().unwrap());
+        headers.insert("x-senko-user-groups", "admin, dev".parse().unwrap());
+
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert!(result.is_master);
+    }
+
+    #[tokio::test]
+    async fn trusted_headers_master_group_absent_stays_false() {
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let provider = TrustedHeadersAuthProvider::new(
+            backend,
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
+            None,
+            Some("x-senko-user-groups".to_string()),
+            None,
+            Some("admin".to_string()),
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert("x-senko-user-sub", "frank".parse().unwrap());
+        headers.insert("x-senko-user-groups", "dev, ops".parse().unwrap());
+
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert!(!result.is_master);
     }
 
     #[tokio::test]
@@ -741,6 +830,7 @@ mod tests {
             None,
             Some("x-senko-user-groups".to_string()),
             Some("x-senko-user-scope".to_string()),
+            None,
         );
 
         let mut headers = axum::http::HeaderMap::new();
@@ -840,6 +930,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -861,7 +953,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "jwt-user");
     }
 
@@ -876,6 +968,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -910,6 +1004,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -944,6 +1040,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -978,6 +1076,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1011,6 +1111,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1032,7 +1134,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         // Fallback order: preferred_username → email → sub
         assert_eq!(user.username(), "new@example.com");
         assert_eq!(user.display_name(), Some("New User"));
@@ -1062,6 +1164,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             required,
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1082,7 +1186,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "jwt-user");
     }
 
@@ -1109,6 +1213,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             required,
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1129,7 +1235,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "jwt-user");
     }
 
@@ -1147,6 +1253,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             required,
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1185,6 +1293,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             required,
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1223,6 +1333,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             required,
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1258,6 +1370,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1279,7 +1393,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "pref-user");
     }
 
@@ -1294,6 +1408,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1314,7 +1430,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "user@example.com");
     }
 
@@ -1329,6 +1445,8 @@ mod tests {
             "test-client-id".to_string(),
             None,
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1348,7 +1466,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "sub-value");
     }
 
@@ -1363,6 +1481,8 @@ mod tests {
             "test-client-id".to_string(),
             Some("custom_name".to_string()),
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1384,7 +1504,7 @@ mod tests {
         });
         let token = make_jwt(&encoding_key, &claims);
 
-        let user = provider.authenticate(&token).await.unwrap();
+        let user = provider.authenticate(&token).await.unwrap().user;
         assert_eq!(user.username(), "custom-user");
     }
 
@@ -1399,6 +1519,8 @@ mod tests {
             "test-client-id".to_string(),
             Some("custom_name".to_string()),
             HashMap::new(),
+            "groups".to_string(),
+            None,
             backend,
         );
 
@@ -1421,5 +1543,153 @@ mod tests {
 
         let result = provider.authenticate(&token).await;
         assert!(matches!(result, Err(AuthError::InvalidToken)));
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_master_group_sets_is_master() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            "groups".to_string(),
+            Some("senko-admin".to_string()),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "jwt-admin",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+            "groups": ["senko-admin", "engineering"],
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let result = provider.authenticate(&token).await.unwrap();
+        assert!(result.is_master);
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_master_group_absent_stays_false() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            "groups".to_string(),
+            Some("senko-admin".to_string()),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "jwt-user",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+            "groups": ["engineering"],
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let result = provider.authenticate(&token).await.unwrap();
+        assert!(!result.is_master);
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_custom_groups_claim_respected() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            "cognito:groups".to_string(),
+            Some("admin".to_string()),
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "cognito-admin",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+            "cognito:groups": ["admin"],
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let result = provider.authenticate(&token).await.unwrap();
+        assert!(result.is_master);
+    }
+
+    #[tokio::test]
+    async fn jwt_provider_master_group_unset_is_never_master() {
+        let encoding_key = make_test_encoding_key();
+        let jwk = make_test_jwk();
+        let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
+
+        let provider = JwtAuthProvider::new(
+            "https://issuer.example.com".to_string(),
+            "test-client-id".to_string(),
+            None,
+            HashMap::new(),
+            "groups".to_string(),
+            None,
+            backend,
+        );
+
+        {
+            let mut cache = provider.jwks_cache.write().await;
+            *cache = Some(JwksCache {
+                keys: JwkSet { keys: vec![jwk] },
+                fetched_at: Instant::now(),
+            });
+        }
+
+        let claims = serde_json::json!({
+            "sub": "jwt-user",
+            "iss": "https://issuer.example.com",
+            "aud": "test-client-id",
+            "exp": (chrono::Utc::now().timestamp() + 3600),
+            "groups": ["admin"],
+        });
+        let token = make_jwt(&encoding_key, &claims);
+
+        let result = provider.authenticate(&token).await.unwrap();
+        assert!(!result.is_master);
     }
 }

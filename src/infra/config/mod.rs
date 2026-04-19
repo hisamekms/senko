@@ -329,6 +329,9 @@ pub struct OidcConfig {
     pub callback_ports: Vec<String>,
     #[serde(default)]
     pub session: SessionConfig,
+    #[serde(default = "default_oidc_groups_claim")]
+    pub groups_claim: String,
+    pub master_group: Option<String>,
 }
 
 impl OidcConfig {
@@ -341,6 +344,10 @@ impl OidcConfig {
 
 fn default_oidc_scopes() -> Vec<String> {
     vec!["openid".to_string(), "profile".to_string()]
+}
+
+fn default_oidc_groups_claim() -> String {
+    "groups".to_string()
 }
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -366,6 +373,7 @@ pub struct TrustedHeadersConfig {
     pub scope_header: Option<String>,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
+    pub master_group: Option<String>,
 }
 
 impl TrustedHeadersConfig {
@@ -650,6 +658,8 @@ pub struct RawOidcConfig {
     pub callback_ports: Option<Vec<String>>,
     #[serde(default)]
     pub session: RawSessionConfig,
+    pub groups_claim: Option<String>,
+    pub master_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -675,6 +685,7 @@ pub struct RawTrustedHeadersConfig {
     pub scope_header: Option<String>,
     pub oidc_issuer_url: Option<String>,
     pub oidc_client_id: Option<String>,
+    pub master_group: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -809,6 +820,11 @@ impl RawConfig {
                             .auth
                             .trusted_headers
                             .oidc_client_id),
+                        master_group: overlay.server.auth.trusted_headers.master_group.or(self
+                            .server
+                            .auth
+                            .trusted_headers
+                            .master_group),
                     },
                     oidc: RawOidcConfig {
                         issuer_url: overlay.server.auth.oidc.issuer_url.or(self
@@ -862,6 +878,16 @@ impl RawConfig {
                                 .session
                                 .max_per_user),
                         },
+                        groups_claim: overlay.server.auth.oidc.groups_claim.or(self
+                            .server
+                            .auth
+                            .oidc
+                            .groups_claim),
+                        master_group: overlay.server.auth.oidc.master_group.or(self
+                            .server
+                            .auth
+                            .oidc
+                            .master_group),
                     },
                 },
             },
@@ -945,6 +971,13 @@ impl RawConfig {
                             inactive_ttl: self.server.auth.oidc.session.inactive_ttl,
                             max_per_user: self.server.auth.oidc.session.max_per_user,
                         },
+                        groups_claim: self
+                            .server
+                            .auth
+                            .oidc
+                            .groups_claim
+                            .unwrap_or_else(default_oidc_groups_claim),
+                        master_group: self.server.auth.oidc.master_group,
                     },
                     trusted_headers: TrustedHeadersConfig {
                         subject_header: self.server.auth.trusted_headers.subject_header,
@@ -955,6 +988,7 @@ impl RawConfig {
                         scope_header: self.server.auth.trusted_headers.scope_header,
                         oidc_issuer_url: self.server.auth.trusted_headers.oidc_issuer_url,
                         oidc_client_id: self.server.auth.trusted_headers.oidc_client_id,
+                        master_group: self.server.auth.trusted_headers.master_group,
                     },
                 },
             },
@@ -1195,6 +1229,21 @@ impl Config {
             && !val.is_empty()
         {
             self.server.auth.trusted_headers.oidc_client_id = Some(val);
+        }
+        if let Ok(val) = std::env::var("SENKO_AUTH_TRUSTED_HEADERS_MASTER_GROUP")
+            && !val.is_empty()
+        {
+            self.server.auth.trusted_headers.master_group = Some(val);
+        }
+        if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_GROUPS_CLAIM")
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.groups_claim = val;
+        }
+        if let Ok(val) = std::env::var("SENKO_AUTH_OIDC_MASTER_GROUP")
+            && !val.is_empty()
+        {
+            self.server.auth.oidc.master_group = Some(val);
         }
 
         // Server OIDC session settings

@@ -25,6 +25,7 @@ pub struct AuthUser {
     pub groups: Vec<String>,
     #[allow(dead_code)]
     pub scopes: Vec<String>,
+    pub is_master: bool,
 }
 
 impl<S> FromRequestParts<S> for AuthUser
@@ -56,11 +57,12 @@ where
                     .strip_prefix("Bearer ")
                     .ok_or(AuthError::InvalidToken)?;
 
-                let user = provider.authenticate(token).await?;
+                let auth_result = provider.authenticate(token).await?;
                 Ok(AuthUser {
-                    user,
+                    user: auth_result.user,
                     groups: Vec::new(),
                     scopes: Vec::new(),
+                    is_master: auth_result.is_master,
                 })
             }
             AuthMode::TrustedHeaders(provider) => {
@@ -69,6 +71,7 @@ where
                     user: result.user,
                     groups: result.groups,
                     scopes: result.scopes,
+                    is_master: result.is_master,
                 })
             }
         }

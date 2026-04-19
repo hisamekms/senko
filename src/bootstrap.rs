@@ -172,12 +172,16 @@ pub fn create_auth_mode(
         let client_id = auth.oidc.client_id.clone().unwrap();
         let username_claim = auth.oidc.username_claim.clone();
         let required_claims = auth.oidc.required_claims.clone();
+        let groups_claim = auth.oidc.groups_claim.clone();
+        let master_group = auth.oidc.master_group.clone();
         tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
         return Ok(Some(AuthMode::Token(Arc::new(JwtAuthProvider::new(
             issuer_url,
             client_id,
             username_claim,
             required_claims,
+            groups_claim,
+            master_group,
             backend,
         )))));
     }
@@ -203,6 +207,7 @@ pub fn create_auth_mode(
                 auth.trusted_headers.email_header.clone(),
                 auth.trusted_headers.groups_header.clone(),
                 auth.trusted_headers.scope_header.clone(),
+                auth.trusted_headers.master_group.clone(),
             ),
         ))));
     }

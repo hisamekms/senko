@@ -21,7 +21,16 @@ impl std::fmt::Display for AuthError {
 
 impl std::error::Error for AuthError {}
 
+/// Result of a successful authentication. Carries the resolved user and
+/// whether the caller should be treated as master (administrator) for the
+/// current request.
+#[derive(Debug, Clone)]
+pub struct AuthResult {
+    pub user: User,
+    pub is_master: bool,
+}
+
 #[async_trait]
 pub trait AuthProvider: Send + Sync {
-    async fn authenticate(&self, token: &str) -> std::result::Result<User, AuthError>;
+    async fn authenticate(&self, token: &str) -> std::result::Result<AuthResult, AuthError>;
 }
