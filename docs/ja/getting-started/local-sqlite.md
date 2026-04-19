@@ -21,7 +21,7 @@
 - 個人プロジェクト、1 人開発
 - `/senko` スキル経由で Claude Code にタスクを管理させたい
 - サーバ運用したくない / 必要性がない
-- データは手元のリポジトリ単位で完結していて良い
+- データはローカルマシンで完結していて良い
 
 逆にこの構成では **無理** なこと:
 
@@ -30,7 +30,7 @@
 - サーバ監査ログ
 - SSO 連携
 
-これらが必要なら [cli-remote-postgres.md](cli-remote-postgres.md) へ。
+これらが必要なら [CLI → Remote → PostgreSQL](cli-remote-postgres.md) へ。
 
 ## 構成要素
 
@@ -144,7 +144,7 @@ scp "$DB" other-host:"$DB"
 
 ## リモート構成への移行タイミング
 
-以下に 1 つでも該当したら [cli-remote-postgres.md](cli-remote-postgres.md) を検討:
+以下に 1 つでも該当したら [CLI → Remote → PostgreSQL](cli-remote-postgres.md) を検討:
 
 - 2 人目の開発者が同じタスク DB を使いたい
 - PR / CI から `senko` を叩きたい (複数クライアントで書き込みが発生)

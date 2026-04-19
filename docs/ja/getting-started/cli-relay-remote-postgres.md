@@ -34,7 +34,7 @@ AI エージェントが動くサンドボックス環境で senko を使いつ�
 - 本番 senko への credential は **サンドボックス内に置けない**
 - "誰が何をしたか" を relay 層で監査したい
 
-逆に、**信頼できる開発者の手元** だけで動く CLI なら relay を挟む価値はありません。[cli-remote-postgres.md](cli-remote-postgres.md) の方がシンプル。
+逆に、**信頼できる開発者の手元** だけで動く CLI なら relay を挟む価値はありません。[CLI → Remote → PostgreSQL](cli-remote-postgres.md) の方がシンプル。
 
 ## 「secretless」の意味
 
@@ -71,7 +71,7 @@ Relay が預かる本物の credential:
 
 ### 前提
 
-[cli-remote-postgres.md](cli-remote-postgres.md) の Step 1〜5 (PostgreSQL 準備、senko serve 起動、master key 設定、プロジェクト作成) が完了していること。
+[CLI → Remote → PostgreSQL](cli-remote-postgres.md) の Step 1〜5 (PostgreSQL 準備、senko serve 起動、master key 設定、プロジェクト作成) が完了していること。
 
 ### Step 1: Relay 用の upstream service account を発行
 
