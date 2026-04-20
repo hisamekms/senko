@@ -1,8 +1,8 @@
 # `[server.relay.*]` hook の実例
 
-relay サーバ (`senko serve --proxy`) の経路で発火する hook の実践パターン。
+relay モードの `senko serve` の経路で発火する hook の実践パターン。
 
-スキーマ: [reference/hooks.md](../../reference/hooks.md)
+スキーマ: [Hooks リファレンス](../../reference/hooks.md)
 
 ## relay hook の位置づけ
 
@@ -18,7 +18,7 @@ relay は上流へリクエストを転送するだけで DB を持たないの�
 
 ## 監査ログ (relay instance 単位)
 
-substitution mode では上流ログに relay の M2M identity しか残らないので、relay 側で audit を取るのが必須:
+substitution mode では上流ログに relay が預かった 1 identity (session API キーの持ち主 or M2M bot 等) のアクションしか残らないので、relay 側で audit を取るのが必須:
 
 ```toml
 [server.relay.task_add.hooks.audit]

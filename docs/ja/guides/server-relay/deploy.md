@@ -1,25 +1,25 @@
-# `senko serve --proxy` (relay) をデプロイする
+# relay モードで `senko serve` をデプロイする
 
-Relay サーバは DB を持たず、上流の direct サーバへ HTTP 転送するだけの薄いサーバ。
+Relay サーバは DB を持たず、上流の direct サーバへ HTTP 転送するだけの薄いサーバ。relay として起動する専用フラグは無く、`[server.relay] url` (env: `SENKO_SERVER_RELAY_URL`) が設定された状態で `senko serve` を起動すると自動的に relay モードに入ります。
 
 > **重要な前提: relay は inbound 認証をしない**
 >
-> `senko serve --proxy` は内部で `auth_mode: None` 固定で起動し、`[server.auth.*]` の設定は **読み込まれず無視** されます。relay に届いたリクエストは認証検査をスキップして upstream に転送されます。したがって relay は **閉鎖ネットワーク (sandbox-only network / VPN 内 / loopback 等) 前提** で運用し、到達可能範囲を限定することで実質的な認可を与える設計です。
+> relay モードの `senko serve` は内部で `auth_mode: None` 固定で起動し、`[server.auth.*]` の設定は **読み込まれず無視** されます。relay に届いたリクエストは認証検査をスキップして upstream に転送されます。したがって relay は **閉鎖ネットワーク (sandbox-only network / VPN 内 / loopback 等) 前提** で運用し、到達可能範囲を限定することで実質的な認可を与える設計です。
 >
 > 公開ネットワーク上で relay を動かしてはいけません。認可は reverse proxy (nginx の IP allowlist / mTLS / 別の API Gateway) を relay の前段に挟む形で外付けにするしかありません。
 
-使い所の判断: [explanation/runtimes.md](../../explanation/runtimes.md)
+使い所の判断: [Runtime の使い分け](../../explanation/runtimes.md)
 
 ## 典型ユースケース
 
 1. **AI サンドボックスからの upstream アクセス集約**
    - sandbox からは egress が制限され、relay 以外に外向き通信できない
-   - relay が M2M JWT を取得して upstream に転送
+   - relay が upstream 向けの credential (session API キー or M2M JWT) を預かって転送
 2. **閉鎖ネットワーク内のクライアント → 外部 upstream**
    - 社内から外部 SaaS 的に動く senko サーバへの中継点
    - relay 側で監査ログ / egress 統制を集約
 3. **上流認証の単点集約**
-   - 複数の小さなクライアントが個別に OIDC トークンを取るのを避け、relay に任せる
+   - 複数の小さなクライアントが個別に credential を持つのを避け、relay に任せる
    - ただし relay 自体は認証しないので、前段のネットワーク境界 or 外部プロキシで入口を守ること
 
 逆に **向かないユースケース**:
@@ -35,7 +35,8 @@ export SENKO_SERVER_RELAY_URL="https://senko-upstream.example.com"
 export SENKO_SERVER_RELAY_TOKEN="<upstream へ送る Bearer 値>"
 
 # relay を起動 (閉鎖ネットワーク内で listen)
-senko serve --proxy --host 127.0.0.1 --port 3142
+#   SENKO_SERVER_RELAY_URL が設定されているので relay モードで起動する
+senko serve --host 127.0.0.1 --port 3142
 ```
 
 config ファイル版:
@@ -68,14 +69,22 @@ relay は受け取った HTTP リクエストを以下のように処理しま�
 ```toml
 [server.relay]
 url   = "https://senko-upstream.example.com"
-token = "<M2M JWT or API キー>"
+token = "<upstream で受理される Bearer 値>"
 ```
 
-- **クライアントの credential は upstream に届かない** (relay が受け取って捨てる)
-- 上流から見ると「relay がすべてのリクエストを同一 identity として代表している」
-- 上流ログには個別クライアント情報が残らないので、**relay 側で監査ログを取る**必要あり ([hooks.md](hooks.md))
+`token` に入れる値の選択肢は upstream の認証モード次第:
 
-OIDC upstream 向けの JWT 自動更新パターンは [token-relay.md](token-relay.md)。
+- upstream が OIDC: **senko が発行した session API キー** (`senko auth login` + `senko auth token` で取得、TTL は `[server.auth.oidc.session]` に従う) または **IdP から直接取得した M2M JWT** (IdP の access_token_lifetime で失効)
+- upstream が trusted_headers: **API Gateway が受理する JWT** (IdP の発行する access_token をそのまま)
+- upstream が API キー: **master_key で発行した通常 API キー** (長命、試用用途)
+
+挙動:
+
+- **クライアントの credential は upstream に届かない** (relay が受け取って捨てる)
+- 上流から見ると「relay が 1 identity の代表としてすべてのリクエストを送っている」
+- 上流ログには個別クライアント情報が残らないので、**relay 側で監査ログを取る**必要あり ([`[server.relay.*]` hook の実例](hooks.md))
+
+token の選び方・取得手順・更新パターンは [トークン中継 (Token Relay) パターン](token-relay.md) を参照。
 
 ## passthrough モード (token 未設定)
 
@@ -104,7 +113,7 @@ GET /api/v1/health
 - **上流との TLS は証明書検証を省かない**
 - **ネットワーク境界の確認**: ファイアウォール / network namespace / compose network で relay 到達経路を限定。公開にならない設計を起動前に検証
 - **relay の hook は audit 専用**に使う (重処理は upstream 側か外部システムへ)
-- **上流への token が JWT (短命)** の場合は定期更新が必要 — [token-relay.md](token-relay.md)
+- **上流への token が短命** (IdP 発行の M2M JWT など) の場合は定期更新が必要 — [トークン中継 (Token Relay) パターン](token-relay.md)
 
 ## トラブルシューティング
 
@@ -118,6 +127,6 @@ GET /api/v1/health
 
 ## 次のステップ
 
-- JWT 自動更新 (upstream が OIDC) → [token-relay.md](token-relay.md)
-- hook 実例 → [hooks.md](hooks.md)
+- token の選び方と更新運用 → [トークン中継 (Token Relay) パターン](token-relay.md)
+- hook 実例 → [`[server.relay.*]` hook の実例](hooks.md)
 - AI サンドボックス構成の end-to-end → [CLI → Relay → Remote → PostgreSQL](../../getting-started/cli-relay-remote-postgres.md)

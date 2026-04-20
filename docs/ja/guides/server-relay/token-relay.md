@@ -1,6 +1,6 @@
 # トークン中継 (Token Relay) パターン
 
-relay が `[server.relay] token` を保持してクライアントの Authorization ヘッダを差し替える運用 (substitution mode) の深掘り。relay 全般の挙動は [deploy.md](deploy.md) を参照。
+relay が `[server.relay] token` を保持してクライアントの Authorization ヘッダを差し替える運用 (substitution mode) の深掘り。relay 全般の挙動は [relay モードで `senko serve` をデプロイする](deploy.md) を参照。
 
 > **前提**: relay は inbound 認証をしません (`auth_mode: None` 固定)。閉鎖ネットワーク内でしか動かせません。このページは **relay → upstream** の認証経路だけを扱います。
 
@@ -28,17 +28,41 @@ AI サンドボックスは **substitution が適切**。上流を公開 SaaS �
 
 ## substitution 用の relay credential を上流に用意する
 
-upstream がどの認証モードかで発行手順が変わります。
+upstream がどの認証モードかで発行手順・運用コストが変わります。
 
-### upstream が OIDC モードの場合 (推奨)
+### upstream が OIDC モードの場合 (本番推奨)
 
-IdP に **OAuth Client Credentials (M2M)** クライアントを登録:
+2 つの選択肢があります。
+
+#### 選択肢 1: 人間ユーザの session API キーを流用 (シンプル)
+
+relay を **特定の人間 (例: alice) の代理** として動かす方式。relay 1 台 = 1 人の身代わりになります。
+
+```bash
+# 自分の PC で
+senko auth login --device-name "alice-relay-sandbox"
+senko auth token
+# => sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+```
+
+この値を `SENKO_SERVER_RELAY_TOKEN` に入れて relay を起動。
+
+- TTL は upstream の `[server.auth.oidc.session] ttl` に従う (例: 30d)。TTL 内は relay 再起動不要
+- 失効時は `senko auth login` やり直し → `senko auth token` で新しい値 → relay restart
+- `senko auth revoke <session_id>` で個別失効可
+- **upstream ログは alice のアクションとして記録される** — AI のすべての操作が alice の責任として残る
+
+詳細な構築手順: [CLI → Relay → Remote → PostgreSQL](../../getting-started/cli-relay-remote-postgres.md)
+
+#### 選択肢 2: IdP に M2M クライアントを登録 (bot identity として分離)
+
+relay を **人間とは別の service account** として動かしたい場合。IdP に OAuth Client Credentials クライアントを登録し、relay が IdP から直接 JWT を取得します。
 
 - grant: `client_credentials`
 - audience: upstream の URL
 - client_id / client_secret を relay の secret store に保管
 
-relay の entrypoint で IdP に M2M リクエストを送り、返ってきた JWT を `SENKO_SERVER_RELAY_TOKEN` に入れて `senko serve --proxy` を起動します。JWT は短命なので **定期的に relay を restart** して更新 (実装サンプルは [CLI → Relay → Remote → PostgreSQL: Step 2](../../getting-started/cli-relay-remote-postgres.md) にあります)。
+relay の entrypoint で IdP に M2M リクエストを送り、返ってきた JWT を `SENKO_SERVER_RELAY_TOKEN` に入れて `senko serve` を起動します。IdP の access_token_lifetime は通常 1 時間程度と短いので、**定期的に relay を restart** して token を更新する必要があります。
 
 upstream 側では relay が最初のリクエストで JWT を送ってくると **JIT で user が自動登録** されます (`username` = JWT の `sub` = client_id)。登録後、upstream プロジェクトの owner が member に追加:
 
@@ -46,6 +70,25 @@ upstream 側では relay が最初のリクエストで JWT を送ってくる�
 # upstream 側
 senko project members add --user-id <relay-bot-id> --role member
 ```
+
+**選択肢 1 と 2 の比較**:
+
+| 項目 | 選択肢 1 (session API キー) | 選択肢 2 (M2M JWT) |
+|---|---|---|
+| 運用コスト | 低 (TTL = 数日〜数十日、手動更新) | 中 (TTL = 1h 程度、定期 restart / refresh 実装が必要) |
+| upstream ログの actor | 実在の人間 (alice) | bot identity (例: `senko-relay-sandbox`) |
+| 責任の所在 | alice 個人 | service account 単位で分離可 |
+| IdP 側の追加設定 | 不要 (通常のユーザログインを流用) | M2M クライアントの登録が必要 |
+| relay 側の refresh 実装 | 不要 | あり (entrypoint で IdP 叩き直し + cron/timer で restart) |
+| 漏洩時の影響 | alice の member 権限 | service account の member 権限 |
+
+小〜中規模運用や個人の sandbox 用途なら **選択肢 1** が圧倒的に楽。複数 relay を service account 単位で厳密に分離したい / SOC2 等の監査要件で bot identity が必要なら **選択肢 2**。
+
+### upstream が trusted_headers モードの場合
+
+API Gateway が認証を終端しているので、relay は **API Gateway が受理する IdP の JWT (access_token)** を持つ必要があります。senko の session API キーは使えません (senko 側が API キーを発行していないため)。
+
+典型的には選択肢 2 (M2M) と同じ運用になります: IdP から client_credentials で JWT を取得 → `SENKO_SERVER_RELAY_TOKEN` に入れる → 短命なので定期 refresh。人間の JWT を使う選択肢 1 相当も可能ですが、IdP 由来の access_token_lifetime で失効するので運用は選択肢 2 と同じ短命トークン扱いになります。
 
 ### upstream が API キーモードの場合 (試用用)
 
@@ -65,7 +108,7 @@ curl -s -X POST https://senko-upstream.example.com/api/v1/users/7/api-keys \
 # => key を SENKO_SERVER_RELAY_TOKEN に
 ```
 
-API キーは長命なので relay 再起動による定期更新は不要です。ただし API キーモードの upstream は試用用途なので、本番では OIDC + M2M + 定期リフレッシュを選んでください。
+API キーは長命なので relay 再起動による定期更新は不要です。ただし API キーモードの upstream 自体が試用用途なので、本番では OIDC upstream + 選択肢 1/2 を選んでください。
 
 ## 監査の戻し方
 
@@ -105,6 +148,6 @@ mode = "async"
 
 ## 次のステップ
 
-- relay 全般の運用 → [deploy.md](deploy.md)
-- hook 実例 → [hooks.md](hooks.md)
+- relay 全般の運用 → [relay モードで `senko serve` をデプロイする](deploy.md)
+- hook 実例 → [`[server.relay.*]` hook の実例](hooks.md)
 - AI サンドボックスの end-to-end → [CLI → Relay → Remote → PostgreSQL](../../getting-started/cli-relay-remote-postgres.md)
