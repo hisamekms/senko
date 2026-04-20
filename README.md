@@ -5,7 +5,7 @@
 A local-only task management tool designed for Claude Code. SQLite-backed, dependency-aware, priority-driven.
 Works as a Claude Code skill to let AI agents manage and execute project tasks.
 
-[日本語ドキュメント (Japanese)](docs/README.ja.md)
+[日本語ドキュメント (Japanese)](docs/ja/README.md) | [Documentation](docs/en/README.md)
 
 ## Features
 
@@ -111,7 +111,7 @@ command = "notify-send 'No eligible tasks'"
 
 Hooks receive the event payload as JSON on stdin and are executed via `sh -c`. All lifecycle events are supported: `on_task_added`, `on_task_ready`, `on_task_started`, `on_task_completed`, `on_task_canceled`, `on_no_eligible_task`.
 
-For full details on event payloads, see [CLI Reference – Hooks](docs/CLI.md#hooks--automatic-actions-on-task-state-changes).
+For full details on event payloads, see [Hooks Reference](docs/en/reference/hooks.md).
 
 ## Workflow Configuration
 
@@ -214,19 +214,19 @@ curl -s http://localhost:3142/api/v1/projects \
 
 ## Authentication
 
-senko supports three authentication modes: Local, Remote + API Key, and Remote + OIDC. See the [Authentication Setup Guide](docs/AUTH_SETUP.md) for details.
+senko supports three authentication modes. See [OIDC Authentication](docs/en/guides/server-remote/auth-oidc.md) (recommended for production), [Trusted Headers Authentication](docs/en/guides/server-remote/auth-trusted-headers.md), and [API Key Authentication](docs/en/guides/server-remote/auth-api-key.md) (evaluation only).
 
 ## CLI Reference
 
-For direct CLI usage, see [CLI Reference](docs/CLI.md).
+For direct CLI usage, see [CLI Reference](docs/en/reference/cli.md).
 
 ## Configuration
 
-See [Configuration Reference](docs/CONFIGURATION.md) for all config keys, environment variables, and layering.
+See [Config Overview](docs/en/reference/config/overview.md) for all config keys, environment variables, and layering.
 
 ## Development
 
-See [Development Guide](docs/DEVELOPMENT.md) for status transitions, data storage, and testing.
+See [Development Setup](docs/en/contributing/development.md) for build instructions, testing, and worktree workflow.
 
 ## License
 
