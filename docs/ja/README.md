@@ -51,7 +51,6 @@ senko skill-install
 - [「次の 1 件」に集中できる実行モデル](explanation/task-decomposition.md) — 柱 2: 依存・優先度・並列 pick
 - [Contract による全体像の保持](explanation/contract.md) — 柱 3: 長期文脈と Notes
 - [Runtime の使い分け](explanation/runtimes.md) — cli / server.remote / server.relay のデリバリ基盤
-- [4 層アーキテクチャ](explanation/architecture.md) — コード構造 (domain / application / infra / presentation)
 
 ### 設定・デプロイ方法を知りたい — [guides/](guides/)
 
@@ -93,6 +92,7 @@ senko skill-install
 ### コントリビュート — [contributing/](contributing/)
 
 - [開発環境セットアップ](contributing/development.md)
+- [4 層アーキテクチャ](contributing/architecture.md) — コード構造 (domain / application / infra / presentation)
 - [テスト](contributing/testing.md) — unit / e2e
 - [リリース手順](contributing/releasing.md)
 - [Worktree ワークフロー](contributing/worktree.md)

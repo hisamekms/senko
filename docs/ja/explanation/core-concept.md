@@ -94,4 +94,3 @@ senko では **Contract** がその役割を担います。
   - [「次の 1 件」に集中できる実行モデル](task-decomposition.md)
   - [Contract による全体像の保持](contract.md)
 - 実行基盤の使い分け → [Runtime の使い分け](runtimes.md)
-- コード構造 → [4 層アーキテクチャ](architecture.md)

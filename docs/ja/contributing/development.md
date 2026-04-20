@@ -59,7 +59,7 @@ tests/
 └── e2e/           シェルスクリプトベースの E2E テスト
 ```
 
-設計原則: [explanation/architecture.md](../explanation/architecture.md)
+設計原則: [4 層アーキテクチャ](architecture.md)
 
 ## 作業の進め方
 
