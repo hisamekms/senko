@@ -2,7 +2,7 @@
 
 Hook は **状態遷移の前後に発火するシェルコマンド** です。すべての runtime で共通の仕組みを使います。
 
-概念面は [explanation/workflow-stages.md](../explanation/workflow-stages.md)、runtime の使い分けは [explanation/runtimes.md](../explanation/runtimes.md) を参照。
+概念面は [explanation/event-driven-workflow.md](../explanation/event-driven-workflow.md)、runtime の使い分けは [explanation/runtimes.md](../explanation/runtimes.md) を参照。
 
 ## キー構造
 

@@ -2,7 +2,7 @@
 
 Claude Code skill が読む **論理ステージ定義**。どの runtime で動いていても読まれ得ます (実 runtime に対する状態遷移 hook とは別物)。
 
-概念: [explanation/workflow-stages.md](../../explanation/workflow-stages.md)
+概念: [explanation/event-driven-workflow.md](../../explanation/event-driven-workflow.md)
 
 ## `[workflow]` (トップレベル)
 

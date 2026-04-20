@@ -2,7 +2,7 @@
 
 Claude Code の動作を、プロジェクト固有のルールに合わせて調整するための実践例集。
 
-stage の概念は [explanation/workflow-stages.md](../../explanation/workflow-stages.md)、TOML スキーマは [reference/config/workflow.md](../../reference/config/workflow.md)。
+stage の概念は [explanation/event-driven-workflow.md](../../explanation/event-driven-workflow.md)、TOML スキーマは [reference/config/workflow.md](../../reference/config/workflow.md)。
 
 ## パターン 1: タスク追加時のデフォルト
 
