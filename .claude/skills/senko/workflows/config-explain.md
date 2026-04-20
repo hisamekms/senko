@@ -138,7 +138,7 @@ Stage-specific keys (unknown keys are preserved as pass-through extras):
 Hooks live under three runtime roots (fired only on the matching process) plus workflow stages:
 
 - `[cli.<action>.hooks.<name>]` — fired by the CLI process on task state transitions.
-- `[server.relay.<action>.hooks.<name>]` — fired by the relay proxy server (`senko serve-proxy`).
+- `[server.relay.<action>.hooks.<name>]` — fired by `senko serve` when running in Relay mode (enabled by setting `server.relay.url`).
 - `[server.remote.<action>.hooks.<name>]` — fired by the direct server (`senko serve`).
 - `[workflow.<stage>.hooks.<name>]` — guidance hooks emitted into the plan by the skill at a workflow stage; agents execute them as plan instructions.
 

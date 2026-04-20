@@ -120,7 +120,7 @@ senko config --init                    # generate template config.toml
 
 - **Hooks** — defined under four runtime roots, each with named HookDef entries:
   - `[cli.<action>.hooks.<name>]` — fired by the CLI on state transitions.
-  - `[server.relay.<action>.hooks.<name>]` — fired by `senko serve-proxy`.
+  - `[server.relay.<action>.hooks.<name>]` — fired by `senko serve` when running in Relay mode (enabled by setting `server.relay.url`).
   - `[server.remote.<action>.hooks.<name>]` — fired by `senko serve`.
   - `[workflow.<stage>.hooks.<name>]` — emitted as plan instructions by the skill at the matching stage.
   - CLI/server `<action>` is one of: `task_add`, `task_publish`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`.

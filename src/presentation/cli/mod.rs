@@ -754,7 +754,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 # --- CLI runtime ---
 # Hooks defined here fire when the binary runs as a local CLI
-# (i.e. not `senko serve` / `senko serve --proxy`).
+# (i.e. not `senko serve`, whether in Direct or Relay mode).
 #
 # Hook shape (common to every runtime):
 #   command        = "..."                            # shell command, receives envelope via stdin
@@ -797,7 +797,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # command = "jq -r '.event.contract.id' | xargs -I{} logger -t senko 'contract {} dod check'"
 # mode = "async"
 
-# --- Server: Relay mode (serve --proxy) ---
+# --- Server: Relay mode (enabled when `server.relay.url` is set) ---
 [server]
 # host = "127.0.0.1"
 # port = 3142
