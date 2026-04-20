@@ -2,7 +2,7 @@
 # e2e test: hooks test subcommand
 #
 # Uses the new hooks schema introduced in the hooks-config-refresh change:
-#   [cli.<action>.hooks.<name>]     — action ∈ { task_add, task_ready, task_start,
+#   [cli.<action>.hooks.<name>]     — action ∈ { task_add, task_publish, task_start,
 #                                                task_complete, task_cancel, task_select }
 # Old schema ([hooks.on_task_*.<name>]) is no longer accepted.
 
@@ -21,11 +21,11 @@ run_lf --output json task list >/dev/null 2>&1
 
 # Create a task to use for testing
 TASK_ID="$(run_lf --output json task add --title "Hook test task" --description "Test description" | jq -r '.id')"
-run_lf task ready "$TASK_ID" >/dev/null
+run_lf task publish "$TASK_ID" >/dev/null
 
 # Configure hooks under the CLI runtime using the new schema
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[cli.task_ready.hooks.cat-hook]
+[cli.task_publish.hooks.cat-hook]
 command = "cat"
 
 [cli.task_start.hooks.hook1]
@@ -37,10 +37,10 @@ EOF
 
 # 1. dry-run: should output envelope JSON without executing hooks
 echo "[1] dry-run outputs envelope JSON"
-DRY_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" --dry-run 2>/dev/null)"
+DRY_OUTPUT="$(run_lf hooks test task_publish "$TASK_ID" --dry-run 2>/dev/null)"
 DRY_EVENT="$(echo "$DRY_OUTPUT" | jq -r '.event.event')"
 DRY_TASK_ID="$(echo "$DRY_OUTPUT" | jq -r '.event.task.id')"
-assert_eq "task_ready" "$DRY_EVENT" "dry-run event field"
+assert_eq "task_publish" "$DRY_EVENT" "dry-run event field"
 assert_eq "$TASK_ID" "$DRY_TASK_ID" "dry-run task id"
 
 # 1b. dry-run: envelope includes runtime and backend
@@ -71,13 +71,13 @@ assert_eq "Sample task" "$SAMPLE_TITLE" "sample task title"
 
 # 3. hooks test with real execution: stdout should show envelope JSON (cat hook)
 echo "[3] sync execution outputs to stdout"
-EXEC_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" 2>/dev/null)"
+EXEC_OUTPUT="$(run_lf hooks test task_publish "$TASK_ID" 2>/dev/null)"
 EXEC_EVENT="$(echo "$EXEC_OUTPUT" | jq -r '.event.event')"
-assert_eq "task_ready" "$EXEC_EVENT" "sync execution event"
+assert_eq "task_publish" "$EXEC_EVENT" "sync execution event"
 
 # 4. exit code is displayed on stderr
 echo "[4] exit code displayed on stderr"
-STDERR_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" 2>&1 >/dev/null)"
+STDERR_OUTPUT="$(run_lf hooks test task_publish "$TASK_ID" 2>&1 >/dev/null)"
 assert_contains "$STDERR_OUTPUT" "exit code: 0" "exit code in stderr"
 
 # 5. invalid event name
@@ -103,7 +103,7 @@ assert_eq "todo" "$STATUS_AFTER" "task status unchanged"
 
 # 9. dry-run includes stats and ready_count inside event
 echo "[9] dry-run includes stats"
-STATS_OUTPUT="$(run_lf hooks test task_ready "$TASK_ID" --dry-run 2>/dev/null)"
+STATS_OUTPUT="$(run_lf hooks test task_publish "$TASK_ID" --dry-run 2>/dev/null)"
 HAS_STATS="$(echo "$STATS_OUTPUT" | jq '.event | has("stats")')"
 HAS_READY="$(echo "$STATS_OUTPUT" | jq '.event | has("ready_count")')"
 assert_eq "true" "$HAS_STATS" "dry-run has stats"

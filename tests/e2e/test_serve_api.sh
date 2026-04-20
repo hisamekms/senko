@@ -78,13 +78,13 @@ assert_json_field "$EDITED" '.title' "Task One Updated" "edited title"
 assert_contains "$(echo "$EDITED" | jq -r '.tags[]')" "frontend" "edited tags contains frontend"
 
 echo ""
-echo "=== Ready task ==="
-READY=$(api_json -X POST "$PBASE/tasks/$TASK1_ID/ready" -d '{}')
+echo "=== Publish task ==="
+READY=$(api_json -X POST "$PBASE/tasks/$TASK1_ID/publish" -d '{}')
 assert_json_field "$READY" '.status' "todo" "ready transitions to todo"
 
 echo ""
-echo "=== Ready task2 ==="
-api_json -X POST "$PBASE/tasks/$TASK2_ID/ready" -d '{}' >/dev/null
+echo "=== Publish task2 ==="
+api_json -X POST "$PBASE/tasks/$TASK2_ID/publish" -d '{}' >/dev/null
 
 echo ""
 echo "=== Start task ==="
@@ -159,7 +159,7 @@ assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "dependency
 
 echo ""
 echo "=== Cancel task ==="
-api_json -X POST "$PBASE/tasks/$TASK3_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$TASK3_ID/publish" -d '{}' >/dev/null
 CANCELED=$(api_json -X POST "$PBASE/tasks/$TASK3_ID/cancel" -d '{"reason":"no longer needed"}')
 assert_json_field "$CANCELED" '.status' "canceled" "cancel transitions to canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "no longer needed" "cancel reason set"
@@ -168,7 +168,7 @@ echo ""
 echo "=== Next task: add(assignee=self, DoD) → ready → next → dod check → complete ==="
 TASK5=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Next Candidate","priority":"P0","assignee_user_id":"self","definition_of_done":["Next DoD"]}')
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
-api_json -X POST "$PBASE/tasks/$TASK5_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$TASK5_ID/publish" -d '{}' >/dev/null
 
 NEXT=$(api_json -X POST "$PBASE/tasks/next" -d '{}')
 assert_json_field "$NEXT" '.status' "in_progress" "next auto-starts task"
@@ -241,7 +241,7 @@ echo ""
 echo "=== Preview transition: unchecked DoD blocks complete ==="
 PT_DOD=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Preview DoD","definition_of_done":["Check me"]}')
 PT_DOD_ID=$(echo "$PT_DOD" | jq -r '.id')
-api_json -X POST "$PBASE/tasks/$PT_DOD_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$PT_DOD_ID/publish" -d '{}' >/dev/null
 api_json -X POST "$PBASE/tasks/$PT_DOD_ID/start" -d '{}' >/dev/null
 PREVIEW_DOD_RESULT=$(api_get "$PBASE/tasks/$PT_DOD_ID/preview-transition?target=completed")
 assert_json_field "$PREVIEW_DOD_RESULT" '.allowed' "false" "preview complete with unchecked DoD not allowed"
@@ -249,7 +249,7 @@ assert_contains "$(echo "$PREVIEW_DOD_RESULT" | jq -r '.reason')" "DoD" "preview
 
 echo ""
 echo "=== Preview next: has candidate ==="
-api_json -X POST "$PBASE/tasks/$PT_TASK_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$PT_TASK_ID/publish" -d '{}' >/dev/null
 PREVIEW_NEXT=$(api_get "$PBASE/tasks/preview-next")
 assert_json_field "$PREVIEW_NEXT" '.allowed' "true" "preview-next has candidate"
 assert_json_field "$PREVIEW_NEXT" '.target_status' "in_progress" "preview-next target is in_progress"
@@ -306,7 +306,7 @@ assert_eq "0" "$(echo "$CLEAR_RESULT" | jq '.dependencies | length')" "set_deps:
 echo ""
 echo "=== Next when no eligible task ==="
 # Complete or cancel remaining active tasks
-api_json -X POST "$PBASE/tasks/$TASK4_ID/ready" -d '{}' >/dev/null 2>&1 || true
+api_json -X POST "$PBASE/tasks/$TASK4_ID/publish" -d '{}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK4_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK7_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true
 api_json -X POST "$PBASE/tasks/$TASK8_ID/cancel" -d '{"reason":"cleanup"}' >/dev/null 2>&1 || true

@@ -102,7 +102,7 @@ assert_not_contains "$LOG3_CONTENT" "do not match the active runtime" "no mismat
 # Case 4: pre+async+abort is unreachable — load-time warning
 # ---------------------------------------------------------------
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[server.remote.task_ready.hooks.unreachable_abort]
+[server.remote.task_publish.hooks.unreachable_abort]
 command = "true"
 when = "pre"
 mode = "async"

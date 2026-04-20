@@ -2192,7 +2192,7 @@ mod tests {
         assert_eq!(task.status(), TaskStatus::Draft);
 
         // Draft → Todo
-        let (task, _) = task.ready(now_utc()).unwrap();
+        let (task, _) = task.publish(now_utc()).unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task.status(), TaskStatus::Todo);
@@ -2313,7 +2313,7 @@ mod tests {
         let backend = setup().await;
 
         let t1 = backend.create_task(1, &params("Todo task")).await.unwrap();
-        let (t1, _) = t1.ready(now_utc()).unwrap();
+        let (t1, _) = t1.publish(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
         let _t2 = backend.create_task(1, &params("Draft task")).await.unwrap();
@@ -2342,7 +2342,7 @@ mod tests {
             .create_task(1, &params("High priority"))
             .await
             .unwrap();
-        let (t1, _) = t1.ready(now_utc()).unwrap();
+        let (t1, _) = t1.publish(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
         let next = backend.next_task(1, None, false).await.unwrap();

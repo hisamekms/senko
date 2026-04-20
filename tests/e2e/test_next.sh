@@ -20,10 +20,10 @@ P2_ID="$(run_lf --output json task add --title "P2 task" --priority p2 | jq -r '
 P0_ID="$(run_lf --output json task add --title "P0 task" --priority p0 | jq -r '.id')"
 
 # Set all to todo
-run_lf task ready "$P3_ID" >/dev/null
-run_lf task ready "$P1_ID" >/dev/null
-run_lf task ready "$P2_ID" >/dev/null
-run_lf task ready "$P0_ID" >/dev/null
+run_lf task publish "$P3_ID" >/dev/null
+run_lf task publish "$P1_ID" >/dev/null
+run_lf task publish "$P2_ID" >/dev/null
+run_lf task publish "$P0_ID" >/dev/null
 
 NEXT1="$(run_lf --output json task next)"
 NEXT1_ID="$(echo "$NEXT1" | jq -r '.id')"
@@ -53,8 +53,8 @@ echo "[2] Same priority: earlier created task first"
 FIRST_ID="$(run_lf --output json task add --title "First same-pri" --priority p2 | jq -r '.id')"
 SECOND_ID="$(run_lf --output json task add --title "Second same-pri" --priority p2 | jq -r '.id')"
 
-run_lf task ready "$FIRST_ID" >/dev/null
-run_lf task ready "$SECOND_ID" >/dev/null
+run_lf task publish "$FIRST_ID" >/dev/null
+run_lf task publish "$SECOND_ID" >/dev/null
 
 NEXT_SAME="$(run_lf --output json task next)"
 NEXT_SAME_ID="$(echo "$NEXT_SAME" | jq -r '.id')"
@@ -72,7 +72,7 @@ run_lf task complete "$SECOND_ID" >/dev/null
 echo "[3] --session-id is recorded"
 
 SID_TASK_ID="$(run_lf --output json task add --title "Session task" | jq -r '.id')"
-run_lf task ready "$SID_TASK_ID" >/dev/null
+run_lf task publish "$SID_TASK_ID" >/dev/null
 
 SID_OUTPUT="$(run_lf --output json task next --session-id "test-session-42")"
 SID_ACTUAL="$(echo "$SID_OUTPUT" | jq -r '.assignee_session_id')"
@@ -89,8 +89,8 @@ echo "[4] Dependency filtering: unmet deps skipped"
 DEP_ID="$(run_lf --output json task add --title "Dependency" --priority p2 | jq -r '.id')"
 BLOCKED_ID="$(run_lf --output json task add --title "Blocked task" --priority p0 | jq -r '.id')"
 
-run_lf task ready "$DEP_ID" >/dev/null
-run_lf task ready "$BLOCKED_ID" >/dev/null
+run_lf task publish "$DEP_ID" >/dev/null
+run_lf task publish "$BLOCKED_ID" >/dev/null
 
 # Blocked depends on Dep (Dep is not completed)
 run_lf task deps add "$BLOCKED_ID" --on "$DEP_ID" >/dev/null
@@ -141,8 +141,8 @@ BLOCKER_ID="$(run_lf --output json task add --title "Blocker" | jq -r '.id')"
 BLOCKED1_ID="$(run_lf --output json task add --title "Blocked 1" | jq -r '.id')"
 BLOCKED2_ID="$(run_lf --output json task add --title "Blocked 2" | jq -r '.id')"
 
-run_lf task ready "$BLOCKED1_ID" >/dev/null
-run_lf task ready "$BLOCKED2_ID" >/dev/null
+run_lf task publish "$BLOCKED1_ID" >/dev/null
+run_lf task publish "$BLOCKED2_ID" >/dev/null
 
 run_lf task deps add "$BLOCKED1_ID" --on "$BLOCKER_ID" >/dev/null
 run_lf task deps add "$BLOCKED2_ID" --on "$BLOCKER_ID" >/dev/null

@@ -50,8 +50,8 @@ EDITED=$(run_http task get "$TASK1_ID")
 assert_json_field "$EDITED" '.title' "HTTP Task 1 Updated" "edit: title updated"
 assert_contains "$(echo "$EDITED" | jq -r '.tags[]')" "backend" "edit: tag added"
 
-echo "[5] Ready task via HTTP backend"
-READY=$(run_http task ready "$TASK1_ID")
+echo "[5] Publish task via HTTP backend"
+READY=$(run_http task publish "$TASK1_ID")
 assert_json_field "$READY" '.status' "todo" "ready: status is todo"
 
 echo "[6] Start task via HTTP backend"
@@ -65,7 +65,7 @@ assert_json_field "$COMPLETED" '.status' "completed" "complete: status is comple
 echo "[8] Add task with DoD for DoD check/uncheck test"
 TASK2=$(run_http task add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
 TASK2_ID=$(echo "$TASK2" | jq -r '.id')
-run_http task ready "$TASK2_ID" >/dev/null
+run_http task publish "$TASK2_ID" >/dev/null
 run_http task start "$TASK2_ID" >/dev/null
 
 echo "[9] DoD check via HTTP backend"
@@ -102,7 +102,7 @@ DEP_REMOVED=$(run_http task deps remove "$TASK4_ID" --on "$TASK3_ID")
 assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "deps remove: dependency removed"
 
 echo "[14] Cancel task via HTTP backend"
-run_http task ready "$TASK3_ID" >/dev/null
+run_http task publish "$TASK3_ID" >/dev/null
 CANCELED=$(run_http task cancel "$TASK3_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
@@ -110,7 +110,7 @@ assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 echo "[15] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
 TASK5=$(run_http task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
-run_http task ready "$TASK5_ID" >/dev/null
+run_http task publish "$TASK5_ID" >/dev/null
 NEXT=$(run_http task next)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"

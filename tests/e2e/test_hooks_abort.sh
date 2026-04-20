@@ -18,10 +18,10 @@ echo "--- Test: hooks sync+pre+abort ---"
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 
 # ---------------------------------------------------------------
-# Case 1: sync + pre + on_failure=abort should abort task ready.
+# Case 1: sync + pre + on_failure=abort should abort task publish.
 # ---------------------------------------------------------------
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[cli.task_ready.hooks.blocker]
+[cli.task_publish.hooks.blocker]
 command = "cat >/dev/null; exit 1"
 when = "pre"
 mode = "sync"
@@ -32,14 +32,14 @@ TASK_ID="$(run_lf --output json task add --title "Abort test" | jq -r '.id')"
 BEFORE_STATUS="$(run_lf task get "$TASK_ID" | jq -r '.status')"
 assert_eq "draft" "$BEFORE_STATUS" "new task starts as draft"
 
-echo "[1] task ready aborted by sync+pre+abort hook"
+echo "[1] task publish aborted by sync+pre+abort hook"
 READY_EXIT=0
-READY_OUTPUT="$(run_lf task ready "$TASK_ID" 2>&1)" || READY_EXIT=$?
+READY_OUTPUT="$(run_lf task publish "$TASK_ID" 2>&1)" || READY_EXIT=$?
 if [[ "$READY_EXIT" -ne 0 ]]; then
-  echo "  PASS: task ready exited non-zero ($READY_EXIT)"
+  echo "  PASS: task publish exited non-zero ($READY_EXIT)"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
-  echo "  FAIL: task ready exit code was 0 (expected non-zero)"
+  echo "  FAIL: task publish exit code was 0 (expected non-zero)"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 assert_contains "$READY_OUTPUT" "aborted by pre-hook" "output mentions 'aborted by pre-hook'"
@@ -52,7 +52,7 @@ assert_eq "draft" "$AFTER_STATUS" "status remains draft after abort"
 # Case 2: async + pre + on_failure=abort must NOT abort (load-time warning).
 # ---------------------------------------------------------------
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[cli.task_ready.hooks.async_abort_noop]
+[cli.task_publish.hooks.async_abort_noop]
 command = "cat >/dev/null; exit 1"
 when = "pre"
 mode = "async"
@@ -62,7 +62,7 @@ TOML
 TASK_ID2="$(run_lf --output json task add --title "Async abort noop" | jq -r '.id')"
 
 echo "[3] async+pre+abort does NOT abort transition"
-run_lf task ready "$TASK_ID2" >/dev/null 2>&1
+run_lf task publish "$TASK_ID2" >/dev/null 2>&1
 # Give the async hook a moment before checking status
 sleep 0.5
 AFTER2="$(run_lf task get "$TASK_ID2" | jq -r '.status')"
@@ -72,7 +72,7 @@ assert_eq "todo" "$AFTER2" "async hook cannot abort — task moved to todo"
 # Case 3: sync + post + on_failure=abort logs but does NOT abort.
 # ---------------------------------------------------------------
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[cli.task_ready.hooks.post_abort_noop]
+[cli.task_publish.hooks.post_abort_noop]
 command = "cat >/dev/null; exit 1"
 when = "post"
 mode = "sync"
@@ -82,7 +82,7 @@ TOML
 TASK_ID3="$(run_lf --output json task add --title "Post abort noop" | jq -r '.id')"
 
 echo "[4] sync+post+abort does NOT abort transition"
-run_lf task ready "$TASK_ID3" >/dev/null 2>&1
+run_lf task publish "$TASK_ID3" >/dev/null 2>&1
 AFTER3="$(run_lf task get "$TASK_ID3" | jq -r '.status')"
 assert_eq "todo" "$AFTER3" "post hook cannot abort — task moved to todo"
 
@@ -90,7 +90,7 @@ assert_eq "todo" "$AFTER3" "post hook cannot abort — task moved to todo"
 # Case 4: sync + pre + on_failure=warn succeeds even if hook fails.
 # ---------------------------------------------------------------
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'TOML'
-[cli.task_ready.hooks.warn_hook]
+[cli.task_publish.hooks.warn_hook]
 command = "cat >/dev/null; exit 1"
 when = "pre"
 mode = "sync"
@@ -100,7 +100,7 @@ TOML
 TASK_ID4="$(run_lf --output json task add --title "Warn only" | jq -r '.id')"
 
 echo "[5] sync+pre+warn continues despite hook failure"
-run_lf task ready "$TASK_ID4" >/dev/null 2>&1
+run_lf task publish "$TASK_ID4" >/dev/null 2>&1
 AFTER4="$(run_lf task get "$TASK_ID4" | jq -r '.status')"
 assert_eq "todo" "$AFTER4" "warn on_failure — transition proceeds"
 

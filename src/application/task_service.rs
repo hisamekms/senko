@@ -116,11 +116,11 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn publish_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let prev = self.backend.get_task(project_id, id).await?;
         let prev_status = prev.status();
 
-        let trigger = HookTrigger::Task(TaskEvent::Readied);
+        let trigger = HookTrigger::Task(TaskEvent::Published);
         if self
             .hooks
             .fire(
@@ -134,12 +134,12 @@ impl TaskOperations for LocalTaskOperations {
             == FireOutcome::Abort
         {
             return Err(DomainError::HookAborted {
-                event: "task_ready".into(),
+                event: "task_publish".into(),
             }
             .into());
         }
 
-        let task = self.backend.ready_task(project_id, id).await?;
+        let task = self.backend.publish_task(project_id, id).await?;
 
         let _ = self
             .hooks

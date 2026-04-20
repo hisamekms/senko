@@ -89,9 +89,9 @@ A_ID="$(run_relay task add --title "Task A" | jq -r '.id')"
 B_ID="$(run_relay task add --title "Task B" | jq -r '.id')"
 C_ID="$(run_relay task add --title "Task C" | jq -r '.id')"
 
-run_relay task ready "$A_ID" >/dev/null
-run_relay task ready "$B_ID" >/dev/null
-run_relay task ready "$C_ID" >/dev/null
+run_relay task publish "$A_ID" >/dev/null
+run_relay task publish "$B_ID" >/dev/null
+run_relay task publish "$C_ID" >/dev/null
 
 echo "[1.1] deps add via CLI"
 ADD_OUTPUT="$(run_relay task deps add "$A_ID" --on "$B_ID")"

@@ -127,13 +127,13 @@ impl TaskOperations for RemoteTaskOperations {
         Ok(task)
     }
 
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn publish_task(&self, project_id: i64, id: i64) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
 
         let resp = self
             .auth(
                 self.client()
-                    .post(self.project_url(project_id, &format!("/tasks/{id}/ready"))),
+                    .post(self.project_url(project_id, &format!("/tasks/{id}/publish"))),
             )
             .send()
             .await?;
@@ -142,7 +142,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Readied),
+                &HookTrigger::Task(TaskEvent::Published),
                 HookWhen::Post,
                 Some(&task),
                 Some(prev_status),

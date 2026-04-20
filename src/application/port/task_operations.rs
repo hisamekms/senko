@@ -36,7 +36,7 @@ pub trait TaskOperations: Send + Sync {
     // --- State transitions ---
 
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task>;
+    async fn publish_task(&self, project_id: i64, id: i64) -> Result<Task>;
     async fn start_task(
         &self,
         project_id: i64,

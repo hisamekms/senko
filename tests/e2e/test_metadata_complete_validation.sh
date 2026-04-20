@@ -16,7 +16,7 @@ create_in_progress_task() {
   out="$(run_lf task add --title "$title" "$@")"
   local id
   id="$(echo "$out" | jq -r '.id')"
-  run_lf task ready "$id" > /dev/null
+  run_lf task publish "$id" > /dev/null
   run_lf task start "$id" > /dev/null
   echo "$id"
 }

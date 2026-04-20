@@ -217,7 +217,7 @@ assert_json_field "$EDITED" '.title' "Updated via Headers" "edit task title"
 
 echo ""
 echo "=== Status transitions: ready -> start -> complete ==="
-READY=$(api_json -X POST "$PBASE/tasks/$TASK_ID/ready" -d '{}')
+READY=$(api_json -X POST "$PBASE/tasks/$TASK_ID/publish" -d '{}')
 assert_json_field "$READY" '.status' "todo" "ready transitions to todo"
 
 STARTED=$(api_json -X POST "$PBASE/tasks/$TASK_ID/start" -d '{}')

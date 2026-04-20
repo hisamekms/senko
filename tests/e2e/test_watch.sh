@@ -64,7 +64,7 @@ create_config "" "cat > $HOOK_OUTPUT"
 
 # Create and move task to in_progress first
 TASK_ID="$(run_lf --output json task add --title "Complete Me" 2>/dev/null | jq -r '.id')"
-run_lf task ready "$TASK_ID" >/dev/null 2>&1
+run_lf task publish "$TASK_ID" >/dev/null 2>&1
 run_lf task start "$TASK_ID" >/dev/null 2>&1
 
 # Complete the task (should trigger task_complete inline)

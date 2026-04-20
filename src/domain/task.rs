@@ -68,7 +68,7 @@ impl fmt::Display for MergeStrategy {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskEvent {
     Created,
-    Readied,
+    Published,
     Started,
     Completed,
     Canceled,
@@ -668,10 +668,10 @@ impl Task {
     // --- Aggregate methods ---
 
     /// Transition: Draft -> Todo.
-    pub fn ready(mut self, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+    pub fn publish(mut self, now: String) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         self.status = self.status.transition_to(TaskStatus::Todo)?;
         self.updated_at = now;
-        Ok((self, vec![TaskEvent::Readied]))
+        Ok((self, vec![TaskEvent::Published]))
     }
 
     /// Transition: Todo -> InProgress.
@@ -1455,18 +1455,18 @@ mod tests {
     }
 
     #[test]
-    fn task_ready_from_draft() {
+    fn task_publish_from_draft() {
         let task = make_task(TaskStatus::Draft);
-        let (task, events) = task.ready("2026-01-02T00:00:00Z".to_string()).unwrap();
-        assert_eq!(events, vec![TaskEvent::Readied]);
+        let (task, events) = task.publish("2026-01-02T00:00:00Z".to_string()).unwrap();
+        assert_eq!(events, vec![TaskEvent::Published]);
         assert_eq!(task.status(), TaskStatus::Todo);
         assert_eq!(task.updated_at(), "2026-01-02T00:00:00Z");
     }
 
     #[test]
-    fn task_ready_from_todo_fails() {
+    fn task_publish_from_todo_fails() {
         let task = make_task(TaskStatus::Todo);
-        assert!(task.ready("2026-01-02T00:00:00Z".to_string()).is_err());
+        assert!(task.publish("2026-01-02T00:00:00Z".to_string()).is_err());
     }
 
     #[test]

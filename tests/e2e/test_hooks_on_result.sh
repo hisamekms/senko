@@ -90,7 +90,7 @@ fi
 # Case B: a ready task exists → task next picks it; on_result=selected fires.
 # ---------------------------------------------------------------
 TASK_ID="$(run_lf --output json task add --title "Eligible task" | jq -r '.id')"
-run_lf task ready "$TASK_ID" >/dev/null 2>&1
+run_lf task publish "$TASK_ID" >/dev/null 2>&1
 
 clear_markers
 

@@ -2801,18 +2801,18 @@ mod tests {
         match target {
             TaskStatus::Draft => {} // already draft
             TaskStatus::Todo => {
-                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::InProgress => {
-                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
                 let (task, _) = task
                     .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
                     .unwrap();
                 save_task(conn, &task).unwrap();
             }
             TaskStatus::Completed => {
-                let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+                let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
                 let (task, _) = task
                     .start(None, None, "2025-01-01T00:00:00Z".to_string(), None)
                     .unwrap();
@@ -3017,7 +3017,7 @@ mod tests {
 
         // draft -> todo via domain method + save
         let task = get_task(&conn, task.id()).unwrap();
-        let (task, _) = task.ready("2025-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, task.id()).unwrap();
         assert_eq!(updated.status(), TaskStatus::Todo);
@@ -4374,7 +4374,7 @@ mod tests {
         let task = backend.create_task(1, &params("Lifecycle")).await.unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
 
-        let (task, _) = task.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (task, _) = task.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
         let task_got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Todo);
@@ -4521,9 +4521,9 @@ mod tests {
         let backend = mem_backend();
         let t1 = backend.create_task(1, &params("T1")).await.unwrap();
         let t2 = backend.create_task(1, &params("T2")).await.unwrap();
-        let (t1, _) = t1.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (t1, _) = t1.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
-        let (t2, _) = t2.ready("2026-01-01T00:00:00Z".to_string()).unwrap();
+        let (t2, _) = t2.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t2).await.unwrap();
 
         let (t2, _) = t2

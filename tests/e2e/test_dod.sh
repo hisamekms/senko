@@ -45,7 +45,7 @@ assert_exit_code 1 run_lf --output json task dod check "$TASK_ID" 3
 echo "[3] Complete blocked by unchecked DoD"
 
 # Move task to in_progress (draft -> todo -> in_progress)
-run_lf --output json task ready "$TASK_ID" >/dev/null
+run_lf --output json task publish "$TASK_ID" >/dev/null
 run_lf --output json task start "$TASK_ID" >/dev/null
 
 # Attempt complete with unchecked items should fail
@@ -65,7 +65,7 @@ echo "[5] Complete without DoD items"
 
 ADD_NODOD="$(run_lf --output json task add --title "No DoD Task")"
 NODOD_ID="$(echo "$ADD_NODOD" | jq -r '.id')"
-run_lf --output json task ready "$NODOD_ID" >/dev/null
+run_lf --output json task publish "$NODOD_ID" >/dev/null
 run_lf --output json task start "$NODOD_ID" >/dev/null
 
 OUT="$(run_lf --output json task complete "$NODOD_ID")"

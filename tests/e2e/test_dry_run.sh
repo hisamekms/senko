@@ -34,7 +34,7 @@ assert_contains "$DR_ADD_TEXT" "Create task with title" "dry-run text output sho
 echo "[4] dry-run complete"
 ADD_OUT="$(run_lf --output json task add --title "Complete Me")"
 TASK_ID="$(echo "$ADD_OUT" | jq -r '.id')"
-run_lf task ready "$TASK_ID" >/dev/null
+run_lf task publish "$TASK_ID" >/dev/null
 run_lf task next >/dev/null
 
 DR_COMPLETE="$(run_lf --dry-run --output json task complete "$TASK_ID")"
@@ -63,7 +63,7 @@ fi
 echo "[6] dry-run cancel"
 ADD_OUT3="$(run_lf --output json task add --title "Cancel Me")"
 TASK3_ID="$(echo "$ADD_OUT3" | jq -r '.id')"
-run_lf task ready "$TASK3_ID" >/dev/null
+run_lf task publish "$TASK3_ID" >/dev/null
 
 DR_CANCEL="$(run_lf --dry-run --output json task cancel "$TASK3_ID" --reason "not needed")"
 assert_json_field "$DR_CANCEL" '.command' "cancel" "dry-run cancel command field"

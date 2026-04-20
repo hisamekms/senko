@@ -36,7 +36,7 @@ impl HookTrigger {
     pub fn event_name(&self) -> Option<&'static str> {
         match self {
             HookTrigger::Task(TaskEvent::Created) => Some("task_add"),
-            HookTrigger::Task(TaskEvent::Readied) => Some("task_ready"),
+            HookTrigger::Task(TaskEvent::Published) => Some("task_publish"),
             HookTrigger::Task(TaskEvent::Started) => Some("task_start"),
             HookTrigger::Task(TaskEvent::Completed) => Some("task_complete"),
             HookTrigger::Task(TaskEvent::Canceled) => Some("task_cancel"),
@@ -57,7 +57,7 @@ impl HookTrigger {
     pub fn valid_event_names() -> &'static [&'static str] {
         &[
             "task_add",
-            "task_ready",
+            "task_publish",
             "task_start",
             "task_complete",
             "task_cancel",
@@ -76,7 +76,7 @@ impl HookTrigger {
     pub fn from_event_name(name: &str) -> Option<Self> {
         match name {
             "task_add" => Some(HookTrigger::Task(TaskEvent::Created)),
-            "task_ready" => Some(HookTrigger::Task(TaskEvent::Readied)),
+            "task_publish" => Some(HookTrigger::Task(TaskEvent::Published)),
             "task_start" => Some(HookTrigger::Task(TaskEvent::Started)),
             "task_complete" => Some(HookTrigger::Task(TaskEvent::Completed)),
             "task_cancel" => Some(HookTrigger::Task(TaskEvent::Canceled)),

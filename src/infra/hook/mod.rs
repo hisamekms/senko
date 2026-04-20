@@ -988,7 +988,7 @@ pub fn validate_config_hooks(config: &Config) {
     fn walk(label_prefix: &str, action: &TaskActionHooks) {
         for (action_key, hooks) in [
             ("task_add", &action.task_add),
-            ("task_ready", &action.task_ready),
+            ("task_publish", &action.task_publish),
             ("task_start", &action.task_start),
             ("task_complete", &action.task_complete),
             ("task_cancel", &action.task_cancel),

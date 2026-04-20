@@ -48,21 +48,21 @@ assert_json_field "$EDIT_OUT3" '.assignee_user_id' "$USER2_ID" "edit sets numeri
 
 echo "[7] start auto-assigns unassigned task to current user"
 AUTO_ID="$(run_lf --output json task add --title "Auto-assign" | jq -r '.id')"
-run_lf task ready "$AUTO_ID" >/dev/null
+run_lf task publish "$AUTO_ID" >/dev/null
 START_OUT="$(run_lf --output json task start "$AUTO_ID")"
 assert_json_field "$START_OUT" '.assignee_user_id' "1" "start auto-assigns to current user"
 assert_json_field "$START_OUT" '.status' "in_progress" "start transitions to in_progress"
 
 echo "[8] start succeeds on self-assigned task"
 SELF_ID="$(run_lf --output json task add --title "Self-assigned" --assignee-user-id self | jq -r '.id')"
-run_lf task ready "$SELF_ID" >/dev/null
+run_lf task publish "$SELF_ID" >/dev/null
 START_OUT2="$(run_lf --output json task start "$SELF_ID")"
 assert_json_field "$START_OUT2" '.status' "in_progress" "start self-assigned succeeds"
 assert_json_field "$START_OUT2" '.assignee_user_id' "1" "assignee unchanged on self-start"
 
 echo "[9] start fails on other-user-assigned task"
 OTHER_ID="$(run_lf --output json task add --title "Other-assigned" --assignee-user-id "$USER2_ID" | jq -r '.id')"
-run_lf task ready "$OTHER_ID" >/dev/null
+run_lf task publish "$OTHER_ID" >/dev/null
 START_ERR="$(run_lf task start "$OTHER_ID" 2>&1 || true)"
 assert_contains "$START_ERR" "assigned to user" "start other-user-assigned fails with error"
 assert_exit_code 1 run_lf task start "$OTHER_ID"
@@ -76,21 +76,21 @@ USER2_ID="$(echo "$USER2_OUT" | jq -r '.id')"
 
 echo "[10] next selects self-assigned todo task"
 MY_NEXT_ID="$(run_lf --output json task add --title "My next task" --assignee-user-id self | jq -r '.id')"
-run_lf task ready "$MY_NEXT_ID" >/dev/null
+run_lf task publish "$MY_NEXT_ID" >/dev/null
 NEXT_OUT="$(run_lf --output json task next)"
 assert_eq "$MY_NEXT_ID" "$(echo "$NEXT_OUT" | jq -r '.id')" "next selects self-assigned task"
 run_lf task complete "$MY_NEXT_ID" >/dev/null
 
 echo "[11] next skips other-user-assigned task (no eligible)"
 BOB_TASK="$(run_lf --output json task add --title "Bob only" --assignee-user-id "$USER2_ID" | jq -r '.id')"
-run_lf task ready "$BOB_TASK" >/dev/null
+run_lf task publish "$BOB_TASK" >/dev/null
 NEXT_ERR="$(run_lf task next 2>&1 || true)"
 assert_contains "$NEXT_ERR" "no eligible task" "next fails when only other-user tasks exist"
 assert_exit_code 1 run_lf task next
 
 echo "[12] next --include-unassigned selects unassigned task"
 UNASSIGNED_ID="$(run_lf --output json task add --title "Unassigned next" | jq -r '.id')"
-run_lf task ready "$UNASSIGNED_ID" >/dev/null
+run_lf task publish "$UNASSIGNED_ID" >/dev/null
 NEXT_OUT2="$(run_lf --output json task next --include-unassigned)"
 assert_eq "$UNASSIGNED_ID" "$(echo "$NEXT_OUT2" | jq -r '.id')" "next --include-unassigned picks unassigned task"
 run_lf task complete "$UNASSIGNED_ID" >/dev/null
@@ -99,7 +99,7 @@ echo "[13] next without --include-unassigned skips unassigned"
 setup_test_env
 export SENKO_USER="alice"
 ONLY_UNASSIGNED_ID="$(run_lf --output json task add --title "Unassigned only" | jq -r '.id')"
-run_lf task ready "$ONLY_UNASSIGNED_ID" >/dev/null
+run_lf task publish "$ONLY_UNASSIGNED_ID" >/dev/null
 NEXT_ERR2="$(run_lf task next 2>&1 || true)"
 assert_contains "$NEXT_ERR2" "no eligible task" "next without --include-unassigned skips unassigned tasks"
 
@@ -113,8 +113,8 @@ USER2_ID="$(echo "$USER2_OUT" | jq -r '.id')"
 echo "[14] list --ready shows self-assigned ready task, excludes other-user"
 MINE_ID="$(run_lf --output json task add --title "My ready" --assignee-user-id self | jq -r '.id')"
 BOB_READY_ID="$(run_lf --output json task add --title "Bob ready" --assignee-user-id "$USER2_ID" | jq -r '.id')"
-run_lf task ready "$MINE_ID" >/dev/null
-run_lf task ready "$BOB_READY_ID" >/dev/null
+run_lf task publish "$MINE_ID" >/dev/null
+run_lf task publish "$BOB_READY_ID" >/dev/null
 LIST_OUT="$(run_lf --output json task list --ready)"
 MINE_COUNT="$(echo "$LIST_OUT" | jq --arg id "$MINE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
 BOB_COUNT="$(echo "$LIST_OUT" | jq --arg id "$BOB_READY_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
@@ -123,7 +123,7 @@ assert_eq "0" "$BOB_COUNT" "list --ready excludes other-user task"
 
 echo "[15] list --ready --include-unassigned also shows unassigned"
 NONE_ID="$(run_lf --output json task add --title "Unassigned ready" | jq -r '.id')"
-run_lf task ready "$NONE_ID" >/dev/null
+run_lf task publish "$NONE_ID" >/dev/null
 LIST_OUT2="$(run_lf --output json task list --ready --include-unassigned)"
 MINE_COUNT2="$(echo "$LIST_OUT2" | jq --arg id "$MINE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
 NONE_COUNT="$(echo "$LIST_OUT2" | jq --arg id "$NONE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
@@ -156,7 +156,7 @@ setup_test_env
 
 echo "[19] start works without SENKO_USER"
 COMPAT_ID="$(run_lf --output json task add --title "No user start" | jq -r '.id')"
-run_lf task ready "$COMPAT_ID" >/dev/null
+run_lf task publish "$COMPAT_ID" >/dev/null
 COMPAT_START="$(run_lf --output json task start "$COMPAT_ID")"
 assert_json_field "$COMPAT_START" '.status' "in_progress" "start without user succeeds"
 assert_json_field "$COMPAT_START" '.assignee_user_id' "null" "start without user leaves assignee null"
@@ -164,14 +164,14 @@ assert_json_field "$COMPAT_START" '.assignee_user_id' "null" "start without user
 echo "[20] next works without SENKO_USER (no filtering)"
 run_lf task complete "$COMPAT_ID" >/dev/null
 COMPAT_NEXT_ID="$(run_lf --output json task add --title "No user next" | jq -r '.id')"
-run_lf task ready "$COMPAT_NEXT_ID" >/dev/null
+run_lf task publish "$COMPAT_NEXT_ID" >/dev/null
 COMPAT_NEXT="$(run_lf --output json task next)"
 assert_json_field "$COMPAT_NEXT" '.status' "in_progress" "next without user works"
 
 echo "[21] start preserves existing assignee when no user identity"
 setup_test_env
 PRESERVE_ID="$(run_lf --output json task add --title "Preserve assignee" --assignee-user-id 1 | jq -r '.id')"
-run_lf task ready "$PRESERVE_ID" >/dev/null
+run_lf task publish "$PRESERVE_ID" >/dev/null
 PRESERVE_START="$(run_lf --output json task start "$PRESERVE_ID")"
 assert_json_field "$PRESERVE_START" '.assignee_user_id' "1" "start without user preserves existing assignee"
 

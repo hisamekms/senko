@@ -2,7 +2,7 @@
 # e2e test: doctor subcommand (hook configuration diagnostics)
 #
 # Under the new hooks schema the diagnostic `event` label is
-# `<runtime>.<action>` (e.g. `cli.task_add`, `server.remote.task_ready`,
+# `<runtime>.<action>` (e.g. `cli.task_add`, `server.remote.task_publish`,
 # `workflow.branch_merge`). Env-var requirements are declared via the
 # structured `env_vars` list instead of the legacy `requires_env` array.
 
@@ -158,7 +158,7 @@ unset SENKO_E2E_DOCTOR_TEST_VAR
 echo "[8] JSON output structure"
 
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[cli.task_ready.hooks.my-hook]
+[cli.task_publish.hooks.my-hook]
 command = "$HOOK_SCRIPT"
 EOF
 
@@ -166,7 +166,7 @@ JSON="$(run_lf --output json doctor)"
 # Verify top-level structure
 assert_eq "true" "$(echo "$JSON" | jq 'has("hooks") and has("has_errors")')" "json: top-level has hooks and has_errors"
 # Verify hook entry structure
-assert_json_field "$JSON" '.hooks[0].event' "cli.task_ready" "json: hook event field"
+assert_json_field "$JSON" '.hooks[0].event' "cli.task_publish" "json: hook event field"
 assert_json_field "$JSON" '.hooks[0].name' "my-hook" "json: hook name field"
 assert_eq "$HOOK_SCRIPT" "$(echo "$JSON" | jq -r '.hooks[0].command')" "json: hook command field"
 
@@ -175,7 +175,7 @@ echo "[9] Text output format"
 
 OUT="$(run_lf --output text doctor)"
 assert_contains "$OUT" "Hook diagnostics" "text: header present"
-assert_contains "$OUT" "[cli.task_ready] my-hook" "text: event/name header format"
+assert_contains "$OUT" "[cli.task_publish] my-hook" "text: event/name header format"
 assert_contains "$OUT" "command: $HOOK_SCRIPT" "text: command line"
 assert_contains "$OUT" "all checks passed" "text: result line"
 

@@ -137,7 +137,7 @@ assert_eq "400" "$STATUS" "oversized edit title returns 400"
 # ===== [14] API: start with oversized session_id → 400 =====
 
 echo "[14] API: start with oversized session_id → 400"
-api_json -X POST "$PBASE/tasks/$TASK_API_ID/ready" -d '{}' >/dev/null
+api_json -X POST "$PBASE/tasks/$TASK_API_ID/publish" -d '{}' >/dev/null
 SESSION_101="$(gen_chars 101)"
 STATUS=$(api_status -X POST "$PBASE/tasks/$TASK_API_ID/start" -d "{\"session_id\":\"$SESSION_101\"}")
 assert_eq "400" "$STATUS" "oversized session_id returns 400"

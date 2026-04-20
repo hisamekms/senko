@@ -21,8 +21,8 @@ mkdir -p "$MARKER_DIR"
 write_config() {
   mkdir -p "$TEST_PROJECT_ROOT/.senko"
   cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
-[cli.task_ready.hooks.cli_tag]
-command = "touch $MARKER_DIR/cli_task_ready"
+[cli.task_publish.hooks.cli_tag]
+command = "touch $MARKER_DIR/cli_task_publish"
 mode = "sync"
 
 [cli.task_start.hooks.cli_tag]
@@ -37,8 +37,8 @@ mode = "sync"
 command = "touch $MARKER_DIR/cli_task_cancel"
 mode = "sync"
 
-[server.remote.task_ready.hooks.srv_tag]
-command = "touch $MARKER_DIR/srv_task_ready"
+[server.remote.task_publish.hooks.srv_tag]
+command = "touch $MARKER_DIR/srv_task_publish"
 mode = "sync"
 
 [server.remote.task_start.hooks.srv_tag]
@@ -155,14 +155,14 @@ clear_hook_log
 clear_markers
 
 T1=$(run_lf task add --title "Direct CLI transition" | jq -r '.id')
-run_lf task ready "$T1" >/dev/null 2>&1
+run_lf task publish "$T1" >/dev/null 2>&1
 run_lf task start "$T1" >/dev/null 2>&1
 run_lf task complete "$T1" >/dev/null 2>&1
 
 sleep 1
 
-echo "[1.1] cli hook for task_ready fired"
-assert_marker "cli_task_ready" "direct cli: cli_task_ready marker created"
+echo "[1.1] cli hook for task_publish fired"
+assert_marker "cli_task_publish" "direct cli: cli_task_publish marker created"
 
 echo "[1.2] cli hook for task_start fired"
 assert_marker "cli_task_start" "direct cli: cli_task_start marker created"
@@ -171,17 +171,17 @@ echo "[1.3] cli hook for task_complete fired"
 assert_marker "cli_task_complete" "direct cli: cli_task_complete marker created"
 
 echo "[1.4] server.remote hooks did NOT fire"
-assert_no_marker "srv_task_ready" "direct cli: no srv_task_ready"
+assert_no_marker "srv_task_publish" "direct cli: no srv_task_publish"
 assert_no_marker "srv_task_start" "direct cli: no srv_task_start"
 assert_no_marker "srv_task_complete" "direct cli: no srv_task_complete"
 
 echo "[1.5] event_fired log entries under runtime=cli"
-assert_gte "$(count_log_entries cli task_ready)" 1 "runtime=cli task_ready event_fired"
+assert_gte "$(count_log_entries cli task_publish)" 1 "runtime=cli task_publish event_fired"
 assert_gte "$(count_log_entries cli task_start)" 1 "runtime=cli task_start event_fired"
 assert_gte "$(count_log_entries cli task_complete)" 1 "runtime=cli task_complete event_fired"
 
 echo "[1.6] no server.remote event_fired entries from direct CLI"
-assert_eq "0" "$(count_log_entries server.remote task_ready)" "direct cli: no server.remote task_ready event_fired"
+assert_eq "0" "$(count_log_entries server.remote task_publish)" "direct cli: no server.remote task_publish event_fired"
 assert_eq "0" "$(count_log_entries server.remote task_start)" "direct cli: no server.remote task_start event_fired"
 
 # ========================================
@@ -195,18 +195,18 @@ clear_hook_log
 clear_markers
 
 T2=$(run_http task add --title "Server transition 1" | jq -r '.id')
-run_http task ready "$T2" >/dev/null 2>&1
+run_http task publish "$T2" >/dev/null 2>&1
 run_http task start "$T2" >/dev/null 2>&1
 run_http task complete "$T2" >/dev/null 2>&1
 
 T3=$(run_http task add --title "Server transition 2" | jq -r '.id')
-run_http task ready "$T3" >/dev/null 2>&1
+run_http task publish "$T3" >/dev/null 2>&1
 run_http task cancel "$T3" --reason "test cancel" >/dev/null 2>&1
 
 sleep 1
 
-echo "[2.1] server.remote hook for task_ready fired"
-assert_marker "srv_task_ready" "server.remote: srv_task_ready marker created"
+echo "[2.1] server.remote hook for task_publish fired"
+assert_marker "srv_task_publish" "server.remote: srv_task_publish marker created"
 
 echo "[2.2] server.remote hook for task_start fired"
 assert_marker "srv_task_start" "server.remote: srv_task_start marker created"
@@ -218,7 +218,7 @@ echo "[2.4] server.remote hook for task_cancel fired"
 assert_marker "srv_task_cancel" "server.remote: srv_task_cancel marker created"
 
 echo "[2.5] server.remote event_fired log entries"
-assert_gte "$(count_log_entries server.remote task_ready)" 1 "server.remote: task_ready event_fired"
+assert_gte "$(count_log_entries server.remote task_publish)" 1 "server.remote: task_publish event_fired"
 assert_gte "$(count_log_entries server.remote task_start)" 1 "server.remote: task_start event_fired"
 assert_gte "$(count_log_entries server.remote task_complete)" 1 "server.remote: task_complete event_fired"
 assert_gte "$(count_log_entries server.remote task_cancel)" 1 "server.remote: task_cancel event_fired"

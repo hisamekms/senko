@@ -63,7 +63,7 @@ T1=$(run_lf task add --title "Local lifecycle" --description "Local mode test")
 T1_ID=$(echo "$T1" | jq -r '.id')
 assert_json_field "$T1" '.status' "draft" "local: add creates draft"
 
-READY=$(run_lf task ready "$T1_ID")
+READY=$(run_lf task publish "$T1_ID")
 assert_json_field "$READY" '.status' "todo" "local: ready → todo"
 
 STARTED=$(run_lf task start "$T1_ID")
@@ -75,7 +75,7 @@ assert_json_field "$COMPLETED" '.status' "completed" "local: complete → comple
 echo "[1.2] Cancel transition"
 T2=$(run_lf task add --title "Local cancel")
 T2_ID=$(echo "$T2" | jq -r '.id')
-run_lf task ready "$T2_ID" >/dev/null
+run_lf task publish "$T2_ID" >/dev/null
 CANCELED=$(run_lf task cancel "$T2_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "local: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "local: cancel reason"
@@ -83,7 +83,7 @@ assert_json_field "$CANCELED" '.cancel_reason' "not needed" "local: cancel reaso
 echo "[1.3] DoD operations"
 T3=$(run_lf task add --title "Local DoD" --definition-of-done "Item 1" --definition-of-done "Item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
-run_lf task ready "$T3_ID" >/dev/null
+run_lf task publish "$T3_ID" >/dev/null
 run_lf task start "$T3_ID" >/dev/null
 
 DOD_CHECK=$(run_lf task dod check "$T3_ID" 1)
@@ -121,7 +121,7 @@ echo "[1.5] Next task: add(assignee=self, DoD) → ready → next → dod check 
 export SENKO_USER="default"
 T6=$(run_lf task add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "Local DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
-run_lf task ready "$T6_ID" >/dev/null
+run_lf task publish "$T6_ID" >/dev/null
 NEXT=$(run_lf task next)
 assert_json_field "$NEXT" '.status' "in_progress" "local: next auto-starts"
 assert_json_field "$NEXT" '.title' "Local next" "local: next picks correct task"
@@ -145,7 +145,7 @@ T1=$(run_http task add --title "Remote lifecycle" --description "Remote mode tes
 T1_ID=$(echo "$T1" | jq -r '.id')
 assert_json_field "$T1" '.status' "draft" "remote: add creates draft"
 
-READY=$(run_http task ready "$T1_ID")
+READY=$(run_http task publish "$T1_ID")
 assert_json_field "$READY" '.status' "todo" "remote: ready → todo"
 
 STARTED=$(run_http task start "$T1_ID")
@@ -157,7 +157,7 @@ assert_json_field "$COMPLETED" '.status' "completed" "remote: complete → compl
 echo "[2.2] Cancel via HTTP"
 T2=$(run_http task add --title "Remote cancel")
 T2_ID=$(echo "$T2" | jq -r '.id')
-run_http task ready "$T2_ID" >/dev/null
+run_http task publish "$T2_ID" >/dev/null
 CANCELED=$(run_http task cancel "$T2_ID" --reason "http cancel")
 assert_json_field "$CANCELED" '.status' "canceled" "remote: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "http cancel" "remote: cancel reason"
@@ -165,7 +165,7 @@ assert_json_field "$CANCELED" '.cancel_reason' "http cancel" "remote: cancel rea
 echo "[2.3] DoD operations via HTTP"
 T3=$(run_http task add --title "Remote DoD" --definition-of-done "HTTP item 1" --definition-of-done "HTTP item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
-run_http task ready "$T3_ID" >/dev/null
+run_http task publish "$T3_ID" >/dev/null
 run_http task start "$T3_ID" >/dev/null
 
 DOD_CHECK=$(run_http task dod check "$T3_ID" 1)
@@ -200,7 +200,7 @@ assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "remote: deps re
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
 T6=$(run_http task add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "Remote DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
-run_http task ready "$T6_ID" >/dev/null
+run_http task publish "$T6_ID" >/dev/null
 NEXT=$(run_http task next)
 assert_json_field "$NEXT" '.status' "in_progress" "remote: next auto-starts"
 assert_json_field "$NEXT" '.title' "Remote next" "remote: next picks correct task"
@@ -231,8 +231,8 @@ BLOCKED_ID=$(echo "$BLOCKED" | jq -r '.id')
 run_http task deps add "$BLOCKED_ID" --on "$BLOCKER_ID" >/dev/null
 
 # Move both to todo, start the blocker
-run_http task ready "$BLOCKER_ID" >/dev/null
-run_http task ready "$BLOCKED_ID" >/dev/null
+run_http task publish "$BLOCKER_ID" >/dev/null
+run_http task publish "$BLOCKED_ID" >/dev/null
 run_http task start "$BLOCKER_ID" >/dev/null
 
 echo "[3.1] Complete via API returns unblocked_tasks"
@@ -253,7 +253,7 @@ assert_eq "$BLOCKED_ID" "$UNBLOCKED_ID" "api complete: unblocked task id"
 echo "[3.2] Complete with no dependencies returns empty unblocked_tasks"
 STANDALONE=$(run_http task add --title "Standalone task")
 STANDALONE_ID=$(echo "$STANDALONE" | jq -r '.id')
-run_http task ready "$STANDALONE_ID" >/dev/null
+run_http task publish "$STANDALONE_ID" >/dev/null
 run_http task start "$STANDALONE_ID" >/dev/null
 
 COMPLETE_RESP2=$(curl -sf -H "Authorization: Bearer $TEST_TOKEN" -X POST "$API_URL/api/v1/projects/$PROJECT_ID/tasks/$STANDALONE_ID/complete")

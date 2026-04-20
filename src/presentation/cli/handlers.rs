@@ -452,7 +452,7 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
+pub async fn cmd_publish(cli: &Cli, id: i64) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -468,20 +468,24 @@ pub async fn cmd_ready(cli: &Cli, id: i64) -> Result<()> {
         return print_dry_run(
             &cli.output,
             &DryRunOperation {
-                command: "ready".into(),
+                command: "publish".into(),
                 operations: result.operations,
             },
         );
     }
 
-    let updated = task_ops.ready_task(project_id, id).await?;
+    let updated = task_ops.publish_task(project_id, id).await?;
 
     match cli.output {
         OutputFormat::Json => {
             println!("{}", serde_json::to_string_pretty(&updated)?);
         }
         OutputFormat::Text => {
-            println!("Ready task #{}: {}", updated.task_number(), updated.title());
+            println!(
+                "Published task #{}: {}",
+                updated.task_number(),
+                updated.title()
+            );
         }
     }
 
@@ -885,7 +889,7 @@ fn extract_script_path(command: &str) -> Option<String> {
 fn print_task_action_hooks(label: &str, hooks: &crate::infra::config::TaskActionHooks) {
     let sections: [(&str, &crate::infra::config::ActionConfig); 6] = [
         ("task_add", &hooks.task_add),
-        ("task_ready", &hooks.task_ready),
+        ("task_publish", &hooks.task_publish),
         ("task_start", &hooks.task_start),
         ("task_complete", &hooks.task_complete),
         ("task_cancel", &hooks.task_cancel),
@@ -992,7 +996,7 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     for (runtime_label, action_hooks) in runtime_sections {
         let actions: [(&str, &crate::infra::config::ActionConfig); 6] = [
             ("task_add", &action_hooks.task_add),
-            ("task_ready", &action_hooks.task_ready),
+            ("task_publish", &action_hooks.task_publish),
             ("task_start", &action_hooks.task_start),
             ("task_complete", &action_hooks.task_complete),
             ("task_cancel", &action_hooks.task_cancel),

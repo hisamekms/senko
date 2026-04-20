@@ -34,7 +34,7 @@ assert_eq "1" "$LIST_CONTAINS_ID" "list contains created task"
 
 # 4. Ready (draft → todo)
 echo "[4] Ready: draft → todo"
-READY_OUTPUT="$(run_lf --output json task ready "$TASK_ID")"
+READY_OUTPUT="$(run_lf --output json task publish "$TASK_ID")"
 assert_json_field "$READY_OUTPUT" '.status' "todo" "ready sets status to todo"
 
 # 5. Next task (transitions to in_progress via start)
@@ -71,7 +71,7 @@ echo "[7] Cancel task"
 ADD2_OUTPUT="$(run_lf --output json task add --title "Cancel Me")"
 TASK2_ID="$(echo "$ADD2_OUTPUT" | jq -r '.id')"
 
-run_lf task ready "$TASK2_ID" >/dev/null
+run_lf task publish "$TASK2_ID" >/dev/null
 
 CANCEL_OUTPUT="$(run_lf --output json task cancel "$TASK2_ID" --reason "不要")"
 assert_json_field "$CANCEL_OUTPUT" '.status' "canceled" "cancel sets status to canceled"
@@ -90,7 +90,7 @@ fi
 echo "[8] Start with session-id"
 ADD3_OUTPUT="$(run_lf --output json task add --title "Start Test")"
 TASK3_ID="$(echo "$ADD3_OUTPUT" | jq -r '.id')"
-run_lf task ready "$TASK3_ID" >/dev/null
+run_lf task publish "$TASK3_ID" >/dev/null
 START_OUTPUT="$(run_lf --output json task start "$TASK3_ID" --session-id "sess-123")"
 assert_json_field "$START_OUTPUT" '.status' "in_progress" "start sets status to in_progress"
 assert_json_field "$START_OUTPUT" '.assignee_session_id' "sess-123" "session_id is set"

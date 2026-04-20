@@ -12,7 +12,7 @@ use crate::domain::task::{MetadataUpdate, Task};
 /// Remote mode uses `RemoteTaskOperations` which calls the server's POST endpoints directly.
 #[async_trait]
 pub trait TaskTransitionPort: Send + Sync {
-    async fn ready_task(&self, project_id: i64, id: i64) -> Result<Task>;
+    async fn publish_task(&self, project_id: i64, id: i64) -> Result<Task>;
     async fn start_task(
         &self,
         project_id: i64,
@@ -29,13 +29,13 @@ fn now_rfc3339() -> String {
     Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-pub async fn default_ready_task(
+pub async fn default_publish_task(
     repo: &(dyn TaskRepository + Sync),
     project_id: i64,
     id: i64,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
-    let (task, _events) = task.ready(now_rfc3339())?;
+    let (task, _events) = task.publish(now_rfc3339())?;
     repo.save(&task).await?;
     Ok(task)
 }
@@ -82,13 +82,15 @@ macro_rules! impl_task_transition_default {
     ($ty:ty) => {
         #[async_trait::async_trait]
         impl $crate::application::port::task_transition::TaskTransitionPort for $ty {
-            async fn ready_task(
+            async fn publish_task(
                 &self,
                 project_id: i64,
                 id: i64,
             ) -> anyhow::Result<$crate::domain::task::Task> {
-                $crate::application::port::task_transition::default_ready_task(self, project_id, id)
-                    .await
+                $crate::application::port::task_transition::default_publish_task(
+                    self, project_id, id,
+                )
+                .await
             }
             async fn start_task(
                 &self,

@@ -128,7 +128,7 @@ echo "--- Section 2: Status transitions via relay ---"
 echo "[2.1] Create and ready task"
 TASK2=$(run_relay task add --title "Transition Task")
 TASK2_ID=$(echo "$TASK2" | jq -r '.id')
-READY=$(run_relay task ready "$TASK2_ID")
+READY=$(run_relay task publish "$TASK2_ID")
 assert_json_field "$READY" '.status' "todo" "ready: status is todo"
 
 echo "[2.2] Start task"
@@ -142,7 +142,7 @@ assert_json_field "$COMPLETED" '.status' "completed" "complete: status is comple
 echo "[2.4] Create, ready, and cancel task"
 TASK3=$(run_relay task add --title "Cancel Task")
 TASK3_ID=$(echo "$TASK3" | jq -r '.id')
-run_relay task ready "$TASK3_ID" >/dev/null
+run_relay task publish "$TASK3_ID" >/dev/null
 CANCELED=$(run_relay task cancel "$TASK3_ID" --reason "not needed")
 assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
@@ -150,7 +150,7 @@ assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
 TASK4=$(run_relay task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
 TASK4_ID=$(echo "$TASK4" | jq -r '.id')
-run_relay task ready "$TASK4_ID" >/dev/null
+run_relay task publish "$TASK4_ID" >/dev/null
 NEXT=$(run_relay task next)
 assert_json_field "$NEXT" '.status' "in_progress" "next: auto-starts task"
 assert_json_field "$NEXT" '.title' "Next Candidate" "next: picks correct task"
@@ -186,7 +186,7 @@ echo "--- Section 4: DoD operations via relay ---"
 
 TASK5=$(run_relay task add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
-run_relay task ready "$TASK5_ID" >/dev/null
+run_relay task publish "$TASK5_ID" >/dev/null
 run_relay task start "$TASK5_ID" >/dev/null
 
 echo "[4.1] DoD check"
@@ -248,8 +248,8 @@ META_TASK=$(run_relay task add --title "Metadata Relay Task" \
 META_TASK_ID=$(echo "$META_TASK" | jq -r '.id')
 assert_json_field "$META_TASK" '.status' "draft" "meta: created as draft"
 
-echo "[7.2] Ready task"
-run_relay task ready "$META_TASK_ID" >/dev/null
+echo "[7.2] Publish task"
+run_relay task publish "$META_TASK_ID" >/dev/null
 
 echo "[7.3] Start via next --metadata"
 NEXT_META=$(run_relay task next --metadata '{"sprint":"v1","points":5}')
@@ -282,7 +282,7 @@ stop_servers
 # Write hook config
 mkdir -p "$TEST_PROJECT_ROOT/.senko"
 cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<'EOF'
-[cli.task_ready.hooks.test_hook]
+[cli.task_publish.hooks.test_hook]
 command = "true"
 enabled = true
 
@@ -313,13 +313,13 @@ run_lf hooks log --clear >/dev/null 2>&1 || true
 # Run transitions through relay
 HOOK_T1=$(run_relay task add --title "Hook Task 1")
 HOOK_T1_ID=$(echo "$HOOK_T1" | jq -r '.id')
-run_relay task ready "$HOOK_T1_ID" >/dev/null
+run_relay task publish "$HOOK_T1_ID" >/dev/null
 run_relay task start "$HOOK_T1_ID" >/dev/null
 run_relay task complete "$HOOK_T1_ID" >/dev/null
 
 HOOK_T2=$(run_relay task add --title "Hook Task 2")
 HOOK_T2_ID=$(echo "$HOOK_T2" | jq -r '.id')
-run_relay task ready "$HOOK_T2_ID" >/dev/null
+run_relay task publish "$HOOK_T2_ID" >/dev/null
 run_relay task cancel "$HOOK_T2_ID" --reason "test cancel" >/dev/null
 
 sleep 1
@@ -336,8 +336,8 @@ count_log_entries() {
   jq -s "[.[] | select(.runtime == \"$runtime\" and .event == \"$event\" and .type == \"event_fired\")] | length" < "$HOOK_LOG"
 }
 
-echo "[6.1] CLI fires task_ready via relay"
-assert_gte "$(count_log_entries cli task_ready)" 1 "relay: cli fires task_ready"
+echo "[6.1] CLI fires task_publish via relay"
+assert_gte "$(count_log_entries cli task_publish)" 1 "relay: cli fires task_publish"
 
 echo "[6.2] CLI fires task_start via relay"
 assert_gte "$(count_log_entries cli task_start)" 1 "relay: cli fires task_start"

@@ -21,7 +21,7 @@ cat > "$TEST_PROJECT_ROOT/.senko/config.toml" <<EOF
 [cli.task_add.hooks.default]
 command = "cat >> $HOOK_LOG"
 
-[cli.task_ready.hooks.default]
+[cli.task_publish.hooks.default]
 command = "cat >> $HOOK_LOG"
 
 [cli.task_start.hooks.default]
@@ -54,33 +54,33 @@ fi
 ADDED_IS_READY="$(jq -r 'select(.event.event == "task_add") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
 assert_eq "false" "$ADDED_IS_READY" "task_add has is_ready=false (draft)"
 
-# 2. Ready the task → should fire task_ready
-echo "[2] task_ready event"
-run_lf task ready "$TASK_ID" >/dev/null
-wait_for "task_ready event" 5 "grep -q '\"event\":\"task_ready\"' '$HOOK_LOG'"
+# 2. Publish the task → should fire task_publish
+echo "[2] task_publish event"
+run_lf task publish "$TASK_ID" >/dev/null
+wait_for "task_publish event" 5 "grep -q '\"event\":\"task_publish\"' '$HOOK_LOG'"
 
-READY_EVENT="$(grep -c '"event":"task_ready"' "$HOOK_LOG" 2>/dev/null || echo 0)"
+READY_EVENT="$(grep -c '"event":"task_publish"' "$HOOK_LOG" 2>/dev/null || echo 0)"
 if [ "$READY_EVENT" -ge 1 ]; then
-  echo "  PASS: task_ready event fired"
+  echo "  PASS: task_publish event fired"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
-  echo "  FAIL: task_ready event not found in hook log"
+  echo "  FAIL: task_publish event not found in hook log"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# Check from_status is present in task_ready event
-READY_FROM="$(grep '"event":"task_ready"' "$HOOK_LOG" | head -1 | grep -c '"from_status":"draft"' 2>/dev/null || echo 0)"
+# Check from_status is present in task_publish event
+READY_FROM="$(grep '"event":"task_publish"' "$HOOK_LOG" | head -1 | grep -c '"from_status":"draft"' 2>/dev/null || echo 0)"
 if [ "$READY_FROM" -ge 1 ]; then
-  echo "  PASS: task_ready has from_status=draft"
+  echo "  PASS: task_publish has from_status=draft"
   PASS_COUNT=$((PASS_COUNT + 1))
 else
-  echo "  FAIL: task_ready missing from_status=draft"
+  echo "  FAIL: task_publish missing from_status=draft"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
-# task_ready is emitted post-transition with status=todo and no deps → is_ready must be true
-READY_IS_READY="$(jq -r 'select(.event.event == "task_ready") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
-assert_eq "true" "$READY_IS_READY" "task_ready has is_ready=true (todo, no deps)"
+# task_publish is emitted post-transition with status=todo and no deps → is_ready must be true
+READY_IS_READY="$(jq -r 'select(.event.event == "task_publish") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "true" "$READY_IS_READY" "task_publish has is_ready=true (todo, no deps)"
 
 # 3. Start the task → should fire task_start
 echo "[3] task_start event"
@@ -181,7 +181,7 @@ command = "cat >> $HOOK_LOG2"
 [cli.task_add.hooks.default]
 command = "true"
 
-[cli.task_ready.hooks.default]
+[cli.task_publish.hooks.default]
 command = "true"
 
 [cli.task_start.hooks.default]
@@ -191,8 +191,8 @@ EOF
 # Create task 1 and task 2 (depends on 1)
 T1="$(run_lf --output json task add --title "Blocker" | jq -r '.id')"
 T2="$(run_lf --output json task add --title "Blocked" --depends-on "$T1" | jq -r '.id')"
-run_lf task ready "$T1" >/dev/null
-run_lf task ready "$T2" >/dev/null
+run_lf task publish "$T1" >/dev/null
+run_lf task publish "$T2" >/dev/null
 run_lf task start "$T1" >/dev/null
 
 # Complete task 1 → should unblock task 2

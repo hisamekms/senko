@@ -109,7 +109,7 @@ pub struct TaskActionHooks {
     #[serde(default)]
     pub task_add: ActionConfig,
     #[serde(default)]
-    pub task_ready: ActionConfig,
+    pub task_publish: ActionConfig,
     #[serde(default)]
     pub task_start: ActionConfig,
     #[serde(default)]
@@ -124,7 +124,7 @@ impl TaskActionHooks {
     pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
         match action {
             "task_add" => Some(&self.task_add),
-            "task_ready" => Some(&self.task_ready),
+            "task_publish" => Some(&self.task_publish),
             "task_start" => Some(&self.task_start),
             "task_complete" => Some(&self.task_complete),
             "task_cancel" => Some(&self.task_cancel),
@@ -135,7 +135,7 @@ impl TaskActionHooks {
 
     pub fn is_empty(&self) -> bool {
         self.task_add.hooks.is_empty()
-            && self.task_ready.hooks.is_empty()
+            && self.task_publish.hooks.is_empty()
             && self.task_start.hooks.is_empty()
             && self.task_complete.hooks.is_empty()
             && self.task_cancel.hooks.is_empty()
@@ -1036,7 +1036,7 @@ fn merge_task_action_hooks(base: TaskActionHooks, overlay: TaskActionHooks) -> T
     }
     TaskActionHooks {
         task_add: merge_one(base.task_add, overlay.task_add),
-        task_ready: merge_one(base.task_ready, overlay.task_ready),
+        task_publish: merge_one(base.task_publish, overlay.task_publish),
         task_start: merge_one(base.task_start, overlay.task_start),
         task_complete: merge_one(base.task_complete, overlay.task_complete),
         task_cancel: merge_one(base.task_cancel, overlay.task_cancel),
@@ -1978,14 +1978,20 @@ mod tests {
             [relay.task_complete.hooks.audit]
             command = "logger"
 
-            [remote.task_ready.hooks.metrics]
+            [remote.task_publish.hooks.metrics]
             command = "emit-metric"
         "#;
         let server: ServerConfig = toml::from_str(toml_str).unwrap();
         assert_eq!(server.relay.url.as_deref(), Some("http://relay-target"));
         let audit = server.relay.hooks.task_complete.hooks.get("audit").unwrap();
         assert_eq!(audit.command, "logger");
-        let metrics = server.remote.hooks.task_ready.hooks.get("metrics").unwrap();
+        let metrics = server
+            .remote
+            .hooks
+            .task_publish
+            .hooks
+            .get("metrics")
+            .unwrap();
         assert_eq!(metrics.command, "emit-metric");
     }
 

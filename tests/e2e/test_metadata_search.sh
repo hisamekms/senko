@@ -73,7 +73,7 @@ COUNT="$(echo "$LIST" | jq 'length')"
 assert_eq "2" "$COUNT" "metadata + status filter works (Alpha, Gamma are draft)"
 
 # Transition Alpha to todo to verify combined filter
-run_lf task ready "$A_ID" >/dev/null
+run_lf task publish "$A_ID" >/dev/null
 LIST="$(run_lf --output json task list --metadata sprint=v1 --status todo)"
 COUNT="$(echo "$LIST" | jq 'length')"
 assert_eq "1" "$COUNT" "sprint=v1 + status=todo returns only Alpha"

@@ -628,8 +628,8 @@ async fn start_server(
         )
         // Status transitions
         .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/ready",
-            post(ready_task),
+            "/api/v1/projects/{project_id}/tasks/{id}/publish",
+            post(publish_task),
         )
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/start",
@@ -1097,8 +1097,8 @@ async fn delete_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/ready
-async fn ready_task(
+// POST /api/v1/projects/{project_id}/tasks/{id}/publish
+async fn publish_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id)): Path<(i64, i64)>,
@@ -1106,7 +1106,7 @@ async fn ready_task(
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let updated = state
         .task_service
-        .ready_task(project_id, id)
+        .publish_task(project_id, id)
         .await
         .map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))
@@ -1772,7 +1772,10 @@ async fn get_member(
         .await
         .map_err(classify_error)?;
     let user = state.user_service.get_user(member.user_id()).await.ok();
-    Ok(Json(ProjectMemberResponse::from_parts(member, user.as_ref())))
+    Ok(Json(ProjectMemberResponse::from_parts(
+        member,
+        user.as_ref(),
+    )))
 }
 
 // PUT /api/v1/projects/{project_id}/members/{user_id}
@@ -1790,7 +1793,10 @@ async fn update_member_role(
         .await
         .map_err(classify_error)?;
     let user = state.user_service.get_user(member.user_id()).await.ok();
-    Ok(Json(ProjectMemberResponse::from_parts(member, user.as_ref())))
+    Ok(Json(ProjectMemberResponse::from_parts(
+        member,
+        user.as_ref(),
+    )))
 }
 
 // DELETE /api/v1/projects/{project_id}/members/{user_id}
@@ -2135,9 +2141,7 @@ mod tests {
 
     // --- has_auth_credentials tests ---
 
-    use crate::application::port::auth::{
-        AuthError as PortAuthError, AuthProvider, AuthResult,
-    };
+    use crate::application::port::auth::{AuthError as PortAuthError, AuthProvider, AuthResult};
     use crate::infra::config::TrustedHeadersConfig;
 
     struct DummyAuthProvider;

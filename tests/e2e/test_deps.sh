@@ -17,9 +17,9 @@ B_ID="$(run_lf --output json task add --title "Task B" | jq -r '.id')"
 C_ID="$(run_lf --output json task add --title "Task C" | jq -r '.id')"
 
 # Set all to todo
-run_lf task ready "$A_ID" >/dev/null
-run_lf task ready "$B_ID" >/dev/null
-run_lf task ready "$C_ID" >/dev/null
+run_lf task publish "$A_ID" >/dev/null
+run_lf task publish "$B_ID" >/dev/null
+run_lf task publish "$C_ID" >/dev/null
 
 # 1. deps add + deps list
 echo "[1] deps add and deps list"
@@ -73,8 +73,8 @@ echo "[6] next skips tasks with unmet dependencies"
 D_ID="$(run_lf --output json task add --title "Dep Target" | jq -r '.id')"
 E_ID="$(run_lf --output json task add --title "Has Dep" | jq -r '.id')"
 
-run_lf task ready "$D_ID" >/dev/null
-run_lf task ready "$E_ID" >/dev/null
+run_lf task publish "$D_ID" >/dev/null
+run_lf task publish "$E_ID" >/dev/null
 
 # E depends on D (D is not completed yet)
 run_lf task deps add "$E_ID" --on "$D_ID" >/dev/null
