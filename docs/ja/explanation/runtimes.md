@@ -1,15 +1,14 @@
 # Runtime の使い分け
 
-senko バイナリは同じ 1 つですが、起動の仕方で **4 つの runtime** として振る舞います。どの runtime で動いているかで、どの設定セクションと hook が "有効" になるかが決まります。
+senko バイナリは同じ 1 つですが、起動の仕方で **3 つの runtime** として振る舞います。どの runtime で動いているかで、どの設定セクションと hook が "有効" になるかが決まります。
 
-## 4 つの runtime
+## 3 つの runtime
 
 | Runtime | 起動コマンド | データの置き場所 | config セクション |
 |---|---|---|---|
 | **cli** | `senko task ...` (`serve` 以外) | ローカル SQLite / remote HTTP | `[cli.*]` |
 | **server.remote** | `senko serve` | ローカル SQLite / PostgreSQL | `[server.remote.*]` `[server.auth.*]` `[backend.*]` |
 | **server.relay** | `senko serve --proxy` | 上流 (別の `senko serve`) へ転送 | `[server.relay.*]` |
-| **workflow** | どの runtime でも発火 (skill が消費) | — | `[workflow.*]` |
 
 > **重要**: 実行中の runtime に **マッチする section 以外の hook は発火しません**。起動時に「mismatch な section がある」旨の警告が出るので、必要な hook がどの section に入っているか必ず確認してください。
 
@@ -60,12 +59,6 @@ Q1. サーバを立てる予定はある？
 - hook はリレーの経路で発火 (監査目的に使うのが主)
 - 外部から直接受ける必要があるなら reverse proxy / API Gateway を前段に置き、そちらで認可する構成にする
 
-### workflow
-
-- **runtime というより "論理ステージ"**。Claude Code skill が `senko config` を読んで、各 stage の instructions / hook を自分の行動に織り込む
-- 実 runtime (cli / server.remote / server.relay) のどれで動いていても、workflow 設定は常に読まれ得る
-- `workflow.plan.hooks.<name>` のように書く。`prompt` フィールドに書いた文字列が skill の agent instruction に注入される
-
 ## 同じ "action" が複数 runtime で発火する?
 
 **しません**。`task_complete` イベントは、動作中の runtime が `cli` なら `[cli.task_complete.hooks.*]` だけ、`server.remote` なら `[server.remote.task_complete.hooks.*]` だけが発火します。
@@ -77,7 +70,6 @@ Q1. サーバを立てる予定はある？
 | 開発者のデスクトップ通知 | `[cli.*]` |
 | サーバ側の監査ログ / SIEM 連携 | `[server.remote.*]` |
 | リレー経由の全リクエストロギング | `[server.relay.*]` |
-| Claude Code に "この stage ではこの確認をしてから進め" と指示したい | `[workflow.<stage>].instructions` / `hooks.*.prompt` |
 
 ## 複合構成の例
 
@@ -105,6 +97,6 @@ Q1. サーバを立てる予定はある？
 
 ## 次に読むもの
 
-- 各 runtime の具体的な設定 → `reference/config/cli.md` / `server-remote.md` / `server-relay.md` / `workflow.md`
+- 各 runtime の具体的な設定 → `reference/config/cli.md` / `server-remote.md` / `server-relay.md`
 - hook の共通仕様 → [reference/hooks.md](../reference/hooks.md)
 - デプロイ方法 → `guides/server-remote/deploy.md` / `guides/server-relay/deploy.md`
