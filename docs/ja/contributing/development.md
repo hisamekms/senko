@@ -75,7 +75,7 @@ tests/
 cd worktrees/my-feature
 ```
 
-詳細: [worktree.md](worktree.md)
+詳細: [Worktree ワークフロー](worktree.md)
 
 ### ビルド & テスト
 
@@ -84,7 +84,7 @@ mise test           # unit + doc test
 mise test-e2e       # end-to-end (bash スクリプト)
 ```
 
-詳細: [testing.md](testing.md)
+詳細: [テスト](testing.md)
 
 ### アーキテクチャチェック
 
@@ -153,4 +153,4 @@ SENKO_POSTGRES_URL="postgres://postgres:pw@127.0.0.1:5432/postgres" \
 
 ## リリース
 
-`/release` skill で一括実行 (e2e → バージョン判定 → Cargo.toml 更新 → commit → tag → push)。詳細: [releasing.md](releasing.md)
+`/release` skill で一括実行 (e2e → バージョン判定 → Cargo.toml 更新 → commit → tag → push)。詳細: [リリース手順](releasing.md)

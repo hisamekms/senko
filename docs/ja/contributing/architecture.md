@@ -38,7 +38,8 @@ src/
 │   ├── postgres/
 │   ├── http/      remote backend (= CLI→server HTTP クライアント)
 │   ├── hook/      shell hook executor
-│   ├── auth/      API key / JWT / trusted headers
+│   ├── auth.rs    API key / JWT / trusted headers
+│   ├── pr_verifier.rs
 │   └── config/
 │
 └── presentation/  入り口
