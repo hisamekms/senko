@@ -5,28 +5,24 @@ AI エージェントが動くサンドボックス環境で senko を使いつ�
 → この構成で 3 つの柱がどう動くかは [コアコンセプト](../explanation/core-concept.md) 参照。
 
 ```
-  Sandbox-only network                              外向き通信
-┌──────────────────────────────────────┐      ┌────────────────────┐
-│  AI sandbox container                │      │  Relay container   │
-│  (no upstream secret)                │      │  (holds the M2M    │
-│                                      │      │   client_secret)   │
-│  senko CLI                           │──┐   │                    │
-│   SENKO_CLI_REMOTE_URL=http://relay  │  │   │  senko serve       │
-│                                      │  │   │  --proxy           │
-│  (sandbox はこのネットワーク内の     │  └──►│                    │──┐
-│   relay にしか到達できない)          │      │  [server.relay]    │  │
-└──────────────────────────────────────┘      │   url=upstream     │  │
-                                              │   token=<M2M JWT>  │  │
-                                              │  ※ entrypoint が   │  │
-                                              │    起動時に JWT を │  │
-                                              │    fetch して env  │  │
-                                              │    に投入          │  │
-                                              └────────────────────┘  │
-                                                                      │
-                                                                      ▼
+  Sandbox-only network                                  外向き通信
+┌──────────────────────────────────────┐      ┌──────────────────────────┐
+│  AI sandbox container                │      │  Relay container         │
+│  (no upstream secret)                │      │  (holds alice's session  │
+│                                      │      │   API key, acts as alice)│
+│  senko CLI                           │──┐   │                          │
+│   SENKO_CLI_REMOTE_URL=http://relay  │  │   │  senko serve (relay mode)│
+│                                      │  └──►│                          │──┐
+│  (sandbox は relay にしか egress     │      │  SENKO_SERVER_RELAY_URL  │  │
+│   できないネットワーク)              │      │  SENKO_SERVER_RELAY_TOKEN│  │
+└──────────────────────────────────────┘      │   = alice の session キー│  │
+                                              └──────────────────────────┘  │
+                                                                            │
+                                                                            ▼
                                               ┌────────────────────┐
                                               │  senko serve       │
                                               │  (OIDC direct)     │
+                                              │  → alice として記録│
                                               └────────┬───────────┘
                                                        │
                                                        ▼
@@ -60,16 +56,28 @@ AI エージェントが動くサンドボックス環境で senko を使いつ�
 1. **ネットワーク分離**: sandbox コンテナは relay 以外には egress できない (compose の network 分離 / iptables / 外向き deny)
 2. **relay の単方向性**: relay は `[server.relay] token` の M2M JWT を保持し、**upstream への認証は relay が受け持つ**。sandbox の身元は upstream に届かない
 
-> **relay は inbound 認証をしません**: `senko serve --proxy` は内部の `auth_mode` を `None` で起動し、入ってきたリクエストを検証せずに upstream へ転送します (relay 側の `[server.auth.*]` は proxy mode では無視される)。したがって relay に届く経路があれば誰でも relay 経由で upstream を呼べてしまうので、**ネットワーク分離が唯一の防護線** です。
+> **relay は inbound 認証をしません**: `[server.relay] url` が設定された `senko serve` は内部の `auth_mode` を `None` 固定で起動し、入ってきたリクエストを検証せずに upstream へ転送します (relay 側の `[server.auth.*]` は relay mode では無視される)。したがって relay に届く経路があれば誰でも relay 経由で upstream を呼べてしまうので、**ネットワーク分離が唯一の防護線** です。
 
 ## Relay 側が持つ「secret-full」
 
 Relay が預かる本物の credential (**sandbox に渡らない**):
-- IdP 発行の **OIDC Client Credentials (M2M) の client_secret**
-- IdP の token endpoint URL / audience / client_id (非秘匿だが sandbox に知らせない)
+- 上流 senko サーバで受理される **Bearer トークン** — 現時点の推奨は **人間ユーザが `senko auth login` で取得した session API キー** (後述)
 - (運用環境次第) Secrets Manager / podman secret / `.env` へのアクセス権
 
-relay の entrypoint は起動時に `client_secret` を使って IdP から **access_token (JWT)** を取得し、`SENKO_SERVER_RELAY_TOKEN` として env にセットしてから `senko serve --proxy` を起動します。senko 本体には自動リフレッシュ機能が無いので、一定周期で relay コンテナを restart して token を更新します。
+この Bearer トークンを `SENKO_SERVER_RELAY_TOKEN` env として relay に渡すと、relay は受け取ったリクエストの Authorization をこの値に差し替えて upstream に送ります (substitution mode)。
+
+## 現時点の制約: relay = 1 人のユーザー専用
+
+senko の relay には、**呼び出し元 (sandbox 内の CLI) の identity を upstream に forward する機構がありません**。`on-behalf-of` 的なヘッダも無く、relay が送る Authorization は 1 つだけです。結果として **relay は 1 つの senko ユーザーの身代わり** として動きます。
+
+そのため現状の推奨運用は:
+
+- **relay を特定の人間 (例: alice) 専用に構築する** — alice の session API キーを relay に埋め込む
+- upstream 側のログ・監査はすべて "alice のアクション" として記録される
+- sandbox 内のエージェントが行った操作も「alice が relay 経由で実行した」扱い。個人のエージェントの痕跡を自分のログにまとめたい個人利用と相性が良い
+- チームで 1 つの relay を共有すると全員分のアクションが代表 1 人の名前で混ざるため、**チーム利用では sandbox (= relay) を人ごとに分ける** 運用になる
+
+将来的には caller identity forwarding / OAuth Token Exchange (RFC 8693) / per-sandbox bot 等でこの制約を外すことが考えられますが、現時点では未実装です。
 
 ## 構成要素
 
@@ -88,63 +96,69 @@ relay の entrypoint は起動時に `client_secret` を使って IdP から **a
 
 [CLI → Remote → PostgreSQL](cli-remote-postgres.md) の構成 (PostgreSQL + OIDC 認証 senko serve + プロジェクト作成) が完了していること。
 
-### Step 1: IdP に relay 用の M2M クライアントを登録
+> **本手順は upstream が OIDC モードで動いている前提** です。upstream が `trusted_headers` モード (API Gateway 配下など) の場合、relay に入れる token の種類と TTL の扱いが変わります — [trusted_headers モードの場合](#trusted_headers-モードの場合) を後で確認してください。
 
-upstream は OIDC モードなので、relay → upstream も **OAuth Client Credentials (M2M)** で JWT を取得して送ります。IdP (Google / Cognito / Keycloak / Auth0 等) に relay 専用の confidential OAuth client を登録:
+### Step 1: upstream で session API キーを取得する
 
-- **grant**: `client_credentials`
-- **audience**: upstream senko URL (例: `https://senko-upstream.example.com`)
-- **client_id**: `senko-relay-sandbox-alpha` など (sandbox ごとに分ける運用も可)
-- **client_secret**: 後で relay の env に注入
-- **access_token_lifetime**: IdP の上限に合わせる。長いほどリフレッシュ頻度を下げられる (Auth0 なら 30 日などが可能、Cognito は最大 24 時間)
+1. **upstream のセッション TTL を長めに設定** しておく (`[server.auth.oidc.session] ttl` を例えば `"30d"`)。relay に埋め込んだ token が頻繁に失効しないようにする
+2. **自分の PC (sandbox 外) で PKCE ログイン**:
 
-> `[server.relay] token` は **静的値として保持される**: senko の relay プロセスは自動で JWT をリフレッシュしません。relay コンテナの **起動時に M2M で JWT を取得し env に入れてから serve を起動する** entrypoint を用意し、定期的に relay を restart して token を更新するパターンが素直です (後述の Step 2)。
+   ```bash
+   senko auth login --device-name "relay-for-sandbox"
+   ```
 
-### Step 2: relay を podman compose でデプロイ (M2M + 起動時リフレッシュ)
+   OS の keychain に session API キーが保存される
+3. **session API キーを取り出す**:
 
-ローカル or 信頼ホスト上で podman compose を使って `ai sandbox + relay` を立ち上げます。relay の entrypoint が起動時に M2M で JWT を取得し、別の timer で relay を定期 restart することで token が更新されます。
+   ```bash
+   senko auth token
+   # => sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+   ```
 
-#### `fetch-token-and-start.sh` (relay コンテナの entrypoint)
+   この値を relay の env `SENKO_SERVER_RELAY_TOKEN` に入れます
 
-```sh
-#!/usr/bin/env sh
-set -eu
+> `senko auth token` が返すのは **upstream の OIDC 認証を経て senko サーバが発行した session API キー** (`sk_xxx` 形式) です。CLI は PKCE で IdP から得た JWT を一度だけ upstream の `POST /auth/token` に渡し、upstream はそれを検証して内部で新たに API キー (`api_keys` テーブルに保存) を発行して keychain に返しています。IdP の JWT そのものではありません。TTL は `[server.auth.oidc.session]` で制御され、`senko auth revoke` で個別に失効できます。TTL 内は relay 側でのリフレッシュは不要 (再起動も不要)。
+>
+> TTL 満了時は手動で: `senko auth login` やり直し → `senko auth token` で新しい値を取得 → relay の env を更新 → relay restart。長めの TTL (例: 30d) にして運用負荷を下げてください。
 
-# OIDC Client Credentials で JWT を取得
-JWT=$(curl -fsS "$OIDC_TOKEN_ENDPOINT" \
-  -H "Content-Type: application/json" \
-  -d "{
-    \"client_id\":     \"$OIDC_CLIENT_ID\",
-    \"client_secret\": \"$OIDC_CLIENT_SECRET\",
-    \"audience\":      \"$OIDC_AUDIENCE\",
-    \"grant_type\":    \"client_credentials\"
-  }" | jq -r '.access_token')
+### Step 1.5: (任意) 複数 relay で個人トークンを分ける
 
-# relay が upstream に送るトークンとして env に載せて serve 起動
-export SENKO_SERVER_RELAY_URL="$UPSTREAM_URL"
-export SENKO_SERVER_RELAY_TOKEN="$JWT"
+1 人 1 relay 運用で回す場合、`--device-name` を relay 用と通常ログインで分けておくと、後で `senko auth sessions` で一覧し個別に revoke できます:
 
-exec senko serve --proxy --host 0.0.0.0 --port 3142
+```bash
+# 人間操作用 (既にあれば OK)
+senko auth login --device-name "alice-laptop"
+
+# relay 用 (別 session として発行)
+senko auth login --device-name "alice-relay-sandbox"
+senko auth token > /tmp/relay-token.txt   # → relay の .env に書き込む
 ```
 
-#### `compose.yaml`
+sandbox を廃止したら `senko auth revoke <id>` で relay 用 session だけ失効できる。
+
+### Step 2: relay を podman compose でデプロイ
+
+`.env` (sandbox の image 内には混入させない、`.gitignore` で除外):
+
+```
+SENKO_RELAY_TOKEN=sk_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx  # Step 1 で取得した session API キー
+```
+
+`compose.yaml`:
 
 ```yaml
 services:
   relay:
     image: senko:latest
-    entrypoint: /fetch-token-and-start.sh
+    command: ["serve", "--host", "0.0.0.0", "--port", "3142"]
     volumes:
-      - ./fetch-token-and-start.sh:/fetch-token-and-start.sh:ro
       - ./relay-config.toml:/etc/senko/config.toml:ro
       - ./audit:/var/log/senko-relay
     environment:
-      OIDC_TOKEN_ENDPOINT: "https://accounts.example.com/oauth/token"
-      OIDC_CLIENT_ID:      "senko-relay-sandbox-alpha"
-      OIDC_CLIENT_SECRET:  "${OIDC_CLIENT_SECRET}"     # .env 経由で注入 (sandbox には渡さない)
-      OIDC_AUDIENCE:       "https://senko-upstream.example.com"
-      UPSTREAM_URL:        "https://senko-upstream.example.com"
-      SENKO_CONFIG:        "/etc/senko/config.toml"
+      SENKO_CONFIG:              "/etc/senko/config.toml"
+      SENKO_SERVER_RELAY_URL:    "https://senko-upstream.example.com"
+      SENKO_SERVER_RELAY_TOKEN:  "${SENKO_RELAY_TOKEN}"  # .env 経由で注入
+      SENKO_USER:                "alice"                 # audit envelope で relay 識別に使う名前
     networks: [sandbox-net]
     restart: unless-stopped
 
@@ -157,16 +171,18 @@ services:
     networks: [sandbox-net]
 
 networks:
-  sandbox-net: {}        # デフォルト bridge と分離し、egress 制限を別途設定
+  sandbox-net: {}          # デフォルト bridge と分離し、egress 制限を別途設定
 ```
 
-`.env` (sandbox の image 内には混入させない):
+> `SENKO_CLI_REMOTE_TOKEN` は sandbox 側に置いていません。relay は inbound 認証をしないので意味がなく、「sandbox に credential を置かない」運用のほうが混乱がありません。
 
-```
-OIDC_CLIENT_SECRET=...(IdP で発行した値)...
+起動:
+
+```bash
+podman compose up -d
 ```
 
-> `SENKO_CLI_REMOTE_TOKEN` を sandbox 側に置いていません。relay は inbound 認証をしないので意味がなく、むしろ「sandbox に credential っぽいものを置かない」運用のほうが混乱がありません。必要なら空文字・ダミー値を入れても構いません。
+relay と sandbox が立ち上がります。senko は upstream 側で `[server.auth.oidc.session] ttl` が切れない限り、relay を再起動する必要はありません。
 
 #### `relay-config.toml`
 
@@ -175,20 +191,17 @@ OIDC_CLIENT_SECRET=...(IdP で発行した値)...
 host = "0.0.0.0"       # compose 内ネットワークから relay に到達させる
 port = 3142
 
-# 上流 senko サーバ。token は env (SENKO_SERVER_RELAY_TOKEN) で entrypoint が注入
+# 上流 senko サーバ。token は env (SENKO_SERVER_RELAY_TOKEN) で注入
 [server.relay]
 url = "https://senko-upstream.example.com"
 
-# 誰が通ったかを必ず残す (監査)
-# proxy mode では認証レイヤが無いため、relay の [user] / [project] が envelope の actor になる。
-# sandbox を複数並列に持つなら relay インスタンスも分けて identity を切り替えること (後述の "変種 A")。
+# 誰が通ったかを audit ログに残す
+# proxy mode では認証レイヤが無いため、envelope の .user は relay の [user] / SENKO_USER で決まる。
 [server.relay.task_add.hooks.audit]
 command = '''
 jq -c "{
   ts: .event.timestamp,
-  runtime: .runtime,
-  actor: .user.name,
-  actor_id: .user.id,
+  via: .user.name,
   action: \"task_add\",
   task: .event.task.id,
   title: .event.task.title
@@ -197,11 +210,11 @@ jq -c "{
 mode = "async"
 
 [server.relay.task_complete.hooks.audit]
-command = 'jq -c ". | {ts: .event.timestamp, actor: .user.name, task: .event.task.id}" >> /var/log/senko-relay/audit.jsonl'
+command = 'jq -c ". | {ts: .event.timestamp, via: .user.name, task: .event.task.id}" >> /var/log/senko-relay/audit.jsonl'
 mode = "async"
 
 [server.relay.task_cancel.hooks.audit]
-command = 'jq -c ". | {ts: .event.timestamp, actor: .user.name, task: .event.task.id, reason: .event.task.cancel_reason}" >> /var/log/senko-relay/audit.jsonl'
+command = 'jq -c ". | {ts: .event.timestamp, via: .user.name, task: .event.task.id, reason: .event.task.cancel_reason}" >> /var/log/senko-relay/audit.jsonl'
 mode = "async"
 
 [log]
@@ -211,55 +224,23 @@ level  = "info"
 
 > **proxy mode では `[server.auth.*]` / `[backend.*]` は読み込まれず無視** されます。書いてもエラーにはなりませんが、効かないので混乱の元。relay の config は上記のような **必要最小限** に保ってください。
 
-#### 定期リフレッシュ (relay を周期的に restart)
+#### session トークンの更新
 
-JWT の `access_token_lifetime` の **半分程度の間隔** で relay を restart します。方法はいくつかあります:
-
-**systemd timer (host 側) の例:**
-
-```ini
-# /etc/systemd/system/senko-relay-refresh.service
-[Service]
-Type=oneshot
-ExecStart=/usr/bin/podman restart relay
-
-# /etc/systemd/system/senko-relay-refresh.timer
-[Timer]
-OnBootSec=30min
-OnUnitActiveSec=30min
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-```
+`[server.auth.oidc.session] ttl` が切れると relay の `SENKO_SERVER_RELAY_TOKEN` も無効になり、upstream から 401 が返るようになります。その時の手順:
 
 ```bash
-sudo systemctl enable --now senko-relay-refresh.timer
+# 自分の PC で
+senko auth login --device-name "alice-relay-sandbox"
+senko auth token                             # 新しい session API キーを表示
+
+# .env を更新して relay を restart
+vim .env                                      # SENKO_RELAY_TOKEN を書き換え
+podman compose up -d --force-recreate relay   # env を再読込して relay を起動し直し
 ```
 
-**cron の例:**
+TTL を長めに (30d 等) 設定しておけば、この操作は月 1 回程度で済みます。
 
-```cron
-*/30 * * * * podman restart relay
-```
-
-`podman restart relay` が走ると entrypoint が再度 M2M で JWT を取り直すので、次のサイクルも有効なトークンで上流に繋がります。
-
-> **リフレッシュ頻度の目安**: access_token_lifetime が 1h なら 30 分周期、24h なら 12h 周期が安全側。relay が落ちている間 sandbox からのリクエストは 502 になるので、restart は 1〜2 秒で終わることを確認しておくこと。
-
-### Step 3: upstream 側で relay bot を member に追加
-
-relay が 1 度 upstream にアクセスすると、upstream 側で JWT の `sub` (= client_id) が username となる user が **JIT 自動登録** されます。その後 upstream プロジェクトの owner がメンバーとして追加:
-
-```bash
-# upstream 側 (OIDC ログイン済みの owner から)
-senko user list                              # relay-sandbox-alpha が居るか確認 (master_group があれば)
-senko project members add --user-id <relay-bot-id> --role member
-```
-
-`master_group` を配っていない構成なら、relay-bot 側の user_id は upstream 管理者に別途共有してもらう (bot アクセス時の応答ヘッダ or 監査ログから特定)。
-
-### Step 4: Sandbox 側の CLI を設定
+### Step 3: Sandbox 側の CLI を確認
 
 Step 2 の compose.yaml の `sandbox` サービスで設定済みなので、内容の確認のみ:
 
@@ -278,10 +259,10 @@ senko task complete 42                     # 同上
 ```
 
 - sandbox は relay に **認証情報なし** で到達 (relay は inbound 認証をしない)
-- relay は incoming request を素通りで forward するが、Authorization ヘッダを自身の `SENKO_SERVER_RELAY_TOKEN` (= entrypoint で取得した M2M JWT) に **差し替え** て upstream へ送る
-- upstream は JWT を検証し、ログには JWT の `sub` (= relay の OIDC client_id、例: `senko-relay-sandbox-alpha`) として記録される
+- relay は incoming request を素通りで forward するが、Authorization ヘッダを `SENKO_SERVER_RELAY_TOKEN` (= alice の session API キー) に **差し替え** て upstream へ送る
+- upstream はこの session API キーを検証し、**alice のアクション** としてログに記録する
 
-### Step 5: 誰が実行したかの追跡
+### Step 4: 誰が実行したかの追跡
 
 upstream のログには relay の service account しか残らないため、**relay 側の監査ログが真実の記録**。
 
@@ -310,36 +291,40 @@ relay の `/var/log/senko-relay-audit.jsonl` をそのまま CloudWatch Logs / L
 
 proxy mode は inbound 認証をしないため、**relay 1 インスタンスの `[user] name` / `[project] name` が envelope の actor を決定** します。1 sandbox = 1 relay の構成なら Step 2 のままで OK。
 
-複数 sandbox を同時に走らせて audit log で区別したい場合は、**sandbox ごとに relay インスタンスを分ける**のが素直な解法です:
+複数 sandbox を同時に走らせる、もしくは複数人で sandbox を使いたい場合は、**使う人ごとに relay を分ける** のが素直な解法です。各 relay にそれぞれの人間の session API キーを入れる:
 
 ```bash
-# sandbox A の relay
-podman run ... -e SENKO_USER=sandbox-A ... senko-relay
-# sandbox B の relay
-podman run ... -e SENKO_USER=sandbox-B ... senko-relay
+# alice の sandbox 用 relay
+alice% senko auth login --device-name "alice-relay-sandbox"
+alice% senko auth token > alice-relay/.env      # SENKO_RELAY_TOKEN=...
+alice% SENKO_USER=alice podman compose up -d    # alice-relay/ 配下で
+
+# bob の sandbox 用 relay
+bob%   senko auth login --device-name "bob-relay-sandbox"
+bob%   senko auth token > bob-relay/.env
+bob%   SENKO_USER=bob podman compose up -d      # bob-relay/ 配下で
 ```
 
-`senko serve --proxy` は起動時の `[user] name` を監査 envelope の `user` に反映するので、ログから sandbox 単位で追跡可能になります。
-
-それぞれの relay は **別々の M2M client_id** を IdP で発行すると、upstream 側のログでも sandbox を識別できます (1 relay = 1 OIDC bot)。
+relay mode の `senko serve` は起動時の `[user] name` / `SENKO_USER` を監査 envelope の `user` に反映するので、relay 層の audit ログから「どの relay を経由したか」が区別できます。
+upstream 側のログでは、各 relay がそれぞれ alice / bob の session API キーで認証するため、実在ユーザの名前で記録されます。
 
 ## セキュリティ想定
 
 ### 脅威モデル
 
-- **AI が sandbox 内の全情報を出力する** — OK、upstream に到達できる credential が無い
+- **AI が sandbox 内の全情報を出力する** — OK、upstream に到達できる credential が sandbox には無い
 - **AI が任意の HTTP リクエストを sandbox 外へ打つ** — sandbox のネットワーク規制で relay 以外は拒否
-- **AI が relay 経由で過剰な操作をする (spam / cancel 連発 など)** — relay の hook / upstream 側の rate limit 等で検出・抑止
-- **Relay 自体が compromise された** — `OIDC_CLIENT_SECRET` と M2M JWT が漏れる。relay は信頼境界なので保護を固める
+- **AI が relay 経由で過剰な操作をする (spam / cancel 連発 など)** — relay の hook / upstream 側の rate limit 等で検出・抑止。**AI の操作はすべて所有者 (alice) として upstream に記録される** ため、アカウント所有者の責任で監視する
+- **Relay 自体が compromise された** — alice の session API キーが漏れる。relay は信頼境界なので保護を固める。漏洩時は `senko auth revoke` で即座に失効可能
 
 ### 守るべき点
 
-- [ ] `OIDC_CLIENT_SECRET` と実行中の JWT は **sandbox コンテナから読めない** (env の scope を分ける / secret を sandbox に mount しない)
+- [ ] `SENKO_SERVER_RELAY_TOKEN` (= alice の session API キー) は **sandbox コンテナから読めない** (env の scope を分ける / secret を sandbox に mount しない)
 - [ ] sandbox コンテナのネットワークは relay (= compose 内サービス) にしか出られない
-- [ ] relay コンテナは IdP の token endpoint / upstream senko にだけ egress 許可
+- [ ] relay コンテナは upstream senko にだけ egress 許可
 - [ ] relay audit log は sandbox 外の不変ストレージへ即送信
 - [ ] relay 自体の host / container は通常サーバと同等のハードニング
-- [ ] upstream 側で relay の M2M client は最小 role (`member`) に絞る (`owner` や `master_group` は避ける)
+- [ ] session API キーは relay 専用 device_name (`alice-relay-sandbox` 等) で発行し、通常ログイン用と分離 (漏洩時に relay 用だけ `senko auth revoke` で切り離せる)
 
 ### AI 固有の注意
 
@@ -348,14 +333,36 @@ podman run ... -e SENKO_USER=sandbox-B ... senko-relay
 
 ## 運用チェックリスト
 
-- [ ] sandbox コンテナの env に `SENKO_CLI_REMOTE_URL` と `SENKO_PROJECT` のみ (IdP の client_secret / upstream URL / M2M JWT は sandbox に渡さない)
+- [ ] sandbox コンテナの env に `SENKO_CLI_REMOTE_URL` と `SENKO_PROJECT` のみ (session API キー / upstream URL は sandbox に渡さない)
 - [ ] sandbox ネットワークから relay 以外には到達不可 (compose で別 network / egress 制限)
-- [ ] relay コンテナが sandbox コンテナと **別スコープの env / secret** を持っている (例: `.env` ファイルを分ける、podman secret を sandbox に mount しない)
-- [ ] `OIDC_CLIENT_SECRET` が image に焼かれていない (`.env` / secret store から注入)
-- [ ] JWT のリフレッシュ (relay restart) が access_token_lifetime より短い周期で実行されている
-- [ ] relay の監査 hook が全 action に設定されている (`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`)
+- [ ] relay コンテナが sandbox コンテナと **別スコープの env / secret** を持っている (`.env` ファイルを分ける、podman secret を sandbox に mount しない)
+- [ ] `SENKO_RELAY_TOKEN` が image に焼かれていない (`.env` / secret store から注入)
+- [ ] relay 用 session は `--device-name` を人間ログインと分けて発行し、一覧 (`senko auth sessions`) から即座に revoke できる状態にある
+- [ ] upstream の `[server.auth.oidc.session] ttl` が組織のポリシーに沿っている (長すぎない / 運用コストに見合う)
+- [ ] relay の audit hook が全 action に設定されている (`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`)
 - [ ] 監査ログが sandbox 外の tamper-proof ストレージに送られている
-- [ ] relay の M2M client は upstream で `member` role に限定 (`owner` では無い、`master_group` にも入れない)
+- [ ] relay を通した AI の挙動は **所有者 (alice) の責任で監視** — sandbox audit と upstream の OIDC session ログを突合せる運用を定義
+
+## trusted_headers モードの場合
+
+upstream が OIDC ではなく `trusted_headers` モードで動いている場合 (例: API Gateway + Cognito + Lambda 構成、[AWS デプロイ](../guides/server-remote/aws-deployment.md) 参照)、relay に入れる token の性質が変わります:
+
+| 項目 | OIDC モード | trusted_headers モード |
+|---|---|---|
+| `senko auth token` が返すもの | senko が発行した session API キー (`sk_xxx`) | IdP が発行した **JWT (access_token) そのまま** |
+| 失効管理 | senko サーバの `api_keys` テーブル + `[server.auth.oidc.session] ttl` | senko は関与しない。IdP の access_token_lifetime に従う |
+| 典型 TTL | 設定次第 (例: 30 日) | IdP 既定 (通常 1 時間程度、Cognito なら最大 24 時間) |
+| `senko auth revoke` | 個別に失効可能 | 使えない (senko DB に session が無い) |
+| Refresh | TTL 内は不要。満了時に `senko auth login` やり直し | 短命なので頻繁に取り直す必要あり |
+
+### 運用上の影響
+
+- **relay の `SENKO_SERVER_RELAY_TOKEN` を頻繁に更新する必要がある**。JWT の残り有効期間を跨いで sandbox が動くと 401 が返る
+- 自動化の候補: IdP が **refresh_token** を返す構成なら、relay の起動スクリプトで定期的に token を更新する処理を仕込む (現時点の senko CLI は refresh_token を扱わないので、別途実装が必要)
+- IdP に **OAuth Client Credentials (M2M) クライアント** を登録して、relay 起動時に client_credentials で JWT を取得する運用も可能 (従来 relay で使われていた M2M 方式)。人間 session の代わりに M2M service account として upstream に記録される
+- **upstream 側で relay の M2M アカウントを作成・招待する必要あり** (JIT 登録された後に owner が member として追加)
+
+結論として、trusted_headers upstream + relay 構成は **セッション管理を senko 外の IdP / スクリプトに委ねる** ため、OIDC 直接モードに比べて運用コストが高くなります。可能なら upstream を OIDC モードに切り替えるか、sandbox から直接 IdP に到達させない設計制約が無い場合はこの構成を避ける方が運用は楽です。
 
 ## 変種
 
@@ -364,7 +371,7 @@ podman run ... -e SENKO_USER=sandbox-B ... senko-relay
 Step 2 は 1 sandbox + 1 relay の構成でしたが、複数 sandbox を同時に走らせる場合は **sandbox と relay をセットで複製** します:
 
 - compose のテンプレから `sandbox-N` + `relay-N` (別 network / 別 project) を量産
-- それぞれの relay が **別 M2M client_id** を持つ → upstream ログで sandbox 単位に分離可能
+- それぞれの relay に **別 `--device-name` で発行した session API キー** を入れる → upstream の `api_keys.device_name` から sandbox 単位に分離可能
 - セッション終了で両方破棄 (compose ephemeral)
 
 Kubernetes なら Pod sidecar として `sandbox` と `relay` を同 Pod に入れ、Pod ライフサイクルと揃える運用が素直です。
@@ -377,11 +384,11 @@ relay は inbound 認証をしないので、そのままでは外からのア�
 
 | 症状 | 対処 |
 |---|---|
-| sandbox から 502 | relay → upstream のネットワーク断 / upstream ダウン、または relay restart 直後で entrypoint が JWT 取得中 (数秒) |
-| 一定時間経つと 401 | JWT が期限切れしている可能性。リフレッシュ timer が動いているか、access_token_lifetime より restart 間隔が短いか確認 |
+| sandbox から 502 | relay → upstream のネットワーク断 / upstream ダウン |
+| 一定期間後に 401 | session API キーの TTL 切れ。`senko auth login` で再取得 → `.env` 更新 → `podman compose up -d --force-recreate relay` |
+| 想定と違うユーザで upstream に記録される | `SENKO_SERVER_RELAY_TOKEN` が想定と別人の session キーになっている。`senko auth sessions` と relay の env を突合せ |
 | 上流ログには出るが audit log に残らない | relay hook の mode が sync で失敗している可能性。`senko hooks log -f` で確認 |
 | sandbox が upstream URL を直接知っている | sandbox env に誤って upstream URL が入っている。`SENKO_CLI_REMOTE_URL` が relay を指しているか確認 |
-| relay の entrypoint が IdP 疎通で失敗する | relay コンテナから IdP (token endpoint) に外向き通信できるかを確認。egress 制限時は IdP のみ allowlist に入れる |
 
 ## 参考
 
