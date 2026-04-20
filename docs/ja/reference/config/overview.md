@@ -32,10 +32,10 @@ senko config --init > .senko/config.toml
 | `[backend.sqlite]` / `[backend.postgres]` | direct backend 利用時 | [server-remote.md](server-remote.md) |
 | `[cli]` | ローカル CLI (= `serve` 以外) | [cli.md](cli.md) |
 | `[cli.remote]` | ローカル CLI から remote 接続 | [cli.md](cli.md) |
-| `[server]` | `senko serve` / `senko serve --proxy` | [server-remote.md](server-remote.md) |
-| `[server.auth.*]` | `senko serve` | [server-remote.md](server-remote.md) |
-| `[server.remote]` | `senko serve` | [server-remote.md](server-remote.md) |
-| `[server.relay]` | `senko serve --proxy` | [server-relay.md](server-relay.md) |
+| `[server]` | `senko serve` (direct / relay 共通) | [server-remote.md](server-remote.md) |
+| `[server.auth.*]` | `senko serve` (direct のみ。relay mode では無視) | [server-remote.md](server-remote.md) |
+| `[server.remote]` | `senko serve` (direct) | [server-remote.md](server-remote.md) |
+| `[server.relay]` | `senko serve` (relay mode、`url` 設定で自動切替) | [server-relay.md](server-relay.md) |
 | `[workflow]` / `[workflow.<stage>]` | skill 消費 (全 runtime で読まれ得る) | [workflow.md](workflow.md) |
 
 ## Runtime フィルタ

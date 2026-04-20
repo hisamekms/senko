@@ -1,6 +1,6 @@
 # `[cli.*]` 設定
 
-ローカル CLI バイナリとして動く時 (= `senko serve` / `senko serve --proxy` 以外) に有効な section。
+ローカル CLI バイナリとして動く時 (= `senko serve` 以外) に有効な section。
 
 ## `[cli]`
 

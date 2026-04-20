@@ -70,7 +70,7 @@ senko skill-install
 - [AWS デプロイ](guides/server-remote/aws-deployment.md) — API Gateway + Cognito + Lambda
 - [`[server.remote.*]` hook の実例](guides/server-remote/hooks.md)
 
-**リレー運用者 (`senko serve --proxy`)** — [guides/server-relay/](guides/server-relay/)
+**リレー運用者 (relay モードで動く `senko serve`)** — [guides/server-relay/](guides/server-relay/)
 - [デプロイ](guides/server-relay/deploy.md)
 - [トークン中継パターン](guides/server-relay/token-relay.md)
 - [`[server.relay.*]` hook の実例](guides/server-relay/hooks.md)

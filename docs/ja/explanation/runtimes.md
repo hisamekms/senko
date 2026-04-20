@@ -8,7 +8,7 @@ senko バイナリは同じ 1 つですが、起動の仕方で **3 つの runti
 |---|---|---|---|
 | **cli** | `senko task ...` (`serve` 以外) | ローカル SQLite / remote HTTP | `[cli.*]` |
 | **server.remote** | `senko serve` | ローカル SQLite / PostgreSQL | `[server.remote.*]` `[server.auth.*]` `[backend.*]` |
-| **server.relay** | `senko serve --proxy` | 上流 (別の `senko serve`) へ転送 | `[server.relay.*]` |
+| **server.relay** | `senko serve` + `[server.relay] url` | 上流 (別の `senko serve`) へ転送 | `[server.relay.*]` |
 
 ## 選び方フローチャート
 
@@ -26,7 +26,7 @@ Q1. サーバを立てる予定はある？
         │         → getting-started/cli-remote-postgres.md
         │
         └─ No (AI サンドボックス内など、上流サーバへ中継したい)
-              → [server.relay]  (= senko serve --proxy)
+              → [server.relay]  (= `senko serve` を relay モードで起動)
                  → getting-started/cli-relay-remote-postgres.md
 ```
 
@@ -49,7 +49,7 @@ Q1. サーバを立てる予定はある？
 
 ### server.relay
 
-- **DB を持たず、上流の別サーバへ HTTP 中継するだけ**の薄いサーバ。`senko serve --proxy` で起動
+- **DB を持たず、上流の別サーバへ HTTP 中継するだけ**の薄いサーバ。`senko serve` を起動する際に `[server.relay] url` が設定されていると自動的にこのモードに入る (専用フラグは無い)
 - **inbound 認証機能なし** (`auth_mode` は None 固定)。**閉鎖ネットワーク前提** で運用し、到達可能範囲の限定が実質的な認可になる
 - 用途:
   - **AI サンドボックス** — エージェントは外部と直接通信できない環境で、サンドボックス内 relay → 外へ通すパターン

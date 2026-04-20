@@ -225,9 +225,10 @@ event_name の取り得る値:
 
 ```bash
 senko serve [--port 3142] [--host 127.0.0.1]            # REST API サーバ
-senko serve --proxy                                      # 上流へ中継するリレーとして起動
 senko web   [--port 3141] [--host 127.0.0.1]            # 読み取り専用 Web ビューア
 ```
+
+> relay モードで起動するための専用フラグはない。`[server.relay] url` (env: `SENKO_SERVER_RELAY_URL`) が設定された状態で `senko serve` を起動すると自動的に上流へ中継する relay として動く。
 
 環境変数:
 

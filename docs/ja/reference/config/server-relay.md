@@ -1,8 +1,8 @@
 # `[server.relay.*]` 設定
 
-`senko serve --proxy` (relay mode) として動く時に有効な section。
+`senko serve` が relay mode として動く時 (`[server.relay] url` が設定されている時) に有効な section。relay 切り替え専用フラグはない。
 
-relay サーバは DB を持たず、受け取った API リクエストを上流の direct サーバへ HTTP 転送します。詳細: [explanation/runtimes.md](../../explanation/runtimes.md)
+relay サーバは DB を持たず、受け取った API リクエストを上流の direct サーバへ HTTP 転送します。詳細: [Runtime の使い分け](../../explanation/runtimes.md)
 
 > **重要**: relay mode では `auth_mode` が **None 固定** になり、**`[server.auth.*]` は読み込まれず無視** されます。つまり relay は **inbound 認証を一切行わない**。閉鎖ネットワーク内で運用し、到達可能範囲の限定を実質的な認可とする設計です。公開したい場合は reverse proxy / API Gateway を前段に置いて認可をそこで済ませてください。
 
@@ -14,7 +14,7 @@ relay サーバは DB を持たず、受け取った API リクエストを上�
 
 | キー | 型 | 既定 | 説明 |
 |---|---|---|---|
-| `url` | string | `null` | **必須**。上流 direct サーバ URL。`senko serve --proxy` に必要 |
+| `url` | string | `null` | **必須**。上流 direct サーバ URL。この値が設定されていると `senko serve` は relay mode で起動する |
 | `token` | string | `null` | 上流 senko に送る Bearer 値 (= 上流で受理される credential)。未設定ならクライアントの Authorization ヘッダを透過 |
 
 env override: `SENKO_SERVER_RELAY_URL` / `SENKO_SERVER_RELAY_TOKEN`
