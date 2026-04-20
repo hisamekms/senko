@@ -10,8 +10,6 @@ senko バイナリは同じ 1 つですが、起動の仕方で **3 つの runti
 | **server.remote** | `senko serve` | ローカル SQLite / PostgreSQL | `[server.remote.*]` `[server.auth.*]` `[backend.*]` |
 | **server.relay** | `senko serve --proxy` | 上流 (別の `senko serve`) へ転送 | `[server.relay.*]` |
 
-> **重要**: 実行中の runtime に **マッチする section 以外の hook は発火しません**。起動時に「mismatch な section がある」旨の警告が出るので、必要な hook がどの section に入っているか必ず確認してください。
-
 ## 選び方フローチャート
 
 ```
@@ -36,8 +34,8 @@ Q1. サーバを立てる予定はある？
 
 ### cli
 
-- **一番よく使う形**。ローカル開発で `senko task add` `senko task next` を叩く時はこの runtime
-- `[cli.remote]` を設定するとリモートサーバを backend として使える (SQLite ではなく HTTP 経由で上流の `senko serve` に操作を投げる)
+- `senko task add` / `senko task next` などの CLI 操作で動いている時の runtime
+- 既定ではローカル SQLite を直接触るが、`[cli.remote]` を設定するとリモートサーバを backend として使える (HTTP 経由で上流の `senko serve` に操作を投げる)
 - hook は `[cli.task_add.hooks.<name>]` 等の形で書く
 - Claude Code skill も結局は `senko` CLI を叩くので、skill 経由の操作は全部この runtime
 
