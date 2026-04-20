@@ -75,11 +75,11 @@ senko task next [--session-id <id>] [--metadata '{...}'] [--include-unassigned]
 
 ready な中から **priority → created_at → id** 順で 1 件を `in_progress` にする。
 
-### `task ready <id>` / `task start <id>`
+### `task publish <id>` / `task start <id>`
 
 手動での状態遷移:
 
-- `task ready`: `draft → todo`
+- `task publish`: `draft → todo`
 - `task start`: `todo → in_progress`
 
 ### `task edit <id>`
@@ -218,7 +218,7 @@ senko hooks test <event_name> [task_id] [--dry-run]
 ```
 
 event_name の取り得る値:
-`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
+`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
 `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
 ## `senko serve` / `senko web`

@@ -13,7 +13,7 @@ mode = "async"
 on_failure = "warn"
 ```
 
-全 action を監査したいなら同じ hook を各 action に複製、または `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` のすべてに展開。
+全 action を監査したいなら同じ hook を各 action に複製、または `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` のすべてに展開。
 
 ## CloudWatch Logs に emit
 

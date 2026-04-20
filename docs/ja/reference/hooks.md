@@ -13,7 +13,7 @@ Hook は **状態遷移の前後に発火するシェルコマンド** です。
 | 要素 | 取り得る値 |
 |---|---|
 | `<runtime>` | `cli` / `server.remote` / `server.relay` / `workflow` |
-| `<aggregate>_<action>` | `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select` / `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add` / (workflow のみ: 任意 stage 名) |
+| `<aggregate>_<action>` | `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` / `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add` / (workflow のみ: 任意 stage 名) |
 | `<name>` | 自由 (alphabet/数字/`_`) |
 
 例:
@@ -99,6 +99,7 @@ description = "タスク完了時に POST する宛先"
     "task": { ... 省略 ... },
     "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5, "canceled": 0 },
     "ready_count": 2,
+    "is_ready": false,
     "unblocked_tasks": [{ "id": 3, "title": "...", "priority": "P1", "metadata": null }]
   }
 }
@@ -107,6 +108,7 @@ description = "タスク完了時に POST する宛先"
 - `task`: `senko task get` と同スキーマ ([CLI リファレンス](cli.md) 参照)
 - `unblocked_tasks`: **`task_complete` のみ** に含まれる。完了により ready に遷移した他タスク
 - `stats`: その project の状態別タスク数
+- `is_ready`: イベント対象タスク自身が着手可能状態 (`status == todo` かつ全依存が `completed`) かを示す bool。全 `task_*` イベント (`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel`) の payload に含まれる
 
 ### Contract action の envelope
 
@@ -127,7 +129,7 @@ description = "タスク完了時に POST する宛先"
 }
 ```
 
-`from_status` / `stats` / `ready_count` / `unblocked_tasks` は task aggregate 限定なので含まれない。
+`from_status` / `stats` / `ready_count` / `is_ready` / `unblocked_tasks` は task aggregate 限定なので含まれない。
 
 ### `backend` フィールド
 
@@ -142,7 +144,7 @@ description = "タスク完了時に POST する宛先"
 | Action | pre が走る瞬間 | post が走る瞬間 |
 |---|---|---|
 | `task_add` | 作成前 (validated 済) | 作成後 |
-| `task_ready` | draft → todo の前 | 後 |
+| `task_publish` | draft → todo の前 | 後 |
 | `task_start` | todo → in_progress の前 | 後 |
 | `task_complete` | in_progress → completed の前 (DoD 検証後) | 後 |
 | `task_cancel` | canceled 遷移の前 | 後 |

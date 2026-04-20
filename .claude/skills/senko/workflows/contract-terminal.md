@@ -89,13 +89,13 @@ The Contract is not satisfied. Create follow-up tasks linked to the same Contrac
 1. **Propose follow-up tasks** (usually one per gap, but merge closely related gaps into a single task if that keeps the work coherent):
    - Draft `title`, `description`, and `definition_of_done` for each, derived from the gap text + subagent rationale.
    - Confirm each follow-up with the user via `AskUserQuestion` before creating it. Allow the user to amend or drop any proposal.
-2. **Create each follow-up task** (reuse `add-task.md` Phase 4 wiring: title, description, priority, tags, DoD, branch, `ready`):
+2. **Create each follow-up task** (reuse `add-task.md` Phase 4 wiring: title, description, priority, tags, DoD, branch, `publish`):
    ```bash
    senko task add --title "<title>" --assignee-user-id self
    senko task edit <new_id> --contract <contract_id> --description "<text>" \
      --add-definition-of-done "<dod 1>"   # repeat for each DoD
    # ...branch setting per add-task.md Phase 4 step 4...
-   senko task ready <new_id>
+   senko task publish <new_id>
    ```
 3. **Create a new terminal task** that depends on the new follow-ups:
    ```bash
@@ -103,7 +103,7 @@ The Contract is not satisfied. Create follow-up tasks linked to the same Contrac
    senko task edit <new_term_id> --contract <contract_id> --add-tag contract-terminal \
      --add-definition-of-done "Verify Contract DoD items"
    senko task deps set <new_term_id> --on <follow_up_1> <follow_up_2>
-   senko task ready <new_term_id>
+   senko task publish <new_term_id>
    ```
 4. **Record a Contract note** explaining the gap and the retry plan (one note is enough), wrapped with `contract_note_add` workflow-stage hooks:
    ```bash

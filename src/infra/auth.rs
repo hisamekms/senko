@@ -43,10 +43,7 @@ impl ApiKeyProvider {
 
 #[async_trait]
 impl AuthProvider for ApiKeyProvider {
-    async fn authenticate(
-        &self,
-        token: &str,
-    ) -> std::result::Result<AuthResult, AuthError> {
+    async fn authenticate(&self, token: &str) -> std::result::Result<AuthResult, AuthError> {
         if let Some(ref master_key) = self.master_api_key
             && constant_time_key_eq(token, master_key)
         {
@@ -305,10 +302,7 @@ impl JwtAuthProvider {
 
 #[async_trait]
 impl AuthProvider for JwtAuthProvider {
-    async fn authenticate(
-        &self,
-        token: &str,
-    ) -> std::result::Result<AuthResult, AuthError> {
+    async fn authenticate(&self, token: &str) -> std::result::Result<AuthResult, AuthError> {
         let token_data = self.verify_jwt(token).await?;
 
         // Validate required claims (all conditions must be satisfied)
@@ -368,16 +362,13 @@ impl AuthProvider for JwtAuthProvider {
                 .unwrap_or(sub)
         };
 
-        let is_master = self
-            .master_group
-            .as_deref()
-            .is_some_and(|group| {
-                token_data
-                    .claims
-                    .get(self.groups_claim.as_str())
-                    .and_then(|v| v.as_array())
-                    .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(group)))
-            });
+        let is_master = self.master_group.as_deref().is_some_and(|group| {
+            token_data
+                .claims
+                .get(self.groups_claim.as_str())
+                .and_then(|v| v.as_array())
+                .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(group)))
+        });
 
         // Try to find existing user by sub; auto-create if not found (standard OIDC provisioning)
         let user = match self.backend.get_user_by_sub(sub).await {
@@ -434,6 +425,7 @@ pub struct TrustedHeadersAuthProvider {
 }
 
 impl TrustedHeadersAuthProvider {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         backend: Arc<dyn TaskBackend>,
         subject_header: String,

@@ -75,11 +75,11 @@ senko task next [--session-id <id>] [--metadata '{...}'] [--include-unassigned]
 
 From the ready set, picks one by **priority → created_at → id** and transitions it to `in_progress`.
 
-### `task ready <id>` / `task start <id>`
+### `task publish <id>` / `task start <id>`
 
 Manual state transitions:
 
-- `task ready`: `draft → todo`
+- `task publish`: `draft → todo`
 - `task start`: `todo → in_progress`
 
 ### `task edit <id>`
@@ -218,7 +218,7 @@ senko hooks test <event_name> [task_id] [--dry-run]
 ```
 
 Accepted `event_name` values:
-`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
+`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
 `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
 ## `senko serve` / `senko web`

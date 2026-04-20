@@ -70,7 +70,7 @@ Walk through sections in this order:
     - `port`: port number
 12. **hooks** — Task and contract lifecycle hooks. Hooks live under a runtime root and an action/stage name:
     - Runtime root: `[cli.<action>.hooks.<name>]` (CLI), `[server.relay.<action>.hooks.<name>]` (relay proxy), `[server.remote.<action>.hooks.<name>]` (direct server), or `[workflow.<stage>.hooks.<name>]` (skill-emitted plan instructions).
-    - CLI/server `<action>`: `task_add`, `task_ready`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`. (Use `on_result = "selected" | "none"` on `task_select` to scope; the old `on_no_eligible_task` is replaced by `task_select` + `on_result = "none"`.)
+    - CLI/server `<action>`: `task_add`, `task_publish`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`. (Use `on_result = "selected" | "none"` on `task_select` to scope; the old `on_no_eligible_task` is replaced by `task_select` + `on_result = "none"`.)
     - Workflow stages accept the same `contract_*` names plus the task-lifecycle stages; contract-stage hooks are emitted inline by `add-task` / `execute-task` / `contract-terminal` at each `senko contract <verb>` call.
     - For each hook: `command`, `when` (`pre` / `post`, default `post`), `mode` (`sync` / `async`, default `async`), `on_failure` (`abort` / `warn` / `ignore`, default `abort`), `enabled`, `env_vars` (list of `{name, required, default}`).
 
@@ -102,4 +102,4 @@ After all sections are covered, generate the TOML and write it to `.senko/config
 - **Defaults**: Only write sections/keys where the user wants non-default values. Comment out defaults for reference.
 - **Validation**: Ensure values are valid (e.g., `merge_via` must be `direct` or `pr`, `log.format` must be `json` or `pretty`).
 - **Sensitive values**: Recommend environment variables over config.toml for secrets (`cli.remote.token` → `SENKO_CLI_REMOTE_TOKEN`, `server.relay.token` → `SENKO_SERVER_RELAY_TOKEN`, `server.auth.api_key.master_key` → `SENKO_AUTH_API_KEY_MASTER_KEY`, `server.auth.api_key.master_key_arn` → `SENKO_AUTH_API_KEY_MASTER_KEY_ARN`, PostgreSQL URLs).
-- **Hooks**: Each hook entry needs a unique name under its runtime + action key (e.g., `[cli.task_ready.hooks.my-hook]` or `[workflow.branch_merge.hooks.mise_check]`).
+- **Hooks**: Each hook entry needs a unique name under its runtime + action key (e.g., `[cli.task_publish.hooks.my-hook]` or `[workflow.branch_merge.hooks.mise_check]`).

@@ -57,7 +57,7 @@ Hooks are tied to `HookTrigger`s identified by **aggregate × action**:
 | Aggregate | Action | Fires when |
 |---|---|---|
 | Task | `task_add` | Before / after creation |
-| Task | `task_ready` | draft → todo |
+| Task | `task_publish` | draft → todo |
 | Task | `task_start` | todo → in_progress (including auto-selection via `task next`) |
 | Task | `task_complete` | in_progress → completed (after DoD verification) |
 | Task | `task_cancel` | transition to canceled |
@@ -122,7 +122,7 @@ We treat these as **logical stages** separate from "CLI actions," all under `[wo
 | Stage | Meaning |
 |---|---|
 | `task_add` | Before / after adding a new task |
-| `task_ready` | draft → todo |
+| `task_publish` | draft → todo |
 | `task_start` | todo → in_progress (including `task next` auto-select) |
 | `task_complete` | in_progress → completed |
 | `task_cancel` | transition to canceled |

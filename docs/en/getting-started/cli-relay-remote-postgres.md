@@ -338,7 +338,7 @@ bob%   SENKO_USER=bob podman compose up -d      # inside bob-relay/
 - [ ] `SENKO_RELAY_TOKEN` is not baked into the image (injected from `.env` or a secret store).
 - [ ] The relay-only session uses a dedicated `--device-name` that differs from the human login, and can be revoked via `senko auth sessions`.
 - [ ] The upstream `[server.auth.oidc.session] ttl` is aligned with org policy (not too long, balanced against operational cost).
-- [ ] Relay audit hooks cover every action (`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`).
+- [ ] Relay audit hooks cover every action (`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`).
 - [ ] Audit logs are shipped to tamper-proof storage outside the sandbox.
 - [ ] **The account owner (alice) is accountable for monitoring AI activity passing through the relay** — cross-correlate sandbox audit logs with upstream OIDC session logs.
 

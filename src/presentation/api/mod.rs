@@ -121,10 +121,10 @@ async fn check_project_permission(
 
 /// For endpoints that require authentication: returns the authenticated
 /// caller (including `is_master`) or 401.
-fn require_auth_user<'a>(
-    auth: &'a OptionalAuthUser,
+fn require_auth_user(
+    auth: &OptionalAuthUser,
     auth_enabled: bool,
-) -> Result<Option<&'a AuthUser>, ApiError> {
+) -> Result<Option<&AuthUser>, ApiError> {
     if !auth_enabled {
         return Ok(None);
     }

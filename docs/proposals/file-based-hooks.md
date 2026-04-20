@@ -51,7 +51,7 @@ cargo build
       task_complete/
         verify.sh
         webhook.sh
-      task_ready/
+      task_publish/
         gate.sh
   workflow/
     task_add/

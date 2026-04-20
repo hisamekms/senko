@@ -339,7 +339,7 @@ upstream 側のログでは、各 relay がそれぞれ alice / bob の session 
 - [ ] `SENKO_RELAY_TOKEN` が image に焼かれていない (`.env` / secret store から注入)
 - [ ] relay 用 session は `--device-name` を人間ログインと分けて発行し、一覧 (`senko auth sessions`) から即座に revoke できる状態にある
 - [ ] upstream の `[server.auth.oidc.session] ttl` が組織のポリシーに沿っている (長すぎない / 運用コストに見合う)
-- [ ] relay の audit hook が全 action に設定されている (`task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`)
+- [ ] relay の audit hook が全 action に設定されている (`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `contract_add` / `contract_note_add` / `contract_dod_check` / `contract_dod_uncheck`)
 - [ ] 監査ログが sandbox 外の tamper-proof ストレージに送られている
 - [ ] relay を通した AI の挙動は **所有者 (alice) の責任で監視** — sandbox audit と upstream の OIDC session ログを突合せる運用を定義
 

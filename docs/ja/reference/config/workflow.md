@@ -44,7 +44,7 @@ stage 固有の追加キー:
 skill が発火させる stage:
 
 ```
-task_add       task_ready     task_start    task_complete
+task_add       task_publish   task_start    task_complete
 task_cancel    task_select    branch_set    branch_cleanup
 branch_merge   pr_create      pr_update     plan
 implement      contract_add   contract_edit contract_delete

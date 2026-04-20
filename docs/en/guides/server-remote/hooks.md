@@ -13,7 +13,7 @@ mode = "async"
 on_failure = "warn"
 ```
 
-To audit every action, duplicate this hook across actions — at minimum `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel`.
+To audit every action, duplicate this hook across actions — at minimum `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel`.
 
 ## Emit to CloudWatch Logs
 

@@ -37,7 +37,7 @@ mode = "async"
 
 `via` (relay 名) で「どの relay を通ったか」が分かります。
 
-同じ hook を各 action (`task_ready`, `task_start`, `task_complete`, `task_cancel`, `contract_*`) に展開すれば全経路の監査が取れます。
+同じ hook を各 action (`task_publish`, `task_start`, `task_complete`, `task_cancel`, `contract_*`) に展開すれば全経路の監査が取れます。
 
 ## Fluent Bit / Vector に渡す
 

@@ -49,7 +49,7 @@ esac
 # `command`, `prompt`, `when`, `mode`, `on_failure`, `enabled`.
 # Stages known to be consumed by the skill (user-defined stages are allowed
 # but unchecked here).
-STAGES="task_add task_ready task_start task_complete task_cancel task_select plan implement branch_set branch_cleanup branch_merge pr_create pr_update contract_add contract_edit contract_delete contract_dod_check contract_dod_uncheck contract_note_add"
+STAGES="task_add task_publish task_start task_complete task_cancel task_select plan implement branch_set branch_cleanup branch_merge pr_create pr_update contract_add contract_edit contract_delete contract_dod_check contract_dod_uncheck contract_note_add"
 
 validate_hook() {
   local stage="$1" name="$2"

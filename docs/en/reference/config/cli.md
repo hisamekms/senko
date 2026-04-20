@@ -31,7 +31,7 @@ Hooks that fire while the active runtime is `cli`.
 
 Actions:
 
-- Task: `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select`
+- Task: `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select`
 - Contract: `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
 ```toml

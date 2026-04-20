@@ -31,7 +31,7 @@ token を config に直書きしたくない場合:
 
 action は:
 
-- タスク: `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select`
+- タスク: `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select`
 - Contract: `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
 ```toml

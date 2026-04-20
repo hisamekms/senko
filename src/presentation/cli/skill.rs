@@ -482,7 +482,7 @@ mod tests {
             "senko task list",
             "senko task get",
             "senko task next",
-            "senko task ready",
+            "senko task publish",
             "senko task start",
             "senko task edit",
             "senko task complete",

@@ -3,7 +3,7 @@
 ## Normal vs Simple Mode
 
 - **Normal** (`add <description>`): Phase 1 → 2 → 3 → 4 (full workflow)
-- **Simple** (`add --simple <description>`): Create draft → set description → `task ready` (no planning)
+- **Simple** (`add --simple <description>`): Create draft → set description → `task publish` (no planning)
 
 ## Procedure
 
@@ -207,7 +207,7 @@ senko task edit <id> \
   --add-definition-of-done "E2E tests pass"
 ```
 
-4. **Branch setting** (before `senko task ready`):
+4. **Branch setting** (before `senko task publish`):
    - Determine whether the task involves repository operations (code changes, file edits, configuration changes, etc.) based on the task's title and description. If unclear, use `AskUserQuestion` to ask the user.
    - If the task does NOT involve repository operations (e.g., investigation only, external service setup), skip branch setting.
    - If the task involves repository operations:
@@ -222,7 +222,7 @@ senko task edit <id> \
 5. Transition to todo:
 
 ```bash
-senko task ready <id>
+senko task publish <id>
 ```
 
 **Note on the terminal task**: its `--add-definition-of-done "Verify Contract DoD items"` (set in Phase 2 step 4) is usually the only DoD it needs. The user may add more in Phase 4 if the split has side-artifacts that should be verified at the terminal step. Its branch can be set with the normal `branch_template` flow — no special handling.
@@ -236,4 +236,4 @@ Display the finalized task details (or task graph if multiple) to the user. For 
 1. Create draft: `senko task add --title "<description>" --assignee-user-id self`
 2. Set description: `senko task edit <id> --description "<description>"`
 3. **Branch setting**: Same as Phase 4 step 4 above.
-4. Transition: `senko task ready <id>`
+4. Transition: `senko task publish <id>`

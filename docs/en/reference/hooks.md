@@ -13,7 +13,7 @@ For the concept see [Event-Driven Workflow](../explanation/event-driven-workflow
 | Part | Allowed values |
 |---|---|
 | `<runtime>` | `cli` / `server.remote` / `server.relay` / `workflow` |
-| `<aggregate>_<action>` | `task_add` / `task_ready` / `task_start` / `task_complete` / `task_cancel` / `task_select` / `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add` / (workflow only: any stage name) |
+| `<aggregate>_<action>` | `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` / `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add` / (workflow only: any stage name) |
 | `<name>` | Freeform (alphanumeric + `_`) |
 
 Examples:
@@ -99,6 +99,7 @@ description = "Where to POST on task completion"
     "task": { ... elided ... },
     "stats": { "draft": 1, "todo": 3, "in_progress": 1, "completed": 5, "canceled": 0 },
     "ready_count": 2,
+    "is_ready": false,
     "unblocked_tasks": [{ "id": 3, "title": "...", "priority": "P1", "metadata": null }]
   }
 }
@@ -107,6 +108,7 @@ description = "Where to POST on task completion"
 - `task`: same schema as `senko task get` (see [CLI Reference](cli.md)).
 - `unblocked_tasks`: **only present on `task_complete`** — other tasks that became ready because of this completion.
 - `stats`: task counts by status for this project.
+- `is_ready`: whether the task in the event is itself ready to start (`status == todo` and all dependencies `completed`). Present on every `task_*` event (`task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel`).
 
 ### Contract action envelope
 
@@ -127,7 +129,7 @@ For `contract_*` events the outer envelope is the same but the inner shape chang
 }
 ```
 
-`from_status` / `stats` / `ready_count` / `unblocked_tasks` are task-aggregate-only and don't appear here.
+`from_status` / `stats` / `ready_count` / `is_ready` / `unblocked_tasks` are task-aggregate-only and don't appear here.
 
 ### The `backend` field
 
@@ -142,7 +144,7 @@ For `contract_*` events the outer envelope is the same but the inner shape chang
 | Action | `pre` fires when | `post` fires when |
 |---|---|---|
 | `task_add` | Before creation (after validation) | After creation |
-| `task_ready` | Before draft → todo | After |
+| `task_publish` | Before draft → todo | After |
 | `task_start` | Before todo → in_progress | After |
 | `task_complete` | Before in_progress → completed (after DoD validation) | After |
 | `task_cancel` | Before transitioning to canceled | After |

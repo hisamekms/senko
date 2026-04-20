@@ -30,7 +30,7 @@ For each section, explain every item's **current value**, whether it's the **def
 **workflow stages** — built-in names consumed by the skill:
 
 ```
-task_add               task_ready             task_start             task_complete
+task_add               task_publish           task_start             task_complete
 task_cancel            task_select            branch_set             branch_cleanup
 branch_merge           pr_create              pr_update              plan
 implement              contract_add           contract_edit          contract_delete
@@ -147,7 +147,7 @@ CLI / server actions (fixed):
 | Action | Fires When |
 |---|---|
 | `task_add` | A new task is created (draft). |
-| `task_ready` | A task moves to `todo`. |
+| `task_publish` | A task moves to `todo`. |
 | `task_start` | A task moves to `in_progress`. |
 | `task_complete` | A task is completed. |
 | `task_cancel` | A task is canceled. |

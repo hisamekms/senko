@@ -57,7 +57,7 @@ hook は **aggregate × action** で識別される `HookTrigger` に紐づき�
 | Aggregate | Action | 発火タイミング |
 |---|---|---|
 | Task | `task_add` | 作成前後 |
-| Task | `task_ready` | draft → todo |
+| Task | `task_publish` | draft → todo |
 | Task | `task_start` | todo → in_progress (`task next` での自動選択含む) |
 | Task | `task_complete` | in_progress → completed (DoD 検証後) |
 | Task | `task_cancel` | canceled 遷移 |
@@ -122,7 +122,7 @@ Claude Code skill は「今 plan している」「今 implement している」
 | Stage | 意味 |
 |---|---|
 | `task_add` | 新しいタスクを追加する前後 |
-| `task_ready` | draft → todo 遷移 |
+| `task_publish` | draft → todo 遷移 |
 | `task_start` | todo → in_progress (または `task next` での自動選択) |
 | `task_complete` | in_progress → completed |
 | `task_cancel` | canceled 遷移 |

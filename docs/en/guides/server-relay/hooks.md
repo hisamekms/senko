@@ -37,7 +37,7 @@ mode = "async"
 
 The `via` (relay name) field tells you which relay the request went through.
 
-Duplicate the same hook on each action (`task_ready`, `task_start`, `task_complete`, `task_cancel`, `contract_*`) for full-path auditing.
+Duplicate the same hook on each action (`task_publish`, `task_start`, `task_complete`, `task_cancel`, `contract_*`) for full-path auditing.
 
 ## Ship to Fluent Bit / Vector
 

@@ -11,7 +11,7 @@ senko task get <id>
 ### Default (no `--force`)
 
 - Verify `status` is **`todo`**. If it is anything else (`draft`, `in_progress`, `completed`, `canceled`), inform the user (include the actual status) and stop. For example:
-  - `draft` → tell the user to run `senko task ready <id>` first.
+  - `draft` → tell the user to run `senko task publish <id>` first.
   - `in_progress` → tell the user that work is already in progress; if they truly want to resume, rerun with `--force`.
   - `completed` / `canceled` → tell the user the task is already finished and refuse to proceed.
 - Verify that **every** entry in `dependencies` has `status == completed`. If any dependency is still incomplete, list the offending dependency IDs / statuses and stop.
@@ -22,7 +22,7 @@ senko task get <id>
 `--force` has one and only one purpose: **resume an `in_progress` task** whose work was interrupted in a previous session.
 
 - If `status` is **not** `in_progress`, reject and stop — `--force` does NOT accept any other status:
-  - `draft` → reject (ask the user to `senko task ready <id>` first, then rerun **without** `--force`).
+  - `draft` → reject (ask the user to `senko task publish <id>` first, then rerun **without** `--force`).
   - `todo` → reject (rerun **without** `--force`; `--force` is not a way to start a fresh task).
   - `completed` / `canceled` → reject (the task is already finished; finished tasks cannot be re-opened with `--force`).
 - `--force` is **not** a dependency bypass. It only changes the status check; dependencies are already assumed to have been validated when the task was first started.
