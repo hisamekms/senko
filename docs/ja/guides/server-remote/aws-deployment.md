@@ -179,5 +179,5 @@ senko auth login
 
 ## 次のステップ
 
-- trusted_headers の詳細 → [auth-trusted-headers.md](auth-trusted-headers.md)
-- hook で監査ログを CloudWatch に → [hooks.md](hooks.md)
+- trusted_headers の詳細 → [信頼ヘッダ (trusted_headers) 認証](auth-trusted-headers.md)
+- hook で監査ログを CloudWatch に → [`[server.remote.*]` hook の実例](hooks.md)

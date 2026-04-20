@@ -191,7 +191,7 @@ Client Credentials で取得した access token は通常 1 時間程度で失�
 
 ## 信頼ヘッダと併用できない
 
-`[server.auth.oidc]` と `[server.auth.trusted_headers]` は同時有効化できません。API Gateway 配下で OIDC を処理する構成は `trusted_headers` を使ってください ([auth-trusted-headers.md](auth-trusted-headers.md))。
+`[server.auth.oidc]` と `[server.auth.trusted_headers]` は同時有効化できません。API Gateway 配下で OIDC を処理する構成は `trusted_headers` を使ってください ([信頼ヘッダ (trusted_headers) 認証](auth-trusted-headers.md))。
 
 ## トラブルシューティング
 
@@ -205,4 +205,4 @@ Client Credentials で取得した access token は通常 1 時間程度で失�
 
 ## 次のステップ
 
-- API Gateway (Cognito) 配下で OIDC を終端させ、senko は信頼ヘッダで受ける構成 → [auth-trusted-headers.md](auth-trusted-headers.md) と [aws-deployment.md](aws-deployment.md)
+- API Gateway (Cognito) 配下で OIDC を終端させ、senko は信頼ヘッダで受ける構成 → [信頼ヘッダ (trusted_headers) 認証](auth-trusted-headers.md) と [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](aws-deployment.md)

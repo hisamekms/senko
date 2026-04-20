@@ -5,7 +5,7 @@
 > **位置づけ**: API キー認証は **試用・初期動作確認** 用途に限定されます。本番運用では人間・bot ともに [OIDC 認証](auth-oidc.md) を推奨します (人間は OAuth Authorization Code + PKCE、bot は OAuth Client Credentials = M2M)。
 >
 > - 認証モード 3 つ (`api_key` / `oidc` / `trusted_headers`) は **同時に 1 つだけ** 有効化できる。複数設定すると起動時エラー
-> - したがって `master_key` は **API キーモードを選んだ場合のみ** 存在する概念。OIDC や trusted_headers モードで master 権限を与えたい場合は [`master_group`](auth-oidc.md) (グループクレーム) を使う
+> - したがって `master_key` は **API キーモードを選んだ場合のみ** 存在する概念。OIDC や trusted_headers モードで master 権限を与えたい場合は `master_group` (グループクレーム) を使う ([OIDC 認証](auth-oidc.md) 参照)
 
 ## セットアップ
 
@@ -109,10 +109,10 @@ curl -s -X DELETE -H "Authorization: Bearer $MASTER_KEY" \
 | 症状 | 原因 | 対処 |
 |---|---|---|
 | 401 Unauthorized | token が無効 / 失効 | `senko auth status` や key 一覧で確認 |
-| 403 Forbidden | master key 不要の操作に master key を使った、または member ではない | 通常 API キーを使う / member 追加 |
+| 403 Forbidden | 認証済みだが対象プロジェクトの member ではない | member 追加、または owner にプロジェクト招待してもらう |
 | 設定したのに `[server.auth.api_key]` が有効化されない | `master_key` / `master_key_arn` どちらも未設定、または env 名が typo | `senko config` で確認 |
 
 ## 次のステップ
 
-- OIDC に乗り換え → [auth-oidc.md](auth-oidc.md)
-- API Gateway 配下で使う → [auth-trusted-headers.md](auth-trusted-headers.md)
+- OIDC に乗り換え → [OIDC 認証](auth-oidc.md)
+- API Gateway 配下で使う → [信頼ヘッダ (trusted_headers) 認証](auth-trusted-headers.md)

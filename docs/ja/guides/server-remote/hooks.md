@@ -2,7 +2,7 @@
 
 `senko serve` (direct モード) で動作中に発火する hook の実践パターン。
 
-スキーマは [reference/hooks.md](../../reference/hooks.md)、置き場所は [reference/config/server-remote.md](../../reference/config/server-remote.md)。
+スキーマは [Hooks リファレンス](../../reference/hooks.md)、置き場所は [`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](../../reference/config/server-remote.md)。
 
 ## 監査ログを logger / syslog に流す
 

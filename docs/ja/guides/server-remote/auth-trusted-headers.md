@@ -21,7 +21,7 @@ Client ──[Bearer JWT]──> API Gateway (HTTP API)
                           senko serve (trusted_headers モード)
 ```
 
-このパターンの詳細手順は [aws-deployment.md](aws-deployment.md) にあります。
+このパターンの詳細手順は [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](aws-deployment.md) にあります。
 
 ## サーバ側の設定
 
@@ -94,4 +94,4 @@ API Gateway 側の Parameter Mapping で JWT の `cognito:groups` / `roles` な�
 
 ## 次のステップ
 
-- AWS の具体構築手順 → [aws-deployment.md](aws-deployment.md)
+- AWS の具体構築手順 → [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](aws-deployment.md)

@@ -2,10 +2,10 @@
 
 チーム共有の senko サーバを立ち上げる手順です。認証の詳細は別ページを参照:
 
-- [auth-api-key.md](auth-api-key.md) — API キー
-- [auth-oidc.md](auth-oidc.md) — OIDC
-- [auth-trusted-headers.md](auth-trusted-headers.md) — API Gateway 配下
-- [aws-deployment.md](aws-deployment.md) — Lambda Web Adapter 構成
+- [API キー認証](auth-api-key.md)
+- [OIDC 認証](auth-oidc.md)
+- [信頼ヘッダ (trusted_headers) 認証](auth-trusted-headers.md) — API Gateway 配下
+- [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](aws-deployment.md)
 
 ## 必須要件
 
@@ -15,7 +15,7 @@
 
 ## 試用構成 (SQLite + API キー)
 
-> **試用・初期動作確認用の最小構成です**。本番の人間ユーザ認証には [auth-oidc.md](auth-oidc.md) を使ってください。
+> **試用・初期動作確認用の最小構成です**。本番の人間ユーザ認証には [OIDC 認証](auth-oidc.md) を使ってください。
 
 ```bash
 # 1. 任意のディレクトリで DB を持つ
@@ -166,6 +166,6 @@ docker run --rm -p 3142:3142 \
 
 ## 次のステップ
 
-- 認証有効化 → [auth-api-key.md](auth-api-key.md) or [auth-oidc.md](auth-oidc.md)
-- hook を仕込む → [hooks.md](hooks.md)
-- AWS 構成 → [aws-deployment.md](aws-deployment.md)
+- 認証有効化 → [API キー認証](auth-api-key.md) or [OIDC 認証](auth-oidc.md)
+- hook を仕込む → [`[server.remote.*]` hook の実例](hooks.md)
+- AWS 構成 → [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](aws-deployment.md)
