@@ -2,7 +2,7 @@
 
 Claude Code の動作を、プロジェクト固有のルールに合わせて調整するための実践例集。
 
-stage の概念は [explanation/event-driven-workflow.md](../../explanation/event-driven-workflow.md)、TOML スキーマは [reference/config/workflow.md](../../reference/config/workflow.md)。
+stage の概念は [イベントドリブンなワークフロー](../../explanation/event-driven-workflow.md)、TOML スキーマは [`[workflow.*]` 設定](../../reference/config/workflow.md) を参照。
 
 ## パターン 1: タスク追加時のデフォルト
 
@@ -22,7 +22,7 @@ instructions = [
 ]
 ```
 
-CLI から直接 `senko task add` した時はこれらが自動で入ります。skill 経由だと Claude がこれを加味して問いかけます。
+これらは skill が `senko config --output json` を読んで適用します (senko CLI そのものは `task add` 時にこれらを自動注入しません)。`/senko add` で Claude にタスクを作らせる時に反映されます。
 
 ## パターン 2: plan stage に必須セクションを課す
 
@@ -54,28 +54,22 @@ instructions = [
 ]
 ```
 
-## パターン 4: task_complete で CI 通過を必須に
+## パターン 4: task_complete フェーズの注意事項を skill に伝える
+
+完了前にエージェントに確認を取らせたい場合は `instructions` / `prompt` に書きます:
 
 ```toml
 [workflow]
 merge_via = "pr"
 
-[workflow.task_complete.hooks.ci_green]
-command = "gh pr checks $(cat) --required"
-when = "pre"
-mode = "sync"
-on_failure = "abort"
-
-[[workflow.task_complete.hooks.ci_green.env_vars]]
-name = "SENKO_PR_URL"
-required = true
+[workflow.task_complete]
+instructions = [
+  "PR が merged 状態にあることを必ず事前に確認する",
+  "DoD に未チェック項目があれば human にレビュー依頼してから complete する",
+]
 ```
 
-**注**: hook は stdin に envelope JSON を受け取るので、`command` 側で `jq` してもよい:
-
-```toml
-command = "jq -r '.event.task.pr_url' | xargs -I{} gh pr checks {} --required"
-```
+機械的に CI 通過を強制したい (=状態遷移を止めたい) 場合は、workflow stage ではなく **CLI runtime の hook** を使います。`[cli.task_complete.hooks.*]` に `when = "pre"` + `mode = "sync"` + `on_failure = "abort"` を書けば `senko task complete` の時点で検証されます (実例: [`[cli.*]` hook の実例](hooks.md))。
 
 ## パターン 5: contract_note_add で重複を抑制
 

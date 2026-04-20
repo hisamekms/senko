@@ -2,7 +2,7 @@
 
 ローカル CLI で動かす時に有効な hook の実践パターン集。
 
-スキーマは [reference/hooks.md](../../reference/hooks.md)、置き場所は [reference/config/cli.md](../../reference/config/cli.md)。
+スキーマは [Hooks リファレンス](../../reference/hooks.md)、置き場所は [`[cli.*]` 設定](../../reference/config/cli.md)。
 
 ## デスクトップ通知
 
