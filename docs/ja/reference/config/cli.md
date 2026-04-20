@@ -45,7 +45,7 @@ command = "echo 'ready なタスクがありません'"
 on_result = "none"
 ```
 
-Hook 各フィールドの詳細は [reference/hooks.md](../hooks.md)。
+Hook 各フィールドの詳細は [Hooks リファレンス](../hooks.md)。
 
 ## 主要な env 変数
 
@@ -107,4 +107,4 @@ export SENKO_CLI_REMOTE_TOKEN="$JWT"
 senko task list --status todo --output json
 ```
 
-セットアップの全体手順は [auth-oidc.md](../../guides/server-remote/auth-oidc.md) の "CI / bot (OAuth Client Credentials / M2M)" 節。試用時の API キー運用は [auth-api-key.md](../../guides/server-remote/auth-api-key.md)。
+セットアップの全体手順は [OIDC 認証](../../guides/server-remote/auth-oidc.md) の "CI / bot (OAuth Client Credentials / M2M)" 節。試用時の API キー運用は [API キー認証](../../guides/server-remote/auth-api-key.md)。

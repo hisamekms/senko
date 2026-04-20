@@ -83,7 +83,7 @@ X-Senko-Version: 1.0.0
 |---|---|---|
 | GET | `/api/v1/users/{user_id}/api-keys` | 発行済み API キー一覧 |
 | POST | `/api/v1/users/{user_id}/api-keys` | API キー発行 (`name` / `device_name`) |
-| DELETE | `/api/v1/users/{user_id}/api-keys/{id}` | revoke |
+| DELETE | `/api/v1/users/{user_id}/api-keys/{key_id}` | revoke。パスの `user_id` は呼び出し元自身である必要あり (IDOR 対策) |
 
 ### プロジェクト
 
@@ -116,10 +116,10 @@ X-Senko-Version: 1.0.0
 | GET | `/api/v1/projects/{project_id}/tasks/{id}` | 取得 |
 | PUT | `/api/v1/projects/{project_id}/tasks/{id}` | 部分更新 |
 | DELETE | `/api/v1/projects/{project_id}/tasks/{id}` | 削除 |
-| PUT | `/api/v1/projects/{project_id}/tasks/{id}/save` | 冪等な idempotent save |
-| GET | `/api/v1/projects/{project_id}/tasks/{id}/transition/preview` | 次に遷移できる状態 |
+| PUT | `/api/v1/projects/{project_id}/tasks/{id}/_save` | 冪等な idempotent save |
+| GET | `/api/v1/projects/{project_id}/tasks/{id}/preview-transition` | 次に遷移できる状態 |
 | POST | `/api/v1/projects/{project_id}/tasks/next` | `senko task next` 相当 |
-| GET | `/api/v1/projects/{project_id}/tasks/next/preview` | 選ばれる予定のタスクを覗き見 |
+| GET | `/api/v1/projects/{project_id}/tasks/preview-next` | 選ばれる予定のタスクを覗き見 |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/ready` | draft → todo |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/start` | todo → in_progress |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/complete` | in_progress → completed |
@@ -128,8 +128,8 @@ X-Senko-Version: 1.0.0
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/deps` | 依存追加 |
 | PUT | `/api/v1/projects/{project_id}/tasks/{id}/deps` | 依存全置換 |
 | DELETE | `/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}` | 依存削除 |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/check` | DoD check (`{"index": N}`) |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check` | DoD check (1-based index) |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck` | DoD uncheck |
 
 ### Contract
 
@@ -140,8 +140,8 @@ X-Senko-Version: 1.0.0
 | GET | `/api/v1/projects/{project_id}/contracts/{id}` | 取得 |
 | PUT | `/api/v1/projects/{project_id}/contracts/{id}` | 更新 |
 | DELETE | `/api/v1/projects/{project_id}/contracts/{id}` | 削除 |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/check` | DoD check |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check` | DoD check (1-based index) |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck` | DoD uncheck |
 | GET | `/api/v1/projects/{project_id}/contracts/{id}/notes` | Notes 一覧 |
 | POST | `/api/v1/projects/{project_id}/contracts/{id}/notes` | Note 追加 |
 
@@ -155,7 +155,7 @@ X-Senko-Version: 1.0.0
 
 ## リクエスト/レスポンスの形
 
-Task / Contract のフィールド形式は `senko task get` / `senko contract get` の JSON 出力と同一です。詳細は [reference/data-model.md](data-model.md) と [reference/cli.md](cli.md) を参照。
+Task / Contract のフィールド形式は `senko task get` / `senko contract get` の JSON 出力と同一です。詳細は [データモデル](data-model.md) と [CLI リファレンス](cli.md) を参照。
 
 例: タスク作成リクエスト
 
@@ -190,7 +190,7 @@ Content-Type: application/json
 
 ## Hook のリクエスト単位発火
 
-認証済みのリクエストが状態遷移を起こすと、サーバ上の `[server.remote.<action>.hooks.*]` (または relay の場合 `[server.relay.<action>.hooks.*]`) が発火します。hook の envelope 形式は [reference/hooks.md](hooks.md) 参照。
+認証済みのリクエストが状態遷移を起こすと、サーバ上の `[server.remote.<action>.hooks.*]` (または relay の場合 `[server.relay.<action>.hooks.*]`) が発火します。hook の envelope 形式は [Hooks リファレンス](hooks.md) 参照。
 
 ## レート制限
 

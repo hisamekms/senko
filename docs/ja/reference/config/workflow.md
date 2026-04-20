@@ -2,7 +2,7 @@
 
 Claude Code skill が読む **論理ステージ定義**。どの runtime で動いていても読まれ得ます (実 runtime に対する状態遷移 hook とは別物)。
 
-概念: [explanation/event-driven-workflow.md](../../explanation/event-driven-workflow.md)
+概念: [イベントドリブンなワークフロー](../../explanation/event-driven-workflow.md)
 
 ## `[workflow]` (トップレベル)
 
@@ -115,4 +115,4 @@ mode = "sync"
 on_failure = "abort"
 ```
 
-実例集: [guides/cli/workflow-stages.md](../../guides/cli/workflow-stages.md)
+実例集: [Workflow stage の実例](../../guides/cli/workflow-stages.md)

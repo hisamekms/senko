@@ -104,7 +104,7 @@ OIDC 認証モード (他モードと排他)。**初回認証時にユーザが 
 
 ## `[server.remote.<action>.hooks.<name>]`
 
-`senko serve` (direct) で状態遷移が起きた時に発火する hook。action 一覧は [reference/config/cli.md](cli.md) と同じ。
+`senko serve` (direct) で状態遷移が起きた時に発火する hook。action 一覧は [`[cli.*]` 設定](cli.md) と同じ。
 
 ```toml
 [server.remote.task_complete.hooks.audit]
@@ -120,7 +120,7 @@ name = "METRICS_URL"
 required = true
 ```
 
-Hook のスキーマは [reference/hooks.md](../hooks.md)。
+Hook のスキーマは [Hooks リファレンス](../hooks.md)。
 
 ## 認証モードの排他性
 

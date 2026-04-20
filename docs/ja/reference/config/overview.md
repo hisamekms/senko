@@ -23,20 +23,14 @@ senko config --init > .senko/config.toml
 
 ## トップレベル section 一覧
 
-| Section | 効くタイミング | 詳細 |
+| Section | 効くタイミング | 詳細ページ |
 |---|---|---|
-| `[project]` | 常時 | [common.md](common.md) |
-| `[user]` | 常時 | [common.md](common.md) |
-| `[log]` | 常時 | [common.md](common.md) |
-| `[web]` | `senko web` | [common.md](common.md) |
-| `[backend.sqlite]` / `[backend.postgres]` | direct backend 利用時 | [server-remote.md](server-remote.md) |
-| `[cli]` | ローカル CLI (= `serve` 以外) | [cli.md](cli.md) |
-| `[cli.remote]` | ローカル CLI から remote 接続 | [cli.md](cli.md) |
-| `[server]` | `senko serve` (direct / relay 共通) | [server-remote.md](server-remote.md) |
-| `[server.auth.*]` | `senko serve` (direct のみ。relay mode では無視) | [server-remote.md](server-remote.md) |
-| `[server.remote]` | `senko serve` (direct) | [server-remote.md](server-remote.md) |
-| `[server.relay]` | `senko serve` (relay mode、`url` 設定で自動切替) | [server-relay.md](server-relay.md) |
-| `[workflow]` / `[workflow.<stage>]` | skill 消費 (全 runtime で読まれ得る) | [workflow.md](workflow.md) |
+| `[project]` / `[user]` / `[log]` / `[web]` | 常時 (`[web]` は `senko web` 時のみ) | [`[project]` / `[user]` / `[log]` / `[web]` 設定](common.md) |
+| `[backend.sqlite]` / `[backend.postgres]` | direct backend 利用時 | [`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](server-remote.md) |
+| `[cli]` / `[cli.remote]` | ローカル CLI (= `serve` 以外) | [`[cli.*]` 設定](cli.md) |
+| `[server]` / `[server.auth.*]` / `[server.remote]` | `senko serve` direct mode | [`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](server-remote.md) |
+| `[server.relay]` | `senko serve` relay mode (`url` 設定で自動切替) | [`[server.relay.*]` 設定](server-relay.md) |
+| `[workflow]` / `[workflow.<stage>]` | skill 消費 (全 runtime で読まれ得る) | [`[workflow.*]` 設定](workflow.md) |
 
 ## Runtime フィルタ
 
@@ -48,7 +42,7 @@ senko config --init > .senko/config.toml
 hooks configured under runtime sections that do not match the active runtime; they will not fire
 ```
 
-runtime の選び方は [explanation/runtimes.md](../../explanation/runtimes.md) 参照。
+runtime の選び方は [Runtime の使い分け](../../explanation/runtimes.md) 参照。
 
 ## Secrets の扱い
 

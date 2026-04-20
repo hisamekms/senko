@@ -8,7 +8,7 @@ relay サーバは DB を持たず、受け取った API リクエストを上�
 
 ## `[server]`
 
-`[server]` は direct / relay で共通。host/port の設定。[server-remote.md](server-remote.md) 参照。
+`[server]` は direct / relay で共通。host/port の設定。[`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](server-remote.md) 参照。
 
 ## `[server.relay]`
 

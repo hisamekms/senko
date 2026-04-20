@@ -2,7 +2,7 @@
 
 Hook は **状態遷移の前後に発火するシェルコマンド** です。すべての runtime で共通の仕組みを使います。
 
-概念面は [explanation/event-driven-workflow.md](../explanation/event-driven-workflow.md)、runtime の使い分けは [explanation/runtimes.md](../explanation/runtimes.md) を参照。
+概念面は [イベントドリブンなワークフロー](../explanation/event-driven-workflow.md)、runtime の使い分けは [Runtime の使い分け](../explanation/runtimes.md) を参照。
 
 ## キー構造
 
@@ -104,7 +104,7 @@ description = "タスク完了時に POST する宛先"
 }
 ```
 
-- `task`: `senko task get` と同スキーマ ([reference/cli.md](cli.md) 参照)
+- `task`: `senko task get` と同スキーマ ([CLI リファレンス](cli.md) 参照)
 - `unblocked_tasks`: **`task_complete` のみ** に含まれる。完了により ready に遷移した他タスク
 - `stats`: その project の状態別タスク数
 
@@ -182,6 +182,6 @@ senko hooks test contract_note_add 42       # contract id 42 を題材に contra
 
 ## 実例
 
-- CLI からの通知 → [guides/cli/hooks.md](../guides/cli/hooks.md)
-- サーバの監査ログ → [guides/server-remote/hooks.md](../guides/server-remote/hooks.md)
-- Relay 経由のリクエストロギング → [guides/server-relay/hooks.md](../guides/server-relay/hooks.md)
+- CLI からの通知 → [`[cli.*]` hook の実例](../guides/cli/hooks.md)
+- サーバの監査ログ → [`[server.remote.*]` hook の実例](../guides/server-remote/hooks.md)
+- Relay 経由のリクエストロギング → [`[server.relay.*]` hook の実例](../guides/server-relay/hooks.md)
