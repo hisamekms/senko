@@ -2,7 +2,7 @@
 
 All commands use `senko`. Default output is JSON. The `--output` flag is **global** and must precede the subcommand.
 
-Task-related operations are grouped under `senko task <verb>`, mirroring `senko contract <verb>`. See [CLI Command Structure](../../../docs/cli-command-structure.md) for the full policy.
+Task-related operations are grouped under `senko task <verb>`, mirroring `senko contract <verb>`.
 
 ```bash
 # Add a task (created in draft status)
