@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use crate::application::port::HookDataSource;
 use crate::domain::project::Project;
-use crate::domain::task::Task;
+use crate::domain::task::{Task, TaskStatus};
 use crate::domain::user::User;
 
 use super::client::HttpClient;
@@ -124,5 +124,19 @@ impl HookDataSource for RemoteHookDataSource {
         let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
         let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
         read_json_or_error(resp).await
+    }
+
+    async fn is_task_ready(&self, project_id: i64, task_id: i64) -> Result<bool> {
+        let task = match self.get_task(project_id, task_id).await {
+            Ok(t) => t,
+            Err(_) => return Ok(false),
+        };
+        let mut dep_statuses: HashMap<i64, TaskStatus> = HashMap::new();
+        for dep_id in task.dependencies() {
+            if let Ok(dep) = self.get_task(project_id, *dep_id).await {
+                dep_statuses.insert(dep.id(), dep.status());
+            }
+        }
+        Ok(task.is_ready(&dep_statuses))
     }
 }

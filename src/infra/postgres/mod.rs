@@ -1478,6 +1478,27 @@ impl TaskQueryPort for PostgresBackend {
         };
         self.list_tasks(project_id, &filter).await
     }
+
+    async fn is_task_ready(&self, project_id: i64, task_id: i64) -> Result<bool> {
+        let pool = self.pool().await?;
+        let row: Option<(i32,)> = sqlx::query_as(
+            "SELECT 1 FROM tasks t
+             WHERE t.project_id = $1
+               AND t.id = $2
+               AND t.status = 'todo'
+               AND NOT EXISTS (
+                 SELECT 1 FROM task_dependencies td
+                 JOIN tasks dep ON dep.id = td.depends_on_task_id
+                 WHERE td.task_id = t.id AND dep.status != 'completed'
+               )
+             LIMIT 1",
+        )
+        .bind(project_id)
+        .bind(task_id)
+        .fetch_optional(pool)
+        .await?;
+        Ok(row.is_some())
+    }
 }
 
 // --- Helper for update_task_arrays ---
@@ -2231,6 +2252,57 @@ mod tests {
         backend.save(&t2).await.unwrap();
         let t2 = backend.get_task(1, t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_is_task_ready() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+
+        // Draft → false
+        let draft = backend.create_task(1, &params("Draft")).await.unwrap();
+        assert!(!backend.is_task_ready(1, draft.id()).await.unwrap());
+
+        // Todo, no deps → true
+        let (free, _) = draft.ready(now_utc()).unwrap();
+        backend.save(&free).await.unwrap();
+        assert!(backend.is_task_ready(1, free.id()).await.unwrap());
+
+        // In-progress → false
+        let (wip, _) = free.start(None, None, now_utc(), None).unwrap();
+        backend.save(&wip).await.unwrap();
+        assert!(!backend.is_task_ready(1, wip.id()).await.unwrap());
+
+        // Completed → false
+        let (done, _) = wip.complete(now_utc()).unwrap();
+        backend.save(&done).await.unwrap();
+        assert!(!backend.is_task_ready(1, done.id()).await.unwrap());
+
+        // Todo with completed dep → true
+        let unblocked_raw = backend.create_task(1, &params("Unblocked")).await.unwrap();
+        let (unblocked_raw, _) = unblocked_raw
+            .add_dependency(done.id(), Some(now_utc()))
+            .unwrap();
+        backend.save(&unblocked_raw).await.unwrap();
+        let (unblocked, _) = unblocked_raw.ready(now_utc()).unwrap();
+        backend.save(&unblocked).await.unwrap();
+        assert!(backend.is_task_ready(1, unblocked.id()).await.unwrap());
+
+        // Todo with incomplete dep → false
+        let dep = backend.create_task(1, &params("Dep")).await.unwrap();
+        let blocked_raw = backend.create_task(1, &params("Blocked")).await.unwrap();
+        let (blocked_raw, _) = blocked_raw
+            .add_dependency(dep.id(), Some(now_utc()))
+            .unwrap();
+        backend.save(&blocked_raw).await.unwrap();
+        let (blocked, _) = blocked_raw.ready(now_utc()).unwrap();
+        backend.save(&blocked).await.unwrap();
+        assert!(!backend.is_task_ready(1, blocked.id()).await.unwrap());
+
+        // Missing task → false
+        assert!(!backend.is_task_ready(1, 999_999).await.unwrap());
     }
 
     #[tokio::test]

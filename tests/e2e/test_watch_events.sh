@@ -48,6 +48,12 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+# task_add is emitted post-transition with status=draft → is_ready must be false.
+# Events are appended as concatenated JSON (no newline between objects), so we
+# parse the stream with jq and select by the inner event name.
+ADDED_IS_READY="$(jq -r 'select(.event.event == "task_add") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "false" "$ADDED_IS_READY" "task_add has is_ready=false (draft)"
+
 # 2. Ready the task → should fire task_ready
 echo "[2] task_ready event"
 run_lf task ready "$TASK_ID" >/dev/null
@@ -72,6 +78,10 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+# task_ready is emitted post-transition with status=todo and no deps → is_ready must be true
+READY_IS_READY="$(jq -r 'select(.event.event == "task_ready") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "true" "$READY_IS_READY" "task_ready has is_ready=true (todo, no deps)"
+
 # 3. Start the task → should fire task_start
 echo "[3] task_start event"
 run_lf task start "$TASK_ID" >/dev/null
@@ -95,6 +105,10 @@ else
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 
+# task_start is emitted post-transition with status=in_progress → is_ready must be false
+STARTED_IS_READY="$(jq -r 'select(.event.event == "task_start") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "false" "$STARTED_IS_READY" "task_start has is_ready=false (in_progress)"
+
 # 4. Complete the task → should fire task_complete
 echo "[4] task_complete event"
 run_lf task complete "$TASK_ID" >/dev/null
@@ -117,6 +131,10 @@ else
   echo "  FAIL: task_complete missing from_status=in_progress"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
+
+# task_complete is emitted post-transition with status=completed → is_ready must be false
+COMPLETED_IS_READY="$(jq -r 'select(.event.event == "task_complete") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "false" "$COMPLETED_IS_READY" "task_complete has is_ready=false (completed)"
 
 # 5. Create and cancel a task → should fire task_cancel
 echo "[5] task_cancel event"
@@ -142,6 +160,10 @@ else
   echo "  FAIL: task_cancel missing from_status=draft"
   FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
+
+# task_cancel is emitted post-transition with status=canceled → is_ready must be false
+CANCELED_IS_READY="$(jq -r 'select(.event.event == "task_cancel") | .event.is_ready' "$HOOK_LOG" 2>/dev/null | head -1)"
+assert_eq "false" "$CANCELED_IS_READY" "task_cancel has is_ready=false (canceled)"
 
 # 6. Unblocked tasks in task_complete event
 echo "[6] unblocked_tasks in task_complete event"

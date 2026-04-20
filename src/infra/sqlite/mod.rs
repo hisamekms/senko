@@ -1742,6 +1742,28 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
     list_tasks(conn, project_id, &filter)
 }
 
+/// SQL-optimized equivalent of `Task::is_ready`: true iff the task is in the
+/// given project, has status `todo`, and every dependency is `completed`.
+/// Missing tasks or tasks from other projects return `false`.
+fn is_task_ready(conn: &Connection, project_id: i64, task_id: i64) -> Result<bool> {
+    let sql = "
+        SELECT 1 FROM tasks t
+        WHERE t.project_id = ?1
+          AND t.id = ?2
+          AND t.status = 'todo'
+          AND NOT EXISTS (
+            SELECT 1 FROM task_dependencies td
+            JOIN tasks dep ON dep.id = td.depends_on_task_id
+            WHERE td.task_id = t.id AND dep.status != 'completed'
+          )
+        LIMIT 1
+    ";
+    let found: Option<i64> = conn
+        .query_row(sql, params![project_id, task_id], |row| row.get(0))
+        .optional()?;
+    Ok(found.is_some())
+}
+
 fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     get_task(conn, task_id)?;
     let dep_ids = query_i64_list(
@@ -2612,6 +2634,12 @@ impl TaskQueryPort for SqliteBackend {
 
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
+    }
+
+    async fn is_task_ready(&self, project_id: i64, task_id: i64) -> Result<bool> {
+        blocking!(self, |conn: &Connection| is_task_ready(
+            conn, project_id, task_id
+        ))
     }
 }
 
@@ -4740,6 +4768,77 @@ mod tests {
             crate::domain::task::filter_ready(todo_tasks, &dep_statuses).len() as i64;
 
         assert_eq!(sql_count, domain_count);
+    }
+
+    #[test]
+    fn is_task_ready_true_for_todo_with_no_deps() {
+        let (_tmp, conn) = setup();
+        let t = make_todo(&conn, "free", None);
+        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_false_for_draft() {
+        let (_tmp, conn) = setup();
+        let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_false_for_in_progress() {
+        let (_tmp, conn) = setup();
+        let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
+        transition_to(&conn, t.id(), TaskStatus::InProgress);
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_false_for_completed() {
+        let (_tmp, conn) = setup();
+        let t = make_completed(&conn, "done");
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_false_when_blocked_by_incomplete_dep() {
+        let (_tmp, conn) = setup();
+        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let blocked = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                title: "blocked".to_string(),
+                dependencies: vec![dep.id()],
+                ..default_create_params("blocked")
+            },
+        )
+        .unwrap();
+        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_true_when_deps_completed() {
+        let (_tmp, conn) = setup();
+        let dep = make_completed(&conn, "dep");
+        let unblocked = create_task(
+            &conn,
+            1,
+            &CreateTaskParams {
+                title: "unblocked".to_string(),
+                dependencies: vec![dep.id()],
+                ..default_create_params("unblocked")
+            },
+        )
+        .unwrap();
+        transition_to(&conn, unblocked.id(), TaskStatus::Todo);
+        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
+    }
+
+    #[test]
+    fn is_task_ready_false_for_missing_task() {
+        let (_tmp, conn) = setup();
+        assert!(!is_task_ready(&conn, 1, 9_999).unwrap());
     }
 
     // --- MetadataField tests ---

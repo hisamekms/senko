@@ -85,6 +85,10 @@ pub struct HookEvent {
     pub task: Task,
     pub stats: HashMap<String, i64>,
     pub ready_count: i64,
+    /// Whether `task` is currently in the "ready to be worked on" state
+    /// (status == todo AND every dependency completed). Computed via
+    /// `HookDataSource::is_task_ready`, which mirrors `Task::is_ready`.
+    pub is_ready: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub from_status: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -241,6 +245,10 @@ pub async fn build_event(
         .await
         .unwrap_or_default();
     let ready_count = backend.ready_count(task.project_id()).await.unwrap_or(0);
+    let is_ready = backend
+        .is_task_ready(task.project_id(), task.id())
+        .await
+        .unwrap_or(false);
     HookEvent {
         event_id: Uuid::new_v4().to_string(),
         event: event_name.into(),
@@ -248,6 +256,7 @@ pub async fn build_event(
         task: task.clone(),
         stats,
         ready_count,
+        is_ready,
         from_status: from_status.map(|s| s.to_string()),
         unblocked_tasks: unblocked,
     }
@@ -1175,6 +1184,55 @@ mod tests {
         })
         .unwrap();
         assert!(s.contains("\"http\""));
+    }
+
+    #[test]
+    fn hook_event_serializes_is_ready_field() {
+        use crate::domain::task::{Priority, Task, TaskStatus};
+        let task = Task::new(
+            1,
+            1,
+            1,
+            "t".into(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::Todo,
+            None,
+            None,
+            "2026-01-01T00:00:00Z".into(),
+            "2026-01-01T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        );
+        let event = HookEvent {
+            event_id: "eid".into(),
+            event: "task_add".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            task,
+            stats: HashMap::new(),
+            ready_count: 0,
+            is_ready: true,
+            from_status: None,
+            unblocked_tasks: None,
+        };
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(
+            json.contains("\"is_ready\":true"),
+            "missing is_ready in {json}"
+        );
     }
 
     #[test]
