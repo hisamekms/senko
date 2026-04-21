@@ -126,15 +126,23 @@ impl HookDataSource for RemoteHookDataSource {
         read_json_or_error(resp).await
     }
 
-    async fn is_task_ready(&self, project_id: i64, task_id: i64) -> Result<bool> {
-        let task = match self.get_task(project_id, task_id).await {
+    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
+        let task = match self.get_task(project_id, task_number).await {
             Ok(t) => t,
-            Err(_) => return Ok(false),
+            Err(e) => {
+                tracing::warn!(
+                    project_id,
+                    task_number,
+                    error = %e,
+                    "RemoteHookDataSource::is_task_ready: get_task failed, returning false"
+                );
+                return Ok(false);
+            }
         };
         let mut dep_statuses: HashMap<i64, TaskStatus> = HashMap::new();
-        for dep_id in task.dependencies() {
-            if let Ok(dep) = self.get_task(project_id, *dep_id).await {
-                dep_statuses.insert(dep.id(), dep.status());
+        for dep_task_number in task.dependencies() {
+            if let Ok(dep) = self.get_task(project_id, *dep_task_number).await {
+                dep_statuses.insert(dep.task_number(), dep.status());
             }
         }
         Ok(task.is_ready(&dep_statuses))

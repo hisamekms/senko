@@ -1745,11 +1745,14 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 /// SQL-optimized equivalent of `Task::is_ready`: true iff the task is in the
 /// given project, has status `todo`, and every dependency is `completed`.
 /// Missing tasks or tasks from other projects return `false`.
-fn is_task_ready(conn: &Connection, project_id: i64, task_id: i64) -> Result<bool> {
+///
+/// The second argument is the public `task_number`, not the internal DB id —
+/// matching the identity exposed via HTTP / CLI / hook payloads.
+fn is_task_ready(conn: &Connection, project_id: i64, task_number: i64) -> Result<bool> {
     let sql = "
         SELECT 1 FROM tasks t
         WHERE t.project_id = ?1
-          AND t.id = ?2
+          AND t.task_number = ?2
           AND t.status = 'todo'
           AND NOT EXISTS (
             SELECT 1 FROM task_dependencies td
@@ -1759,7 +1762,7 @@ fn is_task_ready(conn: &Connection, project_id: i64, task_id: i64) -> Result<boo
         LIMIT 1
     ";
     let found: Option<i64> = conn
-        .query_row(sql, params![project_id, task_id], |row| row.get(0))
+        .query_row(sql, params![project_id, task_number], |row| row.get(0))
         .optional()?;
     Ok(found.is_some())
 }
@@ -2636,9 +2639,11 @@ impl TaskQueryPort for SqliteBackend {
         blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
     }
 
-    async fn is_task_ready(&self, project_id: i64, task_id: i64) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
         blocking!(self, |conn: &Connection| is_task_ready(
-            conn, project_id, task_id
+            conn,
+            project_id,
+            task_number
         ))
     }
 }
@@ -4774,14 +4779,14 @@ mod tests {
     fn is_task_ready_true_for_todo_with_no_deps() {
         let (_tmp, conn) = setup();
         let t = make_todo(&conn, "free", None);
-        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(is_task_ready(&conn, 1, t.task_number()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_draft() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
     }
 
     #[test]
@@ -4789,14 +4794,14 @@ mod tests {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
         transition_to(&conn, t.id(), TaskStatus::InProgress);
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_completed() {
         let (_tmp, conn) = setup();
         let t = make_completed(&conn, "done");
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
     }
 
     #[test]
@@ -4808,13 +4813,13 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
-                dependencies: vec![dep.id()],
+                dependencies: vec![dep.task_number()],
                 ..default_create_params("blocked")
             },
         )
         .unwrap();
         transition_to(&conn, blocked.id(), TaskStatus::Todo);
-        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, blocked.task_number()).unwrap());
     }
 
     #[test]
@@ -4826,13 +4831,13 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "unblocked".to_string(),
-                dependencies: vec![dep.id()],
+                dependencies: vec![dep.task_number()],
                 ..default_create_params("unblocked")
             },
         )
         .unwrap();
         transition_to(&conn, unblocked.id(), TaskStatus::Todo);
-        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
+        assert!(is_task_ready(&conn, 1, unblocked.task_number()).unwrap());
     }
 
     #[test]

@@ -246,7 +246,7 @@ pub async fn build_event(
         .unwrap_or_default();
     let ready_count = backend.ready_count(task.project_id()).await.unwrap_or(0);
     let is_ready = backend
-        .is_task_ready(task.project_id(), task.id())
+        .is_task_ready(task.project_id(), task.task_number())
         .await
         .unwrap_or(false);
     HookEvent {
