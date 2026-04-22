@@ -8,6 +8,42 @@ use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
 
+/// Newtype wrapper around the per-project task identifier.
+///
+/// Wraps `i64` with `#[serde(transparent)]` so that the JSON wire format stays a
+/// bare integer (e.g. `42`), not `{"0": 42}`. The goal is compile-time safety: a
+/// `TaskId` cannot be accidentally mixed with a `project_id`, `user_id`, or
+/// `contract_id` that also happen to be `i64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct TaskId(pub i64);
+
+impl fmt::Display for TaskId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for TaskId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(TaskId)
+    }
+}
+
+impl From<i64> for TaskId {
+    fn from(n: i64) -> Self {
+        TaskId(n)
+    }
+}
+
+impl From<TaskId> for i64 {
+    fn from(id: TaskId) -> i64 {
+        id.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
@@ -72,9 +108,9 @@ pub enum TaskEvent {
     Started,
     Completed,
     Canceled,
-    DependencyAdded { dep_id: i64 },
-    DependencyRemoved { dep_id: i64 },
-    DependenciesSet { dep_ids: Vec<i64> },
+    DependencyAdded { dep_id: TaskId },
+    DependencyRemoved { dep_id: TaskId },
+    DependenciesSet { dep_ids: Vec<TaskId> },
     DodChecked { index: usize },
     DodUnchecked { index: usize },
 }
@@ -82,7 +118,7 @@ pub enum TaskEvent {
 /// A task that became eligible (ready) after another task was completed.
 #[derive(Debug, Serialize, Clone)]
 pub struct UnblockedTask {
-    id: i64,
+    id: TaskId,
     title: String,
     priority: Priority,
     metadata: Option<serde_json::Value>,
@@ -90,7 +126,7 @@ pub struct UnblockedTask {
 
 impl UnblockedTask {
     pub fn new(
-        id: i64,
+        id: TaskId,
         title: String,
         priority: Priority,
         metadata: Option<serde_json::Value>,
@@ -103,7 +139,7 @@ impl UnblockedTask {
         }
     }
 
-    pub fn id(&self) -> i64 {
+    pub fn id(&self) -> TaskId {
         self.id
     }
 
@@ -270,7 +306,7 @@ impl DodItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    id: i64,
+    id: TaskId,
     project_id: i64,
     title: String,
     background: Option<String>,
@@ -294,13 +330,13 @@ pub struct Task {
     in_scope: Vec<String>,
     out_of_scope: Vec<String>,
     tags: Vec<String>,
-    dependencies: Vec<i64>,
+    dependencies: Vec<TaskId>,
 }
 
 impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        id: i64,
+        id: TaskId,
         project_id: i64,
         title: String,
         background: Option<String>,
@@ -324,7 +360,7 @@ impl Task {
         in_scope: Vec<String>,
         out_of_scope: Vec<String>,
         tags: Vec<String>,
-        dependencies: Vec<i64>,
+        dependencies: Vec<TaskId>,
     ) -> Self {
         Self {
             id,
@@ -357,7 +393,7 @@ impl Task {
 
     // --- Getters ---
 
-    pub fn id(&self) -> i64 {
+    pub fn id(&self) -> TaskId {
         self.id
     }
 
@@ -453,7 +489,7 @@ impl Task {
         &self.tags
     }
 
-    pub fn dependencies(&self) -> &[i64] {
+    pub fn dependencies(&self) -> &[TaskId] {
         &self.dependencies
     }
 
@@ -465,7 +501,7 @@ impl Task {
     /// - status == Todo
     /// - All dependencies that exist in `dep_statuses` have status == Completed
     /// - Missing dependencies (not present in `dep_statuses`) are treated as non-blocking
-    pub fn is_ready(&self, dep_statuses: &HashMap<i64, TaskStatus>) -> bool {
+    pub fn is_ready(&self, dep_statuses: &HashMap<TaskId, TaskStatus>) -> bool {
         self.status == TaskStatus::Todo
             && self.dependencies.iter().all(|dep_id| {
                 dep_statuses
@@ -729,7 +765,7 @@ impl Task {
     /// Add a dependency, validating self-dependency. Idempotent (no event if already present).
     pub fn add_dependency(
         mut self,
-        dep_id: i64,
+        dep_id: TaskId,
         now: Option<String>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if self.id == dep_id {
@@ -749,7 +785,7 @@ impl Task {
     /// Remove a dependency, validating existence.
     pub fn remove_dependency(
         mut self,
-        dep_id: i64,
+        dep_id: TaskId,
         now: Option<String>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         let before = self.dependencies.len();
@@ -770,7 +806,7 @@ impl Task {
     /// Replace all dependencies, validating no self-dependency.
     pub fn set_dependencies(
         mut self,
-        dep_ids: &[i64],
+        dep_ids: &[TaskId],
         now: Option<String>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         for &dep_id in dep_ids {
@@ -799,7 +835,7 @@ impl Task {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.id,
+                task_id: self.id.into(),
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -818,7 +854,7 @@ impl Task {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.id,
+                task_id: self.id.into(),
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -834,7 +870,7 @@ impl Task {
 /// This is the canonical definition of "ready" used across all backends.
 /// SQL backends may implement equivalent logic in SQL for performance;
 /// see [`select_next`] for the full selection specification.
-pub fn filter_ready(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) -> Vec<Task> {
+pub fn filter_ready(tasks: Vec<Task>, dep_statuses: &HashMap<TaskId, TaskStatus>) -> Vec<Task> {
     tasks
         .into_iter()
         .filter(|t| t.is_ready(dep_statuses))
@@ -850,7 +886,7 @@ pub fn filter_ready(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) -
 ///
 /// SQL backends may implement this as an optimized query; equivalence
 /// is verified by integration tests.
-pub fn select_next(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) -> Option<Task> {
+pub fn select_next(tasks: Vec<Task>, dep_statuses: &HashMap<TaskId, TaskStatus>) -> Option<Task> {
     let mut ready = filter_ready(tasks, dep_statuses);
     ready.sort_by(|a, b| {
         a.priority()
@@ -940,7 +976,7 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
-    pub dependencies: Vec<i64>,
+    pub dependencies: Vec<TaskId>,
     #[serde(default)]
     pub assignee_user_id: Option<AssigneeUserId>,
     #[serde(default)]
@@ -1083,7 +1119,7 @@ impl UpdateTaskParams {
 pub struct ListTasksFilter {
     pub statuses: Vec<TaskStatus>,
     pub tags: Vec<String>,
-    pub depends_on: Option<i64>,
+    pub depends_on: Option<TaskId>,
     pub ready: bool,
     pub assignee_user_id: Option<i64>,
     // Unresolved "self" intent, used to carry `?assignee_user_id=self` through a
@@ -1093,8 +1129,8 @@ pub struct ListTasksFilter {
     pub include_unassigned: bool,
     pub metadata: HashMap<String, serde_json::Value>,
     pub contract_id: Option<i64>,
-    pub id_min: Option<i64>,
-    pub id_max: Option<i64>,
+    pub id_min: Option<TaskId>,
+    pub id_max: Option<TaskId>,
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
@@ -1166,7 +1202,7 @@ impl UpdateTaskArrayParams {
 // --- Domain functions ---
 
 /// Expand `${task_id}` placeholders in a branch template.
-pub fn expand_branch_template(template: &str, task_id: i64) -> String {
+pub fn expand_branch_template(template: &str, task_id: TaskId) -> String {
     template.replace("${task_id}", &task_id.to_string())
 }
 
@@ -1176,7 +1212,7 @@ pub fn expand_branch_template(template: &str, task_id: i64) -> String {
 /// This is a pure function — the caller fetches ready tasks from the backend.
 pub fn compute_unblocked(
     current_ready: &[Task],
-    prev_ready_ids: &HashSet<i64>,
+    prev_ready_ids: &HashSet<TaskId>,
 ) -> Vec<UnblockedTask> {
     current_ready
         .iter()
@@ -1228,21 +1264,21 @@ impl CompletionPolicy {
 #[async_trait]
 pub trait TaskRepository: Send + Sync {
     async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task>;
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
     async fn update_task(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task>;
     async fn update_task_arrays(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()>;
-    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()>;
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>>;
+    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()>;
+    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>>;
     async fn save(&self, task: &Task) -> Result<()>;
 }
 
@@ -1386,7 +1422,7 @@ mod tests {
 
     fn make_task(status: TaskStatus) -> Task {
         Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -1648,7 +1684,7 @@ mod tests {
     #[test]
     fn start_self_assigned_task_succeeds() {
         let task = Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -1683,7 +1719,7 @@ mod tests {
     #[test]
     fn start_other_assigned_task_fails() {
         let task = Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -1719,7 +1755,7 @@ mod tests {
     #[test]
     fn start_with_none_user_preserves_assignee() {
         let task = Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -1839,53 +1875,61 @@ mod tests {
     #[test]
     fn task_add_dependency() {
         let task = make_task(TaskStatus::Todo);
-        let (task, events) = task.add_dependency(2, None).unwrap();
-        assert_eq!(task.dependencies(), &[2]);
-        assert_eq!(events, vec![TaskEvent::DependencyAdded { dep_id: 2 }]);
+        let (task, events) = task.add_dependency(TaskId(2), None).unwrap();
+        assert_eq!(task.dependencies(), &[TaskId(2)]);
+        assert_eq!(
+            events,
+            vec![TaskEvent::DependencyAdded { dep_id: TaskId(2) }]
+        );
     }
 
     #[test]
     fn task_add_dependency_self_error() {
         let task = make_task(TaskStatus::Todo);
-        assert!(task.add_dependency(1, None).is_err());
+        assert!(task.add_dependency(TaskId(1), None).is_err());
     }
 
     #[test]
     fn task_add_dependency_idempotent() {
         let task = make_task(TaskStatus::Todo);
-        let (task, events) = task.add_dependency(2, None).unwrap();
+        let (task, events) = task.add_dependency(TaskId(2), None).unwrap();
         assert_eq!(events.len(), 1);
-        let (task, events) = task.add_dependency(2, None).unwrap();
+        let (task, events) = task.add_dependency(TaskId(2), None).unwrap();
         assert!(events.is_empty());
-        assert_eq!(task.dependencies(), &[2]);
+        assert_eq!(task.dependencies(), &[TaskId(2)]);
     }
 
     #[test]
     fn task_remove_dependency() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.add_dependency(2, None).unwrap();
-        let (task, _) = task.add_dependency(3, None).unwrap();
-        let (task, events) = task.remove_dependency(2, None).unwrap();
-        assert_eq!(task.dependencies(), &[3]);
-        assert_eq!(events, vec![TaskEvent::DependencyRemoved { dep_id: 2 }]);
+        let (task, _) = task.add_dependency(TaskId(2), None).unwrap();
+        let (task, _) = task.add_dependency(TaskId(3), None).unwrap();
+        let (task, events) = task.remove_dependency(TaskId(2), None).unwrap();
+        assert_eq!(task.dependencies(), &[TaskId(3)]);
+        assert_eq!(
+            events,
+            vec![TaskEvent::DependencyRemoved { dep_id: TaskId(2) }]
+        );
     }
 
     #[test]
     fn task_remove_dependency_not_found() {
         let task = make_task(TaskStatus::Todo);
-        assert!(task.remove_dependency(99, None).is_err());
+        assert!(task.remove_dependency(TaskId(99), None).is_err());
     }
 
     #[test]
     fn task_set_dependencies() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.add_dependency(2, None).unwrap();
-        let (task, events) = task.set_dependencies(&[3, 4], None).unwrap();
-        assert_eq!(task.dependencies(), &[3, 4]);
+        let (task, _) = task.add_dependency(TaskId(2), None).unwrap();
+        let (task, events) = task
+            .set_dependencies(&[TaskId(3), TaskId(4)], None)
+            .unwrap();
+        assert_eq!(task.dependencies(), &[TaskId(3), TaskId(4)]);
         assert_eq!(
             events,
             vec![TaskEvent::DependenciesSet {
-                dep_ids: vec![3, 4]
+                dep_ids: vec![TaskId(3), TaskId(4)]
             }]
         );
     }
@@ -1893,14 +1937,17 @@ mod tests {
     #[test]
     fn task_set_dependencies_self_error() {
         let task = make_task(TaskStatus::Todo);
-        assert!(task.set_dependencies(&[1, 2], None).is_err());
+        assert!(
+            task.set_dependencies(&[TaskId(1), TaskId(2)], None)
+                .is_err()
+        );
     }
 
     // --- DoD operation tests ---
 
     fn make_task_with_dod() -> Task {
         Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -1946,7 +1993,7 @@ mod tests {
     #[test]
     fn task_uncheck_dod() {
         let task = Task::new(
-            1,
+            TaskId(1),
             1,
             "test".to_string(),
             None,
@@ -2015,7 +2062,7 @@ mod tests {
     #[test]
     fn expand_branch_template_replaces_task_id() {
         assert_eq!(
-            super::expand_branch_template("feature/${task_id}-impl", 42),
+            super::expand_branch_template("feature/${task_id}-impl", TaskId(42)),
             "feature/42-impl"
         );
     }
@@ -2023,7 +2070,7 @@ mod tests {
     #[test]
     fn expand_branch_template_no_placeholder() {
         assert_eq!(
-            super::expand_branch_template("feature/my-branch", 42),
+            super::expand_branch_template("feature/my-branch", TaskId(42)),
             "feature/my-branch"
         );
     }
@@ -2031,7 +2078,7 @@ mod tests {
     #[test]
     fn expand_branch_template_multiple_placeholders() {
         assert_eq!(
-            super::expand_branch_template("${task_id}/${task_id}", 7),
+            super::expand_branch_template("${task_id}/${task_id}", TaskId(7)),
             "7/7"
         );
     }
@@ -2040,7 +2087,7 @@ mod tests {
 
     #[test]
     fn compute_unblocked_finds_newly_ready() {
-        let prev_ready_ids: HashSet<i64> = [1, 3].into_iter().collect();
+        let prev_ready_ids: HashSet<TaskId> = [TaskId(1), TaskId(3)].into_iter().collect();
         let current_ready = vec![
             make_task_with_id(1, TaskStatus::Todo),
             make_task_with_id(3, TaskStatus::Todo),
@@ -2048,12 +2095,12 @@ mod tests {
         ];
         let unblocked = super::compute_unblocked(&current_ready, &prev_ready_ids);
         assert_eq!(unblocked.len(), 1);
-        assert_eq!(unblocked[0].id(), 5);
+        assert_eq!(unblocked[0].id(), TaskId(5));
     }
 
     #[test]
     fn compute_unblocked_empty_when_no_change() {
-        let prev_ready_ids: HashSet<i64> = [1, 2].into_iter().collect();
+        let prev_ready_ids: HashSet<TaskId> = [TaskId(1), TaskId(2)].into_iter().collect();
         let current_ready = vec![
             make_task_with_id(1, TaskStatus::Todo),
             make_task_with_id(2, TaskStatus::Todo),
@@ -2064,7 +2111,7 @@ mod tests {
 
     fn make_task_with_id(id: i64, status: TaskStatus) -> Task {
         Task::new(
-            id,
+            TaskId(id),
             1,
             format!("task-{id}"),
             None,
@@ -2101,7 +2148,7 @@ mod tests {
         created_at: &str,
     ) -> Task {
         Task::new(
-            id,
+            TaskId(id),
             1,
             format!("task-{id}"),
             None,
@@ -2184,31 +2231,31 @@ mod tests {
     #[test]
     fn is_ready_blocked_by_incomplete_dep() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.set_dependencies(&[10], None).unwrap();
-        let deps = HashMap::from([(10, TaskStatus::Todo)]);
+        let (task, _) = task.set_dependencies(&[TaskId(10)], None).unwrap();
+        let deps = HashMap::from([(TaskId(10), TaskStatus::Todo)]);
         assert!(!task.is_ready(&deps));
     }
 
     #[test]
     fn is_ready_blocked_by_in_progress_dep() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.set_dependencies(&[10], None).unwrap();
-        let deps = HashMap::from([(10, TaskStatus::InProgress)]);
+        let (task, _) = task.set_dependencies(&[TaskId(10)], None).unwrap();
+        let deps = HashMap::from([(TaskId(10), TaskStatus::InProgress)]);
         assert!(!task.is_ready(&deps));
     }
 
     #[test]
     fn is_ready_unblocked_by_completed_dep() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.set_dependencies(&[10], None).unwrap();
-        let deps = HashMap::from([(10, TaskStatus::Completed)]);
+        let (task, _) = task.set_dependencies(&[TaskId(10)], None).unwrap();
+        let deps = HashMap::from([(TaskId(10), TaskStatus::Completed)]);
         assert!(task.is_ready(&deps));
     }
 
     #[test]
     fn is_ready_missing_dep_is_non_blocking() {
         let task = make_task(TaskStatus::Todo);
-        let (task, _) = task.set_dependencies(&[99], None).unwrap();
+        let (task, _) = task.set_dependencies(&[TaskId(99)], None).unwrap();
         assert!(task.is_ready(&HashMap::new()));
     }
 
@@ -2220,7 +2267,7 @@ mod tests {
             make_task_with_opts(3, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
         ];
         let result = super::select_next(tasks, &HashMap::new()).unwrap();
-        assert_eq!(result.id(), 2);
+        assert_eq!(result.id(), TaskId(2));
     }
 
     #[test]
@@ -2230,7 +2277,7 @@ mod tests {
             make_task_with_opts(2, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
         ];
         let result = super::select_next(tasks, &HashMap::new()).unwrap();
-        assert_eq!(result.id(), 2);
+        assert_eq!(result.id(), TaskId(2));
     }
 
     #[test]
@@ -2240,17 +2287,17 @@ mod tests {
             make_task_with_opts(3, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
         ];
         let result = super::select_next(tasks, &HashMap::new()).unwrap();
-        assert_eq!(result.id(), 3);
+        assert_eq!(result.id(), TaskId(3));
     }
 
     #[test]
     fn select_next_skips_blocked() {
         let t1 = make_task_with_opts(1, Priority::P0, TaskStatus::Todo, "2026-01-01T00:00:00Z");
-        let (t1, _) = t1.set_dependencies(&[10], None).unwrap();
+        let (t1, _) = t1.set_dependencies(&[TaskId(10)], None).unwrap();
         let t2 = make_task_with_opts(2, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z");
-        let deps = HashMap::from([(10, TaskStatus::InProgress)]);
+        let deps = HashMap::from([(TaskId(10), TaskStatus::InProgress)]);
         let result = super::select_next(vec![t1, t2], &deps).unwrap();
-        assert_eq!(result.id(), 2);
+        assert_eq!(result.id(), TaskId(2));
     }
 
     #[test]
@@ -2271,7 +2318,7 @@ mod tests {
             make_task_with_opts(3, Priority::P1, TaskStatus::Todo, "2026-01-01T00:00:00Z"),
         ];
         let result = super::select_next(tasks, &HashMap::new()).unwrap();
-        assert_eq!(result.id(), 3);
+        assert_eq!(result.id(), TaskId(3));
     }
 
     #[test]
@@ -2279,10 +2326,10 @@ mod tests {
         let t1 = make_task_with_opts(1, Priority::P0, TaskStatus::Todo, "2026-01-01T00:00:00Z");
         let t2 = make_task_with_opts(2, Priority::P1, TaskStatus::Draft, "2026-01-01T00:00:00Z");
         let t3 = make_task_with_opts(3, Priority::P2, TaskStatus::Todo, "2026-01-01T00:00:00Z");
-        let (t3, _) = t3.set_dependencies(&[10], None).unwrap();
-        let deps = HashMap::from([(10, TaskStatus::Todo)]);
+        let (t3, _) = t3.set_dependencies(&[TaskId(10)], None).unwrap();
+        let deps = HashMap::from([(TaskId(10), TaskStatus::Todo)]);
         let ready = super::filter_ready(vec![t1, t2, t3], &deps);
         assert_eq!(ready.len(), 1);
-        assert_eq!(ready[0].id(), 1);
+        assert_eq!(ready[0].id(), TaskId(1));
     }
 }

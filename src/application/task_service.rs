@@ -10,7 +10,7 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskEvent,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
@@ -46,7 +46,7 @@ impl LocalTaskOperations {
     async fn compute_would_be_unblocked(
         &self,
         project_id: i64,
-        completing_task_id: i64,
+        completing_task_id: TaskId,
     ) -> Result<Vec<Task>> {
         let all_tasks = self
             .backend
@@ -116,7 +116,7 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn publish_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn publish_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
         let prev = self.backend.get_task(project_id, id).await?;
         let prev_status = prev.status();
 
@@ -158,7 +158,7 @@ impl TaskOperations for LocalTaskOperations {
     async fn start_task(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         session_id: Option<String>,
         user_id: Option<i64>,
         metadata: Option<MetadataUpdate>,
@@ -323,7 +323,7 @@ impl TaskOperations for LocalTaskOperations {
     async fn complete_task(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         skip_pr_check: bool,
     ) -> Result<CompleteResult> {
         let task = self.backend.get_task(project_id, id).await?;
@@ -350,7 +350,7 @@ impl TaskOperations for LocalTaskOperations {
         validate_metadata_on_complete(task.metadata(), &metadata_fields, id)?;
 
         // Capture ready tasks before completion for unblocked detection
-        let prev_ready_ids: HashSet<i64> = self
+        let prev_ready_ids: HashSet<TaskId> = self
             .backend
             .list_ready_tasks(project_id)
             .await?
@@ -413,7 +413,12 @@ impl TaskOperations for LocalTaskOperations {
         Ok(CompleteResult { task, unblocked })
     }
 
-    async fn cancel_task(&self, project_id: i64, id: i64, reason: Option<String>) -> Result<Task> {
+    async fn cancel_task(
+        &self,
+        project_id: i64,
+        id: TaskId,
+        reason: Option<String>,
+    ) -> Result<Task> {
         if let Some(ref r) = reason {
             crate::domain::validator::validate_string_length(
                 "reason",
@@ -462,7 +467,7 @@ impl TaskOperations for LocalTaskOperations {
     async fn preview_transition(
         &self,
         project_id: i64,
-        task_id: i64,
+        task_id: TaskId,
         target: TaskStatus,
     ) -> Result<PreviewResult> {
         let task = self.backend.get_task(project_id, task_id).await?;
@@ -594,7 +599,7 @@ impl TaskOperations for LocalTaskOperations {
 
     // --- Passthrough methods (no hooks) ---
 
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
         self.backend.get_task(project_id, id).await
     }
 
@@ -626,7 +631,12 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.task_stats(project_id).await
     }
 
-    async fn edit_task(&self, project_id: i64, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+    async fn edit_task(
+        &self,
+        project_id: i64,
+        id: TaskId,
+        params: &UpdateTaskParams,
+    ) -> Result<Task> {
         params.validate()?;
         match &params.metadata {
             Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => {
@@ -640,7 +650,7 @@ impl TaskOperations for LocalTaskOperations {
     async fn edit_task_arrays(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
         params.validate()?;
@@ -649,15 +659,15 @@ impl TaskOperations for LocalTaskOperations {
             .await
     }
 
-    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
         self.backend.delete_task(project_id, id).await
     }
 
-    async fn save_task(&self, _project_id: i64, _id: i64, task: &Task) -> Result<()> {
+    async fn save_task(&self, _project_id: i64, _id: TaskId, task: &Task) -> Result<()> {
         self.backend.save(task).await
     }
 
-    async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+    async fn check_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.check_dod(index, now)?;
@@ -665,7 +675,7 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn uncheck_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
+    async fn uncheck_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.uncheck_dod(index, now)?;
@@ -673,7 +683,12 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn add_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn add_dependency(
+        &self,
+        project_id: i64,
+        task_id: TaskId,
+        dep_id: TaskId,
+    ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         // Verify dep exists
         let _ = self.backend.get_task(project_id, dep_id).await?;
@@ -701,7 +716,12 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn remove_dependency(&self, project_id: i64, task_id: i64, dep_id: i64) -> Result<Task> {
+    async fn remove_dependency(
+        &self,
+        project_id: i64,
+        task_id: TaskId,
+        dep_id: TaskId,
+    ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
@@ -712,8 +732,8 @@ impl TaskOperations for LocalTaskOperations {
     async fn set_dependencies(
         &self,
         project_id: i64,
-        task_id: i64,
-        dep_ids: &[i64],
+        task_id: TaskId,
+        dep_ids: &[TaskId],
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
 
@@ -747,7 +767,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
         self.backend.list_dependencies(project_id, task_id).await
     }
 

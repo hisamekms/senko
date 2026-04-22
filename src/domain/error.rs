@@ -1,3 +1,5 @@
+use super::task::TaskId;
+
 #[derive(Debug, thiserror::Error)]
 pub enum DomainError {
     // NotFound (404)
@@ -17,7 +19,7 @@ pub enum DomainError {
     ApiKeyNotFound,
 
     #[error("dependency not found: task {task_id} does not depend on {dep_id}")]
-    DependencyNotFound { task_id: i64, dep_id: i64 },
+    DependencyNotFound { task_id: TaskId, dep_id: TaskId },
 
     #[error("metadata field not found")]
     MetadataFieldNotFound,
@@ -45,7 +47,7 @@ pub enum DomainError {
     SelfDependency,
 
     #[error("adding dependency on {dep_id} would create a cycle")]
-    DependencyCycle { dep_id: i64 },
+    DependencyCycle { dep_id: TaskId },
 
     #[error("DoD index {index} out of range (task #{task_id} has {count} DoD item(s))")]
     DodIndexOutOfRange {
@@ -74,7 +76,7 @@ pub enum DomainError {
     InvalidStatusTransition { from: String, to: String },
 
     #[error("cannot complete task #{task_id}: {reason}")]
-    CannotCompleteTask { task_id: i64, reason: String },
+    CannotCompleteTask { task_id: TaskId, reason: String },
 
     #[error("cannot delete the default project")]
     CannotDeleteDefaultProject,

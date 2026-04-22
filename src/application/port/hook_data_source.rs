@@ -5,7 +5,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::project::Project;
-use crate::domain::task::Task;
+use crate::domain::task::{Task, TaskId};
 use crate::domain::user::User;
 
 /// Narrow trait covering only the data that the hook system needs.
@@ -21,12 +21,11 @@ pub trait HookDataSource: Send + Sync {
     async fn get_project_by_name(&self, name: &str) -> Result<Project>;
     async fn get_user(&self, id: i64) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task>;
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
-    /// Returns whether a single task is "ready". The second argument is the
-    /// public **`task_number`** (not the internal DB id). See
+    /// Returns whether a single task is "ready". See
     /// `TaskQueryPort::is_task_ready` for the full contract.
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool>;
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool>;
 }
 
 /// Blanket impl: any concrete type that implements `TaskBackend` automatically
@@ -51,14 +50,14 @@ impl<T: super::TaskBackend + ?Sized> HookDataSource for T {
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         crate::domain::UserRepository::get_user_by_username(self, username).await
     }
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
         crate::domain::TaskRepository::get_task(self, project_id, id).await
     }
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         super::TaskQueryPort::list_ready_tasks(self, project_id).await
     }
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
-        super::TaskQueryPort::is_task_ready(self, project_id, task_number).await
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+        super::TaskQueryPort::is_task_ready(self, project_id, id).await
     }
 }
 
@@ -88,13 +87,13 @@ impl HookDataSource for BackendHookData {
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
         crate::domain::UserRepository::get_user_by_username(&*self.0, username).await
     }
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
         crate::domain::TaskRepository::get_task(&*self.0, project_id, id).await
     }
     async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
         super::TaskQueryPort::list_ready_tasks(&*self.0, project_id).await
     }
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
-        super::TaskQueryPort::is_task_ready(&*self.0, project_id, task_number).await
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+        super::TaskQueryPort::is_task_ready(&*self.0, project_id, id).await
     }
 }

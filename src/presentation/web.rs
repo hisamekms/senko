@@ -14,6 +14,7 @@ use pulldown_cmark::{Options, Parser};
 
 use crate::application::{ListTasksFilter, TaskOperations};
 use crate::bootstrap;
+use crate::domain::task::TaskId;
 use crate::infra::config::Config;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 
@@ -127,7 +128,7 @@ async fn index_handler(
 
 async fn task_handler(
     State(state): State<AppState>,
-    Path(id): Path<i64>,
+    Path(id): Path<TaskId>,
 ) -> Result<Html<String>, StatusCode> {
     let task: TaskViewModel = state
         .task_service
@@ -207,7 +208,7 @@ fn render_graph_page(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Str
     }
 
     // Dependency edges (only between visible nodes)
-    let visible_ids: std::collections::HashSet<i64> = tasks.iter().map(|t| t.id).collect();
+    let visible_ids: std::collections::HashSet<TaskId> = tasks.iter().map(|t| t.id).collect();
     for task in tasks {
         for dep in &task.dependencies {
             if visible_ids.contains(dep) {

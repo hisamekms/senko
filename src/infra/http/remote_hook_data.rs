@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use crate::application::port::HookDataSource;
 use crate::domain::project::Project;
-use crate::domain::task::{Task, TaskStatus};
+use crate::domain::task::{Task, TaskId, TaskStatus};
 use crate::domain::user::User;
 
 use super::client::HttpClient;
@@ -107,7 +107,7 @@ impl HookDataSource for RemoteHookDataSource {
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
         let resp = self
             .http
             .auth(
@@ -126,10 +126,11 @@ impl HookDataSource for RemoteHookDataSource {
         read_json_or_error(resp).await
     }
 
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
-        let task = match self.get_task(project_id, task_number).await {
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+        let task = match self.get_task(project_id, id).await {
             Ok(t) => t,
             Err(e) => {
+                let task_number: i64 = id.into();
                 tracing::warn!(
                     project_id,
                     task_number,
@@ -139,7 +140,7 @@ impl HookDataSource for RemoteHookDataSource {
                 return Ok(false);
             }
         };
-        let mut dep_statuses: HashMap<i64, TaskStatus> = HashMap::new();
+        let mut dep_statuses: HashMap<TaskId, TaskStatus> = HashMap::new();
         for dep_task_number in task.dependencies() {
             if let Ok(dep) = self.get_task(project_id, *dep_task_number).await {
                 dep_statuses.insert(dep.id(), dep.status());

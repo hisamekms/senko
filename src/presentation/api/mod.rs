@@ -40,7 +40,7 @@ use crate::domain::metadata_field::CreateMetadataFieldParams;
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority,
-    Task, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
@@ -336,7 +336,7 @@ struct ListTasksQuery {
     #[serde(default)]
     tag: Vec<String>,
     #[serde(default)]
-    depends_on: Option<i64>,
+    depends_on: Option<TaskId>,
     #[serde(default)]
     ready: Option<bool>,
     #[serde(default)]
@@ -348,9 +348,9 @@ struct ListTasksQuery {
     #[serde(default)]
     contract: Option<i64>,
     #[serde(default)]
-    id_min: Option<i64>,
+    id_min: Option<TaskId>,
     #[serde(default)]
-    id_max: Option<i64>,
+    id_max: Option<TaskId>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
@@ -386,12 +386,12 @@ struct NextBody {
 
 #[derive(Deserialize)]
 struct AddDepBody {
-    dep_id: i64,
+    dep_id: TaskId,
 }
 
 #[derive(Deserialize)]
 struct SetDepsBody {
-    dep_ids: Vec<i64>,
+    dep_ids: Vec<TaskId>,
 }
 
 #[derive(Deserialize)]
@@ -965,7 +965,7 @@ async fn create_task(
 async fn get_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let task = state
@@ -980,7 +980,7 @@ async fn get_task(
 async fn edit_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Json(body): Json<EditTaskBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1092,7 +1092,7 @@ async fn edit_task(
 async fn save_task_handler(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Json(task): Json<Task>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1113,7 +1113,7 @@ async fn save_task_handler(
 async fn delete_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state
@@ -1128,7 +1128,7 @@ async fn delete_task(
 async fn publish_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let updated = state
@@ -1143,7 +1143,7 @@ async fn publish_task(
 async fn start_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Json(body): Json<StartBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1165,7 +1165,7 @@ async fn start_task(
 async fn complete_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     body: Option<Json<CompleteBody>>,
 ) -> Result<Json<CompleteTaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1182,7 +1182,7 @@ async fn complete_task(
 async fn cancel_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     body: Option<Json<CancelBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1237,7 +1237,7 @@ async fn next_task(
 async fn preview_transition(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Query(query): Query<PreviewTransitionQuery>,
 ) -> Result<Json<PreviewTransitionResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
@@ -1269,7 +1269,7 @@ async fn preview_next(
 async fn list_deps(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
 ) -> Result<Json<Vec<TaskResponse>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let deps = state
@@ -1284,7 +1284,7 @@ async fn list_deps(
 async fn add_dep(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Json(body): Json<AddDepBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1300,7 +1300,7 @@ async fn add_dep(
 async fn remove_dep(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id, dep_id)): Path<(i64, i64, i64)>,
+    Path((project_id, id, dep_id)): Path<(i64, TaskId, TaskId)>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state
@@ -1315,7 +1315,7 @@ async fn remove_dep(
 async fn set_deps(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(i64, i64)>,
+    Path((project_id, id)): Path<(i64, TaskId)>,
     Json(body): Json<SetDepsBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1331,7 +1331,7 @@ async fn set_deps(
 async fn check_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id, index)): Path<(i64, i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, TaskId, usize)>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state
@@ -1346,7 +1346,7 @@ async fn check_dod(
 async fn uncheck_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id, index)): Path<(i64, i64, usize)>,
+    Path((project_id, id, index)): Path<(i64, TaskId, usize)>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let task = state
@@ -1398,7 +1398,7 @@ struct EditContractBody {
 struct AddContractNoteBody {
     content: String,
     #[serde(default)]
-    source_task_id: Option<i64>,
+    source_task_id: Option<TaskId>,
 }
 
 // POST /api/v1/projects/{project_id}/contracts

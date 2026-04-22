@@ -11,8 +11,8 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
+    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -1037,7 +1037,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
     if let Some(ref branch) = params.branch
         && branch.contains("${task_id}")
     {
-        let expanded = task::expand_branch_template(branch, task_number);
+        let expanded = task::expand_branch_template(branch, TaskId(task_number));
         conn.execute(
             "UPDATE tasks SET branch = ?1 WHERE id = ?2",
             params![expanded, task_id],
@@ -1069,7 +1069,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         )?;
     }
     for &dep_task_number in &params.dependencies {
-        let dep_internal_id = resolve_task_number(conn, project_id, dep_task_number)?;
+        let dep_internal_id = resolve_task_number(conn, project_id, dep_task_number.into())?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
             params![task_id, dep_internal_id],
@@ -1140,14 +1140,17 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     )?;
     let tags = query_string_list(conn, "SELECT tag FROM task_tags WHERE task_id = ?1", id)?;
     // Fetch dependency task_numbers (not internal IDs)
-    let dependencies = query_i64_list(
+    let dependencies: Vec<TaskId> = query_i64_list(
         conn,
         "SELECT t.task_number FROM task_dependencies td JOIN tasks t ON t.id = td.depends_on_task_id WHERE td.task_id = ?1",
         id,
-    )?;
+    )?
+    .into_iter()
+    .map(TaskId::from)
+    .collect();
 
     Ok(Task::new(
-        task_number,
+        TaskId(task_number),
         project_id,
         title,
         background,
@@ -1357,7 +1360,7 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
 }
 
 fn save_task(conn: &Connection, task: &Task) -> Result<()> {
-    let internal_id = resolve_task_number(conn, task.project_id(), task.id())?;
+    let internal_id = resolve_task_number(conn, task.project_id(), task.id().into())?;
     let metadata_str: Option<String> = task
         .metadata()
         .map(serde_json::to_string)
@@ -1414,7 +1417,7 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
         params![internal_id],
     )?;
     for &dep_task_number in task.dependencies() {
-        let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number)?;
+        let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number.into())?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
             params![internal_id, dep_internal_id],
@@ -1554,7 +1557,8 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         conditions.push(
             "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ?)".to_string(),
         );
-        param_values.push(Box::new(dep_id));
+        let dep_id_i64: i64 = dep_id.into();
+        param_values.push(Box::new(dep_id_i64));
     }
 
     if let Some(contract_id) = filter.contract_id {
@@ -1564,12 +1568,14 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
 
     if let Some(id_min) = filter.id_min {
         conditions.push("t.id >= ?".to_string());
-        param_values.push(Box::new(id_min));
+        let id_min_i64: i64 = id_min.into();
+        param_values.push(Box::new(id_min_i64));
     }
 
     if let Some(id_max) = filter.id_max {
         conditions.push("t.id <= ?".to_string());
-        param_values.push(Box::new(id_max));
+        let id_max_i64: i64 = id_max.into();
+        param_values.push(Box::new(id_max_i64));
     }
 
     // SQL-optimized implementation of `crate::domain::task::filter_ready`.
@@ -2034,7 +2040,7 @@ fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
         stmt.query_map(params![id], |row| {
             Ok(ContractNote::new(
                 row.get::<_, String>(0)?,
-                row.get::<_, Option<i64>>(1)?,
+                row.get::<_, Option<i64>>(1)?.map(TaskId),
                 row.get::<_, String>(2)?,
             ))
         })?
@@ -2245,7 +2251,7 @@ fn add_contract_note(
         params![
             contract_id,
             note.content(),
-            note.source_task_id(),
+            note.source_task_id().map(i64::from),
             note.created_at(),
         ],
     )?;
@@ -2551,7 +2557,8 @@ impl TaskRepository for SqliteBackend {
         ))
     }
 
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+        let id: i64 = id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             get_task(conn, internal_id)
@@ -2561,9 +2568,10 @@ impl TaskRepository for SqliteBackend {
     async fn update_task(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
+        let id: i64 = id.into();
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2574,9 +2582,10 @@ impl TaskRepository for SqliteBackend {
     async fn update_task_arrays(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
+        let id: i64 = id.into();
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2584,14 +2593,16 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+        let id: i64 = id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             delete_task(conn, internal_id)
         })
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+        let task_id: i64 = task_id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, task_id)?;
             list_dependencies(conn, internal_id)
@@ -2639,7 +2650,8 @@ impl TaskQueryPort for SqliteBackend {
         blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
     }
 
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+        let task_number: i64 = id.into();
         blocking!(self, |conn: &Connection| is_task_ready(
             conn,
             project_id,
@@ -2966,7 +2978,7 @@ mod tests {
         assert!(task.canceled_at().is_none());
         assert!(task.cancel_reason().is_none());
 
-        let fetched = get_task(&conn, task.id()).unwrap();
+        let fetched = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(fetched.title(), task.title());
         assert_eq!(fetched.tags(), task.tags());
     }
@@ -2985,7 +2997,7 @@ mod tests {
 
         let updated = update_task(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskParams {
                 title: Some("updated".to_string()),
                 background: Some(Some("new bg".to_string())),
@@ -3021,10 +3033,10 @@ mod tests {
         assert_eq!(task.status(), TaskStatus::Draft);
 
         // draft -> todo via domain method + save
-        let task = get_task(&conn, task.id()).unwrap();
+        let task = get_task(&conn, task.id().into()).unwrap();
         let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.status(), TaskStatus::Todo);
 
         // todo -> in_progress
@@ -3037,7 +3049,7 @@ mod tests {
             )
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.status(), TaskStatus::InProgress);
         assert_eq!(updated.assignee_session_id(), Some("session-1"));
         assert_eq!(updated.started_at(), Some("2025-01-01T00:00:00Z"));
@@ -3047,7 +3059,7 @@ mod tests {
             .complete("2025-01-01T01:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.status(), TaskStatus::Completed);
         assert_eq!(updated.completed_at(), Some("2025-01-01T01:00:00Z"));
     }
@@ -3058,35 +3070,35 @@ mod tests {
 
         // cancel from draft
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let task = get_task(&conn, t1.id()).unwrap();
+        let task = get_task(&conn, t1.id().into()).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into()))
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t1.id()).unwrap();
+        let canceled = get_task(&conn, t1.id().into()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
         assert_eq!(canceled.cancel_reason(), Some("reason1"));
 
         // cancel from todo
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        transition_to(&conn, t2.id(), TaskStatus::Todo);
-        let task = get_task(&conn, t2.id()).unwrap();
+        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
+        let task = get_task(&conn, t2.id().into()).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), None)
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t2.id()).unwrap();
+        let canceled = get_task(&conn, t2.id().into()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
 
         // cancel from in_progress
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
-        transition_to(&conn, t3.id(), TaskStatus::InProgress);
-        let task = get_task(&conn, t3.id()).unwrap();
+        transition_to(&conn, t3.id().into(), TaskStatus::InProgress);
+        let task = get_task(&conn, t3.id().into()).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), None)
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t3.id()).unwrap();
+        let canceled = get_task(&conn, t3.id().into()).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
     }
 
@@ -3115,14 +3127,14 @@ mod tests {
         )
         .unwrap();
 
-        delete_task(&conn, task.id()).unwrap();
+        delete_task(&conn, task.id().into()).unwrap();
 
-        assert!(get_task(&conn, task.id()).is_err());
+        assert!(get_task(&conn, task.id().into()).is_err());
 
         let count: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM task_tags WHERE task_id = ?1",
-                params![task.id()],
+                params![i64::from(task.id())],
                 |row| row.get(0),
             )
             .unwrap();
@@ -3131,7 +3143,7 @@ mod tests {
         let count: i32 = conn
             .query_row(
                 "SELECT COUNT(*) FROM task_definition_of_done WHERE task_id = ?1",
-                params![task.id()],
+                params![i64::from(task.id())],
                 |row| row.get(0),
             )
             .unwrap();
@@ -3161,7 +3173,7 @@ mod tests {
         let _t2 = create_task(&conn, 1, &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
-        transition_to(&conn, t1.id(), TaskStatus::Todo);
+        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
@@ -3225,7 +3237,7 @@ mod tests {
 
         // Create dep task and move to completed
         let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
-        transition_to(&conn, dep.id(), TaskStatus::Completed);
+        transition_to(&conn, dep.id().into(), TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
         let ready_t = create_task(
@@ -3238,7 +3250,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, ready_t.id(), TaskStatus::Todo);
+        transition_to(&conn, ready_t.id().into(), TaskStatus::Todo);
 
         // Create another dep that is NOT completed
         let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
@@ -3252,7 +3264,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked_task.id(), TaskStatus::Todo);
+        transition_to(&conn, blocked_task.id().into(), TaskStatus::Todo);
 
         let result = list_tasks(
             &conn,
@@ -3428,7 +3440,7 @@ mod tests {
         // Duplicate tag should fail
         let result = conn.execute(
             "INSERT INTO task_tags (task_id, tag) VALUES (?1, 'rust')",
-            params![task.id()],
+            params![i64::from(task.id())],
         );
         assert!(result.is_err());
     }
@@ -3490,7 +3502,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskArrayParams {
                 set_tags: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -3498,7 +3510,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.tags().len(), 2);
         assert!(updated.tags().contains(&"new1".to_string()));
         assert!(updated.tags().contains(&"new2".to_string()));
@@ -3523,7 +3535,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskArrayParams {
                 add_tags: vec!["new".to_string(), "existing".to_string()],
                 ..default_array_params()
@@ -3531,7 +3543,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.tags().len(), 2);
         assert!(updated.tags().contains(&"existing".to_string()));
         assert!(updated.tags().contains(&"new".to_string()));
@@ -3555,7 +3567,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskArrayParams {
                 remove_tags: vec!["remove".to_string()],
                 ..default_array_params()
@@ -3563,7 +3575,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.tags(), &["keep"]);
     }
 
@@ -3582,7 +3594,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskArrayParams {
                 set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -3590,7 +3602,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(
             updated.definition_of_done(),
             &[
@@ -3615,7 +3627,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskArrayParams {
                 add_in_scope: vec!["c".to_string()],
                 remove_in_scope: vec!["a".to_string()],
@@ -3624,7 +3636,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert_eq!(updated.in_scope(), &["b", "c"]);
     }
 
@@ -3638,14 +3650,14 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(conn, task.id(), TaskStatus::Todo);
-        get_task(conn, task.id()).unwrap()
+        transition_to(conn, task.id().into(), TaskStatus::Todo);
+        get_task(conn, task.id().into()).unwrap()
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
         let task = create_task(conn, 1, &default_create_params(title)).unwrap();
-        transition_to(conn, task.id(), TaskStatus::Completed);
-        get_task(conn, task.id()).unwrap()
+        transition_to(conn, task.id().into(), TaskStatus::Completed);
+        get_task(conn, task.id().into()).unwrap()
     }
 
     #[test]
@@ -3672,7 +3684,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, task.id(), TaskStatus::Todo);
+        transition_to(&conn, task.id().into(), TaskStatus::Todo);
 
         assert!(next_task(&conn, 1, None, false).unwrap().is_none());
     }
@@ -3733,7 +3745,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, task.id(), TaskStatus::Todo);
+        transition_to(&conn, task.id().into(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(result.title(), "ready");
@@ -3770,8 +3782,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id(), TaskStatus::Todo);
-        transition_to(&conn, t2.id(), TaskStatus::Todo);
+        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
+        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
         assert_eq!(result.title(), "user1-task");
@@ -3802,8 +3814,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id(), TaskStatus::Todo);
-        transition_to(&conn, t2.id(), TaskStatus::Todo);
+        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
+        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), true).unwrap().unwrap();
         assert_eq!(result.title(), "unassigned");
@@ -3832,8 +3844,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id(), TaskStatus::Todo);
-        transition_to(&conn, t2.id(), TaskStatus::Todo);
+        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
+        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
         assert_eq!(result.title(), "assigned");
@@ -3862,8 +3874,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id(), TaskStatus::Todo);
-        transition_to(&conn, t2.id(), TaskStatus::Todo);
+        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
+        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(result.title(), "unassigned");
@@ -3965,7 +3977,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id()).unwrap();
+        let loaded = get_task(&conn, t1.id().into()).unwrap();
         assert_eq!(loaded.dependencies().len(), 2);
         assert!(loaded.dependencies().contains(&t2.id()));
         assert!(loaded.dependencies().contains(&t3.id()));
@@ -3988,7 +4000,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id()).unwrap();
+        let loaded = get_task(&conn, t1.id().into()).unwrap();
         assert_eq!(loaded.dependencies(), &[t3.id()]);
     }
 
@@ -4008,7 +4020,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id()).unwrap();
+        let loaded = get_task(&conn, t1.id().into()).unwrap();
         assert!(loaded.dependencies().is_empty());
     }
 
@@ -4027,9 +4039,9 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id()).unwrap();
+        let deps = list_dependencies(&conn, t1.id().into()).unwrap();
         assert_eq!(deps.len(), 2);
-        let dep_ids: Vec<i64> = deps.iter().map(|t| t.id()).collect();
+        let dep_ids: Vec<TaskId> = deps.iter().map(|t| t.id()).collect();
         assert!(dep_ids.contains(&t2.id()));
         assert!(dep_ids.contains(&t3.id()));
     }
@@ -4039,7 +4051,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id()).unwrap();
+        let deps = list_dependencies(&conn, t1.id().into()).unwrap();
         assert!(deps.is_empty());
     }
 
@@ -4060,7 +4072,7 @@ mod tests {
 
         let updated = update_task(
             &conn,
-            task.id(),
+            task.id().into(),
             &UpdateTaskParams {
                 title: None,
                 background: Some(None), // clear it
@@ -4097,12 +4109,12 @@ mod tests {
         .unwrap();
 
         // Check first item via domain method + save
-        let task = get_task(&conn, task.id()).unwrap();
+        let task = get_task(&conn, task.id().into()).unwrap();
         let (task, _) = task
             .check_dod(1, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(!updated.definition_of_done()[1].checked());
 
@@ -4111,7 +4123,7 @@ mod tests {
             .check_dod(2, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
 
@@ -4120,7 +4132,7 @@ mod tests {
             .uncheck_dod(1, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id()).unwrap();
+        let updated = get_task(&conn, task.id().into()).unwrap();
         assert!(!updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
     }
@@ -4681,14 +4693,14 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
 
         let free = make_todo(&conn, "free", Some(Priority::P1));
 
         let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> =
+        let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
@@ -4716,7 +4728,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
 
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
@@ -4724,7 +4736,7 @@ mod tests {
         let sql_ready = list_ready_tasks(&conn, 1).unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> =
+        let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
@@ -4732,8 +4744,8 @@ mod tests {
             .collect();
         let domain_ready = crate::domain::task::filter_ready(todo_tasks, &dep_statuses);
 
-        let mut sql_ids: Vec<i64> = sql_ready.iter().map(|t| t.id()).collect();
-        let mut domain_ids: Vec<i64> = domain_ready.iter().map(|t| t.id()).collect();
+        let mut sql_ids: Vec<TaskId> = sql_ready.iter().map(|t| t.id()).collect();
+        let mut domain_ids: Vec<TaskId> = domain_ready.iter().map(|t| t.id()).collect();
         sql_ids.sort();
         domain_ids.sort();
         assert_eq!(sql_ids, domain_ids);
@@ -4755,7 +4767,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id(), TaskStatus::Todo);
+        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
 
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
@@ -4763,7 +4775,7 @@ mod tests {
         let sql_count = ready_count(&conn, 1).unwrap();
 
         let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
-        let dep_statuses: HashMap<i64, TaskStatus> =
+        let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
             .into_iter()
@@ -4779,29 +4791,29 @@ mod tests {
     fn is_task_ready_true_for_todo_with_no_deps() {
         let (_tmp, conn) = setup();
         let t = make_todo(&conn, "free", None);
-        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(is_task_ready(&conn, 1, t.id().into()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_draft() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_in_progress() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
-        transition_to(&conn, t.id(), TaskStatus::InProgress);
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        transition_to(&conn, t.id().into(), TaskStatus::InProgress);
+        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_completed() {
         let (_tmp, conn) = setup();
         let t = make_completed(&conn, "done");
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
     }
 
     #[test]
@@ -4818,8 +4830,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id(), TaskStatus::Todo);
-        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
+        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
+        assert!(!is_task_ready(&conn, 1, blocked.id().into()).unwrap());
     }
 
     #[test]
@@ -4836,8 +4848,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, unblocked.id(), TaskStatus::Todo);
-        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
+        transition_to(&conn, unblocked.id().into(), TaskStatus::Todo);
+        assert!(is_task_ready(&conn, 1, unblocked.id().into()).unwrap());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::domain::task::{ListTasksFilter, Task};
+use crate::domain::task::{ListTasksFilter, Task, TaskId};
 
 /// Port trait for querying tasks.
 /// Separated from TaskRepository to keep the repository focused on
@@ -29,5 +29,5 @@ pub trait TaskQueryPort: Send + Sync {
     ///
     /// Must mirror the canonical definition in `crate::domain::task::Task::is_ready`.
     /// Returns `Ok(false)` if the task does not exist in the given project.
-    async fn is_task_ready(&self, project_id: i64, id: i64) -> Result<bool>;
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool>;
 }

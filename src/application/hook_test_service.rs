@@ -44,7 +44,7 @@ impl HookTestService {
         &self,
         project_id: i64,
         event_name: &str,
-        task_id: Option<i64>,
+        task_id: Option<crate::domain::task::TaskId>,
         dry_run: bool,
     ) -> Result<HookTestOutput> {
         // Build the envelope JSON
@@ -111,12 +111,16 @@ impl HookTestService {
     }
 
     /// Resolve the task for the hook test: fetch by ID or create a sample task.
-    async fn resolve_task(&self, project_id: i64, task_id: Option<i64>) -> Result<Task> {
+    async fn resolve_task(
+        &self,
+        project_id: i64,
+        task_id: Option<crate::domain::task::TaskId>,
+    ) -> Result<Task> {
         if let Some(id) = task_id {
             self.backend.get_task(project_id, id).await
         } else {
             Ok(Task::new(
-                0,
+                crate::domain::task::TaskId(0),
                 project_id,
                 "Sample task".into(),
                 None,

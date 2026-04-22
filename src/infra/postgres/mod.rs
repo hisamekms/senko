@@ -18,8 +18,8 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, Project};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
+    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -218,18 +218,19 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
         .collect();
 
     // Fetch dependency task_numbers (not internal IDs)
-    let dependencies: Vec<i64> = sqlx::query(
+    let dependencies: Vec<TaskId> = sqlx::query(
         "SELECT t.task_number FROM task_dependencies td JOIN tasks t ON t.id = td.depends_on_task_id WHERE td.task_id = $1 ORDER BY td.id",
     )
     .bind(id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| r.get("task_number"))
+    .map(|r| TaskId(r.get::<i64, _>("task_number")))
     .collect();
 
+    let task_number: i64 = row.get("task_number");
     Ok(Task::new(
-        row.get("task_number"),
+        TaskId(task_number),
         row.get("project_id"),
         row.get("title"),
         row.get("background"),
@@ -808,7 +809,7 @@ impl TaskRepository for PostgresBackend {
 
         if let Some(ref branch) = params.branch {
             if branch.contains("${task_id}") {
-                let expanded = task::expand_branch_template(branch, task_number);
+                let expanded = task::expand_branch_template(branch, TaskId(task_number));
                 sqlx::query("UPDATE tasks SET branch = $1 WHERE id = $2")
                     .bind(&expanded)
                     .bind(task_id)
@@ -847,7 +848,7 @@ impl TaskRepository for PostgresBackend {
         }
         for &dep_task_number in &params.dependencies {
             let dep_internal_id =
-                resolve_task_number(&mut *tx, project_id, dep_task_number).await?;
+                resolve_task_number(&mut *tx, project_id, dep_task_number.into()).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -861,7 +862,8 @@ impl TaskRepository for PostgresBackend {
         get_task_by_id(pool, task_id).await
     }
 
-    async fn get_task(&self, project_id: i64, id: i64) -> Result<Task> {
+    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+        let id: i64 = id.into();
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, id).await?;
         get_task_by_id(pool, internal_id).await
@@ -870,9 +872,10 @@ impl TaskRepository for PostgresBackend {
     async fn update_task(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
+        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
 
@@ -1027,9 +1030,10 @@ impl TaskRepository for PostgresBackend {
     async fn update_task_arrays(
         &self,
         project_id: i64,
-        id: i64,
+        id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
+        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
 
@@ -1123,7 +1127,8 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn delete_task(&self, project_id: i64, id: i64) -> Result<()> {
+    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
         let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
@@ -1136,7 +1141,8 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: i64) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+        let task_id: i64 = task_id.into();
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
         get_task_by_id(pool, internal_id).await?;
@@ -1164,7 +1170,8 @@ impl TaskRepository for PostgresBackend {
             .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
 
         let mut tx = pool.begin().await?;
-        let internal_id = resolve_task_number(&mut *tx, task.project_id(), task.id()).await?;
+        let internal_id =
+            resolve_task_number(&mut *tx, task.project_id(), task.id().into()).await?;
 
         sqlx::query(
             "UPDATE tasks SET
@@ -1221,7 +1228,7 @@ impl TaskRepository for PostgresBackend {
             .await?;
         for &dep_task_number in task.dependencies() {
             let dep_internal_id =
-                resolve_task_number(&mut *tx, task.project_id(), dep_task_number).await?;
+                resolve_task_number(&mut *tx, task.project_id(), dep_task_number.into()).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -1297,7 +1304,7 @@ impl TaskQueryPort for PostgresBackend {
             conditions.push(format!(
                 "EXISTS (SELECT 1 FROM task_dependencies td WHERE td.task_id = t.id AND td.depends_on_task_id = ${param_idx})"
             ));
-            binds.push(BindVal::Int(dep_id));
+            binds.push(BindVal::Int(dep_id.into()));
             param_idx += 1;
         }
 
@@ -1309,13 +1316,13 @@ impl TaskQueryPort for PostgresBackend {
 
         if let Some(id_min) = filter.id_min {
             conditions.push(format!("t.id >= ${param_idx}"));
-            binds.push(BindVal::Int(id_min));
+            binds.push(BindVal::Int(id_min.into()));
             param_idx += 1;
         }
 
         if let Some(id_max) = filter.id_max {
             conditions.push(format!("t.id <= ${param_idx}"));
-            binds.push(BindVal::Int(id_max));
+            binds.push(BindVal::Int(id_max.into()));
             param_idx += 1;
         }
 
@@ -1481,7 +1488,8 @@ impl TaskQueryPort for PostgresBackend {
 
     /// Matches by public `task_number` (not internal DB id) — see
     /// `TaskQueryPort::is_task_ready` doc.
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+        let task_number: i64 = id.into();
         let pool = self.pool().await?;
         let row: Option<(i32,)> = sqlx::query_as(
             "SELECT 1 FROM tasks t
@@ -1733,7 +1741,14 @@ async fn get_contract_by_id(pool: &PgPool, id: i64) -> Result<Contract> {
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| ContractNote::new(r.get("content"), r.get("source_task_id"), r.get("created_at")))
+    .map(|r| {
+        let source_task_id: Option<i64> = r.get("source_task_id");
+        ContractNote::new(
+            r.get("content"),
+            source_task_id.map(TaskId),
+            r.get("created_at"),
+        )
+    })
     .collect();
 
     Ok(Contract::new(
@@ -1974,7 +1989,7 @@ impl ContractRepository for PostgresBackend {
         )
         .bind(contract_id)
         .bind(note.content())
-        .bind(note.source_task_id())
+        .bind(note.source_task_id().map(i64::from))
         .bind(note.created_at())
         .execute(&mut *tx)
         .await?;
@@ -2304,7 +2319,7 @@ mod tests {
         assert!(!backend.is_task_ready(1, blocked.id()).await.unwrap());
 
         // Missing task → false
-        assert!(!backend.is_task_ready(1, 999_999).await.unwrap());
+        assert!(!backend.is_task_ready(1, TaskId(999_999)).await.unwrap());
     }
 
     #[tokio::test]

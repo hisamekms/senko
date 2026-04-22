@@ -82,9 +82,13 @@ pub fn validate_string_vec_items(
 /// Performs BFS from dep_id following its dependencies; if task_id is reachable, it's a cycle.
 ///
 /// `get_dependencies` returns the dependency IDs for a given task.
-pub fn has_cycle<F>(task_id: i64, dep_id: i64, get_dependencies: F) -> bool
+pub fn has_cycle<F>(
+    task_id: crate::domain::task::TaskId,
+    dep_id: crate::domain::task::TaskId,
+    get_dependencies: F,
+) -> bool
 where
-    F: Fn(i64) -> Vec<i64>,
+    F: Fn(crate::domain::task::TaskId) -> Vec<crate::domain::task::TaskId>,
 {
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
@@ -105,10 +109,14 @@ where
 }
 
 /// Async version of cycle detection for use in the application layer.
-pub async fn has_cycle_async<F, Fut>(task_id: i64, dep_id: i64, get_dependencies: F) -> bool
+pub async fn has_cycle_async<F, Fut>(
+    task_id: crate::domain::task::TaskId,
+    dep_id: crate::domain::task::TaskId,
+    get_dependencies: F,
+) -> bool
 where
-    F: Fn(i64) -> Fut,
-    Fut: std::future::Future<Output = Vec<i64>>,
+    F: Fn(crate::domain::task::TaskId) -> Fut,
+    Fut: std::future::Future<Output = Vec<crate::domain::task::TaskId>>,
 {
     let mut visited = HashSet::new();
     let mut queue = VecDeque::new();
@@ -160,7 +168,7 @@ pub fn validate_metadata(value: &serde_json::Value) -> Result<(), DomainError> {
 pub fn validate_metadata_on_complete(
     task_metadata: Option<&serde_json::Value>,
     fields: &[MetadataField],
-    task_id: i64,
+    task_id: crate::domain::task::TaskId,
 ) -> Result<(), DomainError> {
     let required: Vec<&MetadataField> =
         fields.iter().filter(|f| f.required_on_complete()).collect();
@@ -311,37 +319,43 @@ mod tests {
         assert!(validate_string_vec_items("tags", &[], MAX_TAG_LEN, MAX_TAGS_COUNT).is_ok());
     }
 
-    fn make_graph(edges: &[(i64, Vec<i64>)]) -> impl Fn(i64) -> Vec<i64> + '_ {
+    use crate::domain::task::TaskId;
+
+    fn make_graph(edges: &[(i64, Vec<i64>)]) -> impl Fn(TaskId) -> Vec<TaskId> + '_ {
         let map: HashMap<i64, &Vec<i64>> = edges.iter().map(|(k, v)| (*k, v)).collect();
-        move |id| map.get(&id).map(|v| v.to_vec()).unwrap_or_default()
+        move |id: TaskId| {
+            map.get(&id.into())
+                .map(|v| v.iter().copied().map(TaskId).collect())
+                .unwrap_or_default()
+        }
     }
 
     #[test]
     fn no_cycle_linear_chain() {
         // 1 -> 2 -> 3, adding 4 depends on 3
         let edges = [(3, vec![2]), (2, vec![1]), (1, vec![])];
-        assert!(!has_cycle(4, 3, make_graph(&edges)));
+        assert!(!has_cycle(TaskId(4), TaskId(3), make_graph(&edges)));
     }
 
     #[test]
     fn direct_cycle() {
         // 1 -> 2, adding 2 depends on 1 would create: 2 -> 1 -> 2
         let edges = [(1, vec![2]), (2, vec![])];
-        assert!(has_cycle(2, 1, make_graph(&edges)));
+        assert!(has_cycle(TaskId(2), TaskId(1), make_graph(&edges)));
     }
 
     #[test]
     fn indirect_cycle() {
         // 1 -> 2 -> 3, adding 3 depends on 1 would create: 3 -> 1 -> 2 -> 3
         let edges = [(1, vec![2]), (2, vec![3]), (3, vec![])];
-        assert!(has_cycle(3, 1, make_graph(&edges)));
+        assert!(has_cycle(TaskId(3), TaskId(1), make_graph(&edges)));
     }
 
     #[test]
     fn diamond_no_cycle() {
         // 1 -> 2, 1 -> 3, 2 -> 4, 3 -> 4, adding 5 depends on 4
         let edges = [(4, vec![2, 3]), (2, vec![1]), (3, vec![1]), (1, vec![])];
-        assert!(!has_cycle(5, 4, make_graph(&edges)));
+        assert!(!has_cycle(TaskId(5), TaskId(4), make_graph(&edges)));
     }
 
     #[test]
@@ -349,13 +363,13 @@ mod tests {
         // has_cycle doesn't check self-dependency (task_id == dep_id);
         // that's validated separately at the call site
         let edges = [(1, vec![])];
-        assert!(!has_cycle(1, 1, make_graph(&edges)));
+        assert!(!has_cycle(TaskId(1), TaskId(1), make_graph(&edges)));
     }
 
     #[test]
     fn no_dependencies_no_cycle() {
         let edges: [(i64, Vec<i64>); 0] = [];
-        assert!(!has_cycle(2, 1, make_graph(&edges)));
+        assert!(!has_cycle(TaskId(2), TaskId(1), make_graph(&edges)));
     }
 
     // --- metadata validation tests ---
@@ -443,13 +457,13 @@ mod tests {
 
     #[test]
     fn complete_no_required_fields() {
-        assert!(validate_metadata_on_complete(None, &[], 1).is_ok());
+        assert!(validate_metadata_on_complete(None, &[], TaskId(1)).is_ok());
     }
 
     #[test]
     fn complete_no_required_fields_with_optional() {
         let fields = vec![make_field("notes", MetadataFieldType::String, false)];
-        assert!(validate_metadata_on_complete(None, &fields, 1).is_ok());
+        assert!(validate_metadata_on_complete(None, &fields, TaskId(1)).is_ok());
     }
 
     #[test]
@@ -460,13 +474,13 @@ mod tests {
             make_field("reviewed", MetadataFieldType::Boolean, true),
         ];
         let meta = serde_json::json!({"sprint": "v1", "points": 5, "reviewed": true});
-        assert!(validate_metadata_on_complete(Some(&meta), &fields, 1).is_ok());
+        assert!(validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).is_ok());
     }
 
     #[test]
     fn complete_required_field_missing_no_metadata() {
         let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
-        let err = validate_metadata_on_complete(None, &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(None, &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("sprint"),
@@ -478,7 +492,7 @@ mod tests {
     fn complete_required_field_missing_empty_metadata() {
         let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
         let meta = serde_json::json!({});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("sprint"),
@@ -492,7 +506,7 @@ mod tests {
             make_field("sprint", MetadataFieldType::String, true),
             make_field("points", MetadataFieldType::Number, true),
         ];
-        let err = validate_metadata_on_complete(None, &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(None, &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("sprint"), "should mention sprint: {msg}");
         assert!(msg.contains("points"), "should mention points: {msg}");
@@ -502,7 +516,7 @@ mod tests {
     fn complete_type_mismatch_string_got_number() {
         let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
         let meta = serde_json::json!({"sprint": 42});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("sprint"), "should mention field name: {msg}");
         assert!(
@@ -515,7 +529,7 @@ mod tests {
     fn complete_type_mismatch_number_got_string() {
         let fields = vec![make_field("points", MetadataFieldType::Number, true)];
         let meta = serde_json::json!({"points": "five"});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("points"), "should mention field name: {msg}");
         assert!(
@@ -528,7 +542,7 @@ mod tests {
     fn complete_type_mismatch_boolean_got_string() {
         let fields = vec![make_field("done", MetadataFieldType::Boolean, true)];
         let meta = serde_json::json!({"done": "yes"});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(msg.contains("done"), "should mention field name: {msg}");
         assert!(
@@ -544,14 +558,14 @@ mod tests {
             make_field("notes", MetadataFieldType::String, false),
         ];
         let meta = serde_json::json!({"sprint": "v1"});
-        assert!(validate_metadata_on_complete(Some(&meta), &fields, 1).is_ok());
+        assert!(validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).is_ok());
     }
 
     #[test]
     fn complete_null_value_treated_as_missing() {
         let fields = vec![make_field("sprint", MetadataFieldType::String, true)];
         let meta = serde_json::json!({"sprint": null});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("sprint"),
@@ -566,7 +580,7 @@ mod tests {
             make_field("points", MetadataFieldType::Number, true),
         ];
         let meta = serde_json::json!({"points": "not a number"});
-        let err = validate_metadata_on_complete(Some(&meta), &fields, 1).unwrap_err();
+        let err = validate_metadata_on_complete(Some(&meta), &fields, TaskId(1)).unwrap_err();
         let msg = err.to_string();
         assert!(
             msg.contains("sprint"),

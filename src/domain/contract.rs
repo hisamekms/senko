@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
-use super::task::{DodItem, MetadataUpdate, shallow_merge_metadata};
+use super::task::{DodItem, MetadataUpdate, TaskId, shallow_merge_metadata};
 use super::validator::{
     MAX_ITEMS_COUNT, MAX_LONG_TEXT_LEN, MAX_SHORT_TEXT_LEN, MAX_TAG_LEN, MAX_TAGS_COUNT,
     MAX_TITLE_LEN, validate_metadata, validate_optional_nullable_string_length,
@@ -29,12 +29,12 @@ pub enum ContractEvent {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContractNote {
     content: String,
-    source_task_id: Option<i64>,
+    source_task_id: Option<TaskId>,
     created_at: String,
 }
 
 impl ContractNote {
-    pub fn new(content: String, source_task_id: Option<i64>, created_at: String) -> Self {
+    pub fn new(content: String, source_task_id: Option<TaskId>, created_at: String) -> Self {
         Self {
             content,
             source_task_id,
@@ -46,7 +46,7 @@ impl ContractNote {
         &self.content
     }
 
-    pub fn source_task_id(&self) -> Option<i64> {
+    pub fn source_task_id(&self) -> Option<TaskId> {
         self.source_task_id
     }
 
@@ -449,11 +449,11 @@ mod tests {
     fn contract_note_new_and_getters() {
         let note = ContractNote::new(
             "hello".to_string(),
-            Some(42),
+            Some(TaskId(42)),
             "2026-01-02T00:00:00Z".to_string(),
         );
         assert_eq!(note.content(), "hello");
-        assert_eq!(note.source_task_id(), Some(42));
+        assert_eq!(note.source_task_id(), Some(TaskId(42)));
         assert_eq!(note.created_at(), "2026-01-02T00:00:00Z");
     }
 
@@ -479,7 +479,11 @@ mod tests {
 
     #[test]
     fn contract_note_serde_roundtrip() {
-        let note = ContractNote::new("n".to_string(), Some(9), "2026-01-01T00:00:00Z".to_string());
+        let note = ContractNote::new(
+            "n".to_string(),
+            Some(TaskId(9)),
+            "2026-01-01T00:00:00Z".to_string(),
+        );
         let json = serde_json::to_string(&note).unwrap();
         let parsed: ContractNote = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, note);
@@ -555,7 +559,7 @@ mod tests {
         let c = make_contract(vec![]);
         let note = ContractNote::new(
             "n".to_string(),
-            Some(10),
+            Some(TaskId(10)),
             "2026-01-02T00:00:00Z".to_string(),
         );
         let (c, events) = c.add_note(note.clone(), "2026-01-02T00:00:00Z".to_string());

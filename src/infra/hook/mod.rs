@@ -790,7 +790,7 @@ pub async fn fire(
                 event,
             };
             match serde_json::to_string(&envelope) {
-                Ok(s) => (s, event_id, Some(task.id())),
+                Ok(s) => (s, event_id, Some(task.id().into())),
                 Err(e) => {
                     eprintln!("hook serialize error ({event_name}): {e}");
                     return FireOutcome::Continue;
@@ -1088,7 +1088,7 @@ pub fn action_hooks<'a>(
 pub async fn compute_unblocked(
     backend: &dyn HookDataSource,
     project_id: i64,
-    prev_ready_ids: &std::collections::HashSet<i64>,
+    prev_ready_ids: &std::collections::HashSet<crate::domain::task::TaskId>,
 ) -> Vec<UnblockedTask> {
     let curr_ready = backend
         .list_ready_tasks(project_id)
@@ -1188,9 +1188,9 @@ mod tests {
 
     #[test]
     fn hook_event_serializes_is_ready_field() {
-        use crate::domain::task::{Priority, Task, TaskStatus};
+        use crate::domain::task::{Priority, Task, TaskId, TaskStatus};
         let task = Task::new(
-            1,
+            TaskId(1),
             1,
             "t".into(),
             None,

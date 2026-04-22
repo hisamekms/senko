@@ -30,8 +30,8 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskId,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
 use crate::infra::config::{CliOverrides, Config};
@@ -139,7 +139,7 @@ pub async fn cmd_add(
     in_scope: Vec<String>,
     out_of_scope: Vec<String>,
     tag: Vec<String>,
-    depends_on: Vec<i64>,
+    depends_on: Vec<TaskId>,
     branch: Option<String>,
     metadata: Option<String>,
     from_json: bool,
@@ -286,13 +286,13 @@ pub async fn cmd_list(
     cli: &Cli,
     status: Vec<String>,
     tag: Vec<String>,
-    depends_on: Option<i64>,
+    depends_on: Option<TaskId>,
     ready: bool,
     include_unassigned: bool,
     metadata: Vec<String>,
     contract: Option<i64>,
-    id_min: Option<i64>,
-    id_max: Option<i64>,
+    id_min: Option<TaskId>,
+    id_max: Option<TaskId>,
     limit: Option<u32>,
     offset: Option<u32>,
 ) -> Result<()> {
@@ -376,7 +376,7 @@ pub async fn cmd_list(
     Ok(())
 }
 
-pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
+pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -461,7 +461,7 @@ pub async fn cmd_get(cli: &Cli, task_id: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_publish(cli: &Cli, id: i64) -> Result<()> {
+pub async fn cmd_publish(cli: &Cli, id: TaskId) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -499,7 +499,7 @@ pub async fn cmd_publish(cli: &Cli, id: i64) -> Result<()> {
 
 pub async fn cmd_start(
     cli: &Cli,
-    id: i64,
+    id: TaskId,
     session_id: Option<String>,
     metadata: Option<String>,
 ) -> Result<()> {
@@ -629,7 +629,7 @@ pub async fn cmd_next(
     Ok(())
 }
 
-pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()> {
+pub async fn cmd_complete(cli: &Cli, id: TaskId, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -671,7 +671,7 @@ pub async fn cmd_complete(cli: &Cli, id: i64, skip_pr_check: bool) -> Result<()>
     Ok(())
 }
 
-pub async fn cmd_cancel(cli: &Cli, id: i64, reason: Option<String>) -> Result<()> {
+pub async fn cmd_cancel(cli: &Cli, id: TaskId, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
@@ -1259,7 +1259,7 @@ fn hooks_log_follow(log_path: &std::path::Path) -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 pub async fn cmd_edit(
     cli: &Cli,
-    id: i64,
+    id: TaskId,
     title: &Option<String>,
     background: &Option<String>,
     clear_background: bool,
@@ -2969,7 +2969,10 @@ mod tests {
             &crate::infra::xdg::XdgDirs::default(),
         )
         .unwrap();
-        let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
+        let task = backend
+            .get_task(DEFAULT_PROJECT_ID, crate::domain::task::TaskId(1))
+            .await
+            .unwrap();
         assert_eq!(task.title(), "test task");
         assert_eq!(task.background(), Some("bg"));
         assert_eq!(task.priority(), crate::domain::task::Priority::P1);
@@ -3041,7 +3044,10 @@ mod tests {
             &crate::infra::xdg::XdgDirs::default(),
         )
         .unwrap();
-        let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
+        let task = backend
+            .get_task(DEFAULT_PROJECT_ID, crate::domain::task::TaskId(1))
+            .await
+            .unwrap();
         assert_eq!(task.title(), "file task");
         assert_eq!(task.priority(), crate::domain::task::Priority::P0);
     }
@@ -3163,7 +3169,10 @@ mod tests {
             &crate::infra::xdg::XdgDirs::default(),
         )
         .unwrap();
-        let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
+        let task = backend
+            .get_task(DEFAULT_PROJECT_ID, crate::domain::task::TaskId(1))
+            .await
+            .unwrap();
         assert_eq!(task.title(), "my task");
     }
 
@@ -3225,7 +3234,10 @@ mod tests {
             &crate::infra::xdg::XdgDirs::default(),
         )
         .unwrap();
-        let task = backend.get_task(DEFAULT_PROJECT_ID, 1).await.unwrap();
+        let task = backend
+            .get_task(DEFAULT_PROJECT_ID, crate::domain::task::TaskId(1))
+            .await
+            .unwrap();
         assert_eq!(task.title(), "json out");
     }
 

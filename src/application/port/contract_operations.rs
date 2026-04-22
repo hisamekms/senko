@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use crate::domain::contract::{
     Contract, ContractNote, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
 };
+use crate::domain::task::TaskId;
 
 /// Application-level port that exposes all contract operations.
 ///
@@ -51,7 +52,7 @@ pub trait ContractOperations: Send + Sync {
         project_id: i64,
         contract_id: i64,
         content: String,
-        source_task_id: Option<i64>,
+        source_task_id: Option<TaskId>,
     ) -> Result<ContractNote>;
 
     async fn list_notes(&self, project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>>;

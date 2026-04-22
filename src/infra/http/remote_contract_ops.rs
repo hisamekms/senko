@@ -244,7 +244,7 @@ impl ContractOperations for RemoteContractOperations {
         project_id: i64,
         contract_id: i64,
         content: String,
-        source_task_id: Option<i64>,
+        source_task_id: Option<crate::domain::task::TaskId>,
     ) -> Result<ContractNote> {
         let trigger = HookTrigger::Contract(ContractEvent::NoteAdded);
         self.fire_pre(&trigger, None).await?;

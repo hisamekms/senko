@@ -196,7 +196,7 @@ impl ContractOperations for LocalContractOperations {
         _project_id: i64,
         contract_id: i64,
         content: String,
-        source_task_id: Option<i64>,
+        source_task_id: Option<crate::domain::task::TaskId>,
     ) -> Result<ContractNote> {
         let note = ContractNote::new(content, source_task_id, now_iso8601());
         note.validate()?;

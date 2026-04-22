@@ -4,7 +4,7 @@ use crate::application::{CompleteResult, PreviewResult};
 use crate::domain::contract::{Contract, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::Project;
-use crate::domain::task::{DodItem, Task};
+use crate::domain::task::{DodItem, Task, TaskId};
 use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User};
 use crate::infra::config::Config;
 
@@ -75,7 +75,7 @@ impl From<&DodItem> for DodItemResponse {
 
 #[derive(Serialize)]
 pub struct TaskResponse {
-    id: i64,
+    id: TaskId,
     project_id: i64,
     title: String,
     background: Option<String>,
@@ -99,7 +99,7 @@ pub struct TaskResponse {
     in_scope: Vec<String>,
     out_of_scope: Vec<String>,
     tags: Vec<String>,
-    dependencies: Vec<i64>,
+    dependencies: Vec<TaskId>,
 }
 
 impl From<Task> for TaskResponse {
@@ -143,7 +143,7 @@ impl From<Task> for TaskResponse {
 #[derive(Serialize)]
 pub struct ContractNoteResponse {
     content: String,
-    source_task_id: Option<i64>,
+    source_task_id: Option<TaskId>,
     created_at: String,
 }
 
@@ -209,7 +209,7 @@ pub struct DodItemViewModel {
 }
 
 pub struct TaskViewModel {
-    pub id: i64,
+    pub id: TaskId,
     pub title: String,
     pub status: String,
     pub priority: String,
@@ -230,7 +230,7 @@ pub struct TaskViewModel {
     pub definition_of_done: Vec<DodItemViewModel>,
     pub in_scope: Vec<String>,
     pub out_of_scope: Vec<String>,
-    pub dependencies: Vec<i64>,
+    pub dependencies: Vec<TaskId>,
 }
 
 impl From<Task> for TaskViewModel {
@@ -309,7 +309,7 @@ pub struct PreviewTransitionResponse {
 
 #[derive(Serialize, Deserialize)]
 pub struct UnblockedTaskInfo {
-    pub id: i64,
+    pub id: TaskId,
     pub title: String,
     pub status: String,
     pub priority: String,
@@ -639,9 +639,9 @@ mod tests {
     #[test]
     fn contract_response_from_domain_includes_is_completed_and_notes() {
         use crate::domain::contract::{Contract, ContractNote};
-        use crate::domain::task::DodItem;
+        use crate::domain::task::{DodItem, TaskId};
 
-        let note = ContractNote::new("n1".into(), Some(42), "2026-04-17T00:00:00Z".into());
+        let note = ContractNote::new("n1".into(), Some(TaskId(42)), "2026-04-17T00:00:00Z".into());
         let contract = Contract::new(
             7,
             1,
@@ -700,8 +700,9 @@ mod tests {
     fn task_response_includes_contract_id() {
         use crate::domain::task::{Priority, Task, TaskStatus};
 
+        use crate::domain::task::TaskId;
         let task = Task::new(
-            1,              // id
+            TaskId(1),      // id
             1,              // project_id
             "title".into(), // title
             None,           // background

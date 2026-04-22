@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::domain::task::Priority;
+use crate::domain::task::{Priority, TaskId};
 use crate::domain::user::Role;
 use crate::infra::config::CliOverrides;
 
@@ -202,7 +202,7 @@ pub enum TaskAction {
         #[arg(long)]
         tag: Vec<String>,
         #[arg(long)]
-        depends_on: Vec<i64>,
+        depends_on: Vec<TaskId>,
         /// Git branch name (supports ${task_id} template)
         #[arg(long)]
         branch: Option<String>,
@@ -229,7 +229,7 @@ pub enum TaskAction {
         tag: Vec<String>,
         /// Filter by dependency (show tasks that depend on this task ID)
         #[arg(long)]
-        depends_on: Option<i64>,
+        depends_on: Option<TaskId>,
         /// Show only ready tasks (todo with all deps completed)
         #[arg(long)]
         ready: bool,
@@ -244,10 +244,10 @@ pub enum TaskAction {
         contract: Option<i64>,
         /// Minimum task ID (inclusive)
         #[arg(long)]
-        id_min: Option<i64>,
+        id_min: Option<TaskId>,
         /// Maximum task ID (inclusive)
         #[arg(long)]
-        id_max: Option<i64>,
+        id_max: Option<TaskId>,
         /// Maximum number of results (default 50, range 1..=200)
         #[arg(long)]
         limit: Option<u32>,
@@ -258,7 +258,7 @@ pub enum TaskAction {
     /// Get task details
     Get {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
     },
     /// Show the next task to work on
     Next {
@@ -274,12 +274,12 @@ pub enum TaskAction {
     /// Transition a task from draft to todo
     Publish {
         /// Task ID
-        id: i64,
+        id: TaskId,
     },
     /// Transition a task from todo to in_progress
     Start {
         /// Task ID
-        id: i64,
+        id: TaskId,
         #[arg(long)]
         session_id: Option<String>,
         /// JSON string to set as task metadata
@@ -289,7 +289,7 @@ pub enum TaskAction {
     /// Edit a task
     Edit {
         /// Task ID
-        id: i64,
+        id: TaskId,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -370,7 +370,7 @@ pub enum TaskAction {
     /// Mark a task as complete
     Complete {
         /// Task ID
-        id: i64,
+        id: TaskId,
         /// Skip PR merge/review verification
         #[arg(long)]
         skip_pr_check: bool,
@@ -378,7 +378,7 @@ pub enum TaskAction {
     /// Cancel a task
     Cancel {
         /// Task ID
-        id: i64,
+        id: TaskId,
         /// Cancellation reason
         #[arg(long)]
         reason: Option<String>,
@@ -505,7 +505,7 @@ pub enum ContractNoteCommand {
         content: String,
         /// Optional task ID that produced this note
         #[arg(long)]
-        source_task: Option<i64>,
+        source_task: Option<TaskId>,
     },
     /// List notes on a contract
     List {
@@ -563,7 +563,7 @@ pub enum HooksCommand {
         /// Event name (task_add, task_publish, task_start, task_complete, task_cancel, task_select, contract_add, contract_edit, contract_delete, contract_dod_check, contract_dod_uncheck, contract_note_add)
         event_name: String,
         /// Task ID to use for building the event (uses a sample task if omitted)
-        task_id: Option<i64>,
+        task_id: Option<TaskId>,
         /// Show event JSON without executing hooks
         #[arg(long)]
         dry_run: bool,
@@ -575,31 +575,31 @@ pub enum TaskDepsCommand {
     /// Add a dependency
     Add {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
         /// Dependency task ID
         #[arg(long)]
-        on: i64,
+        on: TaskId,
     },
     /// Remove a dependency
     Remove {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
         /// Dependency task ID
         #[arg(long)]
-        on: i64,
+        on: TaskId,
     },
     /// Replace all dependencies
     Set {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
         /// Dependency task IDs
         #[arg(long, num_args = 1..)]
-        on: Vec<i64>,
+        on: Vec<TaskId>,
     },
     /// List dependencies
     List {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
     },
 }
 
@@ -608,14 +608,14 @@ pub enum TaskDodCommand {
     /// Mark a DoD item as checked
     Check {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
         /// DoD item index (1-based)
         index: usize,
     },
     /// Unmark a DoD item
     Uncheck {
         /// Task ID
-        task_id: i64,
+        task_id: TaskId,
         /// DoD item index (1-based)
         index: usize,
     },
@@ -1305,7 +1305,7 @@ mod tests {
                 assert_eq!(in_scope, vec!["s1"]);
                 assert_eq!(out_of_scope, vec!["o1"]);
                 assert_eq!(tag, vec!["rust", "cli"]);
-                assert_eq!(depends_on, vec![1, 2]);
+                assert_eq!(depends_on, vec![TaskId(1), TaskId(2)]);
                 assert!(branch.is_none());
                 assert!(!from_json);
                 assert!(from_json_file.is_none());
@@ -1396,7 +1396,7 @@ mod tests {
             } => {
                 assert_eq!(status, vec!["todo", "in_progress"]);
                 assert_eq!(tag, vec!["rust", "web"]);
-                assert_eq!(depends_on, Some(3));
+                assert_eq!(depends_on, Some(TaskId(3)));
                 assert!(ready);
                 assert!(!include_unassigned);
                 assert!(metadata.is_empty());
@@ -1411,7 +1411,7 @@ mod tests {
         match cli.command {
             Command::Task {
                 action: TaskAction::Get { task_id },
-            } => assert_eq!(task_id, 42),
+            } => assert_eq!(task_id, TaskId(42)),
             _ => panic!("expected Get"),
         }
     }
@@ -1446,8 +1446,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Task {
-                action: TaskAction::Edit { id: 1, .. }
-            }
+                action: TaskAction::Edit { id, .. }
+            } if id == TaskId(1)
         ));
     }
 
@@ -1473,7 +1473,7 @@ mod tests {
                         ..
                     },
             } => {
-                assert_eq!(id, 5);
+                assert_eq!(id, TaskId(5));
                 assert_eq!(title.as_deref(), Some("new title"));
                 assert!(matches!(priority, Some(CliPriority::P0)));
             }
@@ -1487,7 +1487,7 @@ mod tests {
         match cli.command {
             Command::Task {
                 action: TaskAction::Publish { id },
-            } => assert_eq!(id, 3),
+            } => assert_eq!(id, TaskId(3)),
             _ => panic!("expected Publish"),
         }
     }
@@ -1499,7 +1499,7 @@ mod tests {
             Command::Task {
                 action: TaskAction::Start { id, session_id, .. },
             } => {
-                assert_eq!(id, 5);
+                assert_eq!(id, TaskId(5));
                 assert_eq!(session_id.as_deref(), Some("abc"));
             }
             _ => panic!("expected Start"),
@@ -1520,7 +1520,7 @@ mod tests {
             Command::Task {
                 action: TaskAction::Start { id, metadata, .. },
             } => {
-                assert_eq!(id, 5);
+                assert_eq!(id, TaskId(5));
                 assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
             }
             _ => panic!("expected Start"),
@@ -1568,7 +1568,7 @@ mod tests {
                         ..
                     },
             } => {
-                assert_eq!(id, 3);
+                assert_eq!(id, TaskId(3));
                 assert_eq!(add_tag, vec!["rust", "cli"]);
                 assert_eq!(remove_tag, vec!["old"]);
                 assert_eq!(set_in_scope, Some(vec!["a".to_string(), "b".to_string()]));
@@ -1630,8 +1630,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Task {
-                action: TaskAction::Complete { id: 1, .. }
-            }
+                action: TaskAction::Complete { id, .. }
+            } if id == TaskId(1)
         ));
     }
 
@@ -1641,8 +1641,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Task {
-                action: TaskAction::Cancel { id: 2, .. }
-            }
+                action: TaskAction::Cancel { id, .. }
+            } if id == TaskId(2)
         ));
     }
 
@@ -1660,7 +1660,7 @@ mod tests {
             Command::Task {
                 action: TaskAction::Cancel { id, reason },
             } => {
-                assert_eq!(id, 3);
+                assert_eq!(id, TaskId(3));
                 assert_eq!(reason.as_deref(), Some("no longer needed"));
             }
             _ => panic!("expected Cancel"),
@@ -1674,7 +1674,7 @@ mod tests {
             Command::Task {
                 action: TaskAction::Cancel { id, reason },
             } => {
-                assert_eq!(id, 4);
+                assert_eq!(id, TaskId(4));
                 assert!(reason.is_none());
             }
             _ => panic!("expected Cancel"),
@@ -1691,8 +1691,8 @@ mod tests {
                         command: TaskDepsCommand::Add { task_id, on },
                     },
             } => {
-                assert_eq!(task_id, 1);
-                assert_eq!(on, 2);
+                assert_eq!(task_id, TaskId(1));
+                assert_eq!(on, TaskId(2));
             }
             _ => panic!("expected Deps Add"),
         }
@@ -1708,8 +1708,8 @@ mod tests {
                         command: TaskDepsCommand::Remove { task_id, on },
                     },
             } => {
-                assert_eq!(task_id, 3);
-                assert_eq!(on, 4);
+                assert_eq!(task_id, TaskId(3));
+                assert_eq!(on, TaskId(4));
             }
             _ => panic!("expected Deps Remove"),
         }
@@ -1725,8 +1725,8 @@ mod tests {
                         command: TaskDepsCommand::Set { task_id, on },
                     },
             } => {
-                assert_eq!(task_id, 1);
-                assert_eq!(on, vec![2, 3, 4]);
+                assert_eq!(task_id, TaskId(1));
+                assert_eq!(on, vec![TaskId(2), TaskId(3), TaskId(4)]);
             }
             _ => panic!("expected Deps Set"),
         }
@@ -1742,7 +1742,7 @@ mod tests {
                         command: TaskDepsCommand::List { task_id },
                     },
             } => {
-                assert_eq!(task_id, 5);
+                assert_eq!(task_id, TaskId(5));
             }
             _ => panic!("expected Deps List"),
         }
@@ -1758,7 +1758,7 @@ mod tests {
                         command: TaskDodCommand::Check { task_id, index },
                     },
             } => {
-                assert_eq!(task_id, 7);
+                assert_eq!(task_id, TaskId(7));
                 assert_eq!(index, 2);
             }
             _ => panic!("expected Dod Check"),
@@ -1775,7 +1775,7 @@ mod tests {
                         command: TaskDodCommand::Uncheck { task_id, index },
                     },
             } => {
-                assert_eq!(task_id, 7);
+                assert_eq!(task_id, TaskId(7));
                 assert_eq!(index, 2);
             }
             _ => panic!("expected Dod Uncheck"),
@@ -2023,7 +2023,7 @@ mod tests {
                         ..
                     },
             } => {
-                assert_eq!(id, 1);
+                assert_eq!(id, TaskId(1));
                 assert_eq!(assignee_user_id, Some("42".to_string()));
                 assert!(!clear_assignee_user_id);
             }
@@ -2044,7 +2044,7 @@ mod tests {
                         ..
                     },
             } => {
-                assert_eq!(id, 1);
+                assert_eq!(id, TaskId(1));
                 assert!(assignee_user_id.is_none());
                 assert!(clear_assignee_user_id);
             }
