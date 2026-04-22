@@ -417,8 +417,10 @@ pub async fn resolve_user_id(
 ) -> Result<crate::domain::user::UserId> {
     match config.user.name.as_deref() {
         Some(n) => {
+            let username = crate::domain::user::Username::try_from(n.to_string())
+                .with_context(|| format!("invalid user name in config: {n}"))?;
             let user = user_ops
-                .get_user_by_username(n)
+                .get_user_by_username(&username)
                 .await
                 .with_context(|| format!("user not found: {n}"))?;
             Ok(user.id())

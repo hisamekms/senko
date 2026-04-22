@@ -7,7 +7,7 @@ use crate::application::port::TaskBackend;
 use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User, UserId,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -38,7 +38,7 @@ impl UserOperations for UserService {
         self.backend.get_user(id).await
     }
 
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+    async fn get_user_by_username(&self, username: &Username) -> Result<User> {
         self.backend.get_user_by_username(username).await
     }
 
@@ -82,7 +82,7 @@ impl UserOperations for UserService {
     async fn get_or_create_user(
         &self,
         sub: &str,
-        username: &str,
+        username: &Username,
         display_name: Option<&str>,
         email: Option<&str>,
     ) -> Result<User> {
@@ -90,7 +90,7 @@ impl UserOperations for UserService {
             Ok(user) => Ok(user),
             Err(_) => {
                 let params = CreateUserParams {
-                    username: username.to_string(),
+                    username: username.clone(),
                     sub: Some(sub.to_string()),
                     display_name: display_name.map(String::from),
                     email: email.map(String::from),

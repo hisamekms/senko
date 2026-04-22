@@ -686,7 +686,7 @@ pub enum UserAction {
     /// Create a new user
     Create {
         #[arg(long)]
-        username: String,
+        username: crate::domain::user::Username,
         #[arg(long)]
         sub: Option<String>,
         #[arg(long)]
@@ -699,7 +699,7 @@ pub enum UserAction {
         /// User ID
         id: crate::domain::user::UserId,
         #[arg(long)]
-        username: Option<String>,
+        username: Option<crate::domain::user::Username>,
         #[arg(long)]
         display_name: Option<String>,
     },

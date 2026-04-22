@@ -50,7 +50,7 @@ impl AuthProvider for ApiKeyProvider {
             return Ok(AuthResult {
                 user: crate::domain::user::User::new(
                     crate::domain::user::UserId(0),
-                    "master".to_string(),
+                    crate::domain::user::Username("master".to_string()),
                     "master".to_string(),
                     None,
                     None,
@@ -385,9 +385,14 @@ impl AuthProvider for JwtAuthProvider {
                     .and_then(|v| v.as_str())
                     .map(String::from);
                 tracing::info!(sub = %sub, username = %username, "auto-provisioning user from OIDC claims");
+                let username = crate::domain::user::Username::try_from(username.to_string())
+                    .map_err(|e| {
+                        tracing::debug!(error = %e, "invalid username from OIDC claims");
+                        AuthError::InvalidToken
+                    })?;
                 self.backend
                     .create_user(&CreateUserParams {
-                        username: username.to_string(),
+                        username,
                         sub: Some(sub.to_string()),
                         display_name,
                         email,
@@ -520,6 +525,10 @@ impl TrustedHeadersAuthProvider {
             Ok(user) => user,
             Err(_) => {
                 tracing::info!(sub = %sub, username = %username, "auto-provisioning user from trusted headers");
+                let username = crate::domain::user::Username::try_from(username).map_err(|e| {
+                    tracing::debug!(error = %e, "invalid username from trusted headers");
+                    AuthError::InvalidToken
+                })?;
                 self.backend
                     .create_user(&CreateUserParams {
                         username,
@@ -552,14 +561,16 @@ impl TrustedHeadersAuthProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::user::{ApiKeyRepository, CreateUserParams, NewApiKey, UserRepository};
+    use crate::domain::user::{
+        ApiKeyRepository, CreateUserParams, NewApiKey, UserRepository, Username,
+    };
     use crate::infra::sqlite::SqliteBackend;
 
     async fn setup_backend_with_api_key() -> (Arc<SqliteBackend>, String) {
         let backend = SqliteBackend::new_in_memory().unwrap();
         let user = backend
             .create_user(&CreateUserParams {
-                username: "testuser".to_string(),
+                username: Username("testuser".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -715,7 +726,7 @@ mod tests {
         let backend: Arc<dyn TaskBackend> = Arc::new(SqliteBackend::new_in_memory().unwrap());
         backend
             .create_user(&CreateUserParams {
-                username: "existing".to_string(),
+                username: Username("existing".to_string()),
                 sub: None,
                 display_name: Some("Existing User".to_string()),
                 email: None,
@@ -908,7 +919,7 @@ mod tests {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let user = backend
             .create_user(&CreateUserParams {
-                username: "jwt-user".to_string(),
+                username: Username("jwt-user".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -1140,7 +1151,7 @@ mod tests {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         backend
             .create_user(&CreateUserParams {
-                username: "jwt-user".to_string(),
+                username: Username("jwt-user".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -1189,7 +1200,7 @@ mod tests {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         backend
             .create_user(&CreateUserParams {
-                username: "jwt-user".to_string(),
+                username: Username("jwt-user".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,

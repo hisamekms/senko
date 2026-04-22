@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
+use crate::domain::DEFAULT_USER_ID;
 use crate::domain::contract::{
     Contract, ContractId, ContractNote, ContractRepository, CreateContractParams,
     UpdateContractArrayParams, UpdateContractParams,
@@ -9,7 +10,6 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
-use crate::domain::DEFAULT_USER_ID;
 use crate::domain::project::{CreateProjectParams, DEFAULT_PROJECT_ID, Project, ProjectId};
 use crate::domain::task::{
     self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
@@ -18,7 +18,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User, UserId,
+    Role, UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::TaskDbId;
 use crate::infra::xdg::XdgDirs;
@@ -645,7 +645,7 @@ fn delete_project(conn: &Connection, id: ProjectId) -> Result<()> {
 // --- User CRUD ---
 
 fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
-    let effective_sub = params.sub.as_deref().unwrap_or(&params.username);
+    let effective_sub = params.sub.as_deref().unwrap_or(params.username.as_ref());
     conn.execute(
         "INSERT INTO users (username, sub, display_name, email) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![
@@ -661,7 +661,7 @@ fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
 
 fn get_user(conn: &Connection, id: UserId) -> Result<User> {
     let (username, sub, display_name, email, created_at): (
-        String,
+        Username,
         String,
         Option<String>,
         Option<String>,
@@ -692,7 +692,7 @@ fn get_user(conn: &Connection, id: UserId) -> Result<User> {
     ))
 }
 
-fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
+fn get_user_by_username(conn: &Connection, username: &Username) -> Result<User> {
     let (id, sub, display_name, email, created_at): (
         UserId,
         String,
@@ -717,7 +717,7 @@ fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
         .ok_or(DomainError::UserNotFound)?;
     Ok(User::new(
         id,
-        username.to_string(),
+        username.clone(),
         sub,
         display_name,
         email,
@@ -728,7 +728,7 @@ fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
 fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
     let (id, username, display_name, email, created_at): (
         UserId,
-        String,
+        Username,
         Option<String>,
         Option<String>,
         String,
@@ -1873,7 +1873,7 @@ fn update_project_name(conn: &Connection, id: ProjectId, name: &str) -> Result<(
     Ok(())
 }
 
-fn update_user_username(conn: &Connection, id: UserId, username: &str) -> Result<()> {
+fn update_user_username(conn: &Connection, id: UserId, username: &Username) -> Result<()> {
     conn.execute(
         "UPDATE users SET username = ?1 WHERE id = ?2",
         params![username, id],
@@ -2412,7 +2412,9 @@ impl SqliteBackend {
                 ))?;
         }
         if let Some(ref name) = config.user.name {
-            update_user_username(&conn, DEFAULT_USER_ID, name)
+            let username = Username::try_from(name.clone())
+                .with_context(|| format!("invalid user name '{name}' in config"))?;
+            update_user_username(&conn, DEFAULT_USER_ID, &username)
                 .with_context(|| format!(
                     "failed to sync user name '{name}' to default user (id=1): username may already be used by another user"
                 ))?;
@@ -2513,8 +2515,8 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_user(conn, id))
     }
 
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
-        let username = username.to_owned();
+    async fn get_user_by_username(&self, username: &Username) -> Result<User> {
+        let username = username.clone();
         blocking!(self, |conn: &Connection| get_user_by_username(
             conn, &username
         ))
@@ -3912,7 +3914,7 @@ mod tests {
         let user2 = create_user(
             &conn,
             &CreateUserParams {
-                username: "user2".to_string(),
+                username: Username("user2".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -4065,7 +4067,7 @@ mod tests {
         let user2 = create_user(
             &conn,
             &CreateUserParams {
-                username: "user2".to_string(),
+                username: Username("user2".to_string()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -4635,7 +4637,7 @@ mod tests {
         let backend = mem_backend();
         let user = backend
             .create_user(&CreateUserParams {
-                username: "alice".into(),
+                username: Username("alice".into()),
                 sub: None,
                 display_name: Some("Alice".into()),
                 email: Some("alice@example.com".into()),
@@ -4650,7 +4652,10 @@ mod tests {
         assert_eq!(got.email(), Some("alice@example.com"));
         assert_eq!(got.sub(), "alice");
 
-        let by_name = backend.get_user_by_username("alice").await.unwrap();
+        let by_name = backend
+            .get_user_by_username(&Username("alice".into()))
+            .await
+            .unwrap();
         assert_eq!(by_name.id(), user.id());
 
         let by_sub = backend.get_user_by_sub("alice").await.unwrap();
@@ -4668,7 +4673,7 @@ mod tests {
         let backend = mem_backend();
         let user = backend
             .create_user(&CreateUserParams {
-                username: "bob".into(),
+                username: Username("bob".into()),
                 sub: None,
                 display_name: None,
                 email: None,
@@ -5319,7 +5324,7 @@ mod tests {
         let user = create_user(
             &conn,
             &CreateUserParams {
-                username: "alice".to_string(),
+                username: Username("alice".to_string()),
                 sub: None,
                 display_name: Some("Alice".to_string()),
                 email: Some("alice@example.com".to_string()),
@@ -5334,7 +5339,7 @@ mod tests {
             &conn,
             user.id(),
             &UpdateUserParams {
-                username: Some("alice2".to_string()),
+                username: Some(Username("alice2".to_string())),
                 display_name: None,
             },
         )
@@ -5373,7 +5378,7 @@ mod tests {
             &conn,
             UserId(9999),
             &UpdateUserParams {
-                username: Some("ghost".to_string()),
+                username: Some(Username("ghost".to_string())),
                 display_name: None,
             },
         );

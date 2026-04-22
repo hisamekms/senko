@@ -24,7 +24,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User, UserId,
+    Role, UpdateUserParams, User, UserId, Username,
 };
 use crate::domain::{
     ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
@@ -463,7 +463,7 @@ impl ProjectMemberRepository for PostgresBackend {
 impl UserRepository for PostgresBackend {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let pool = self.pool().await?;
-        let effective_sub = params.sub.as_deref().unwrap_or(&params.username);
+        let effective_sub = params.sub.as_deref().unwrap_or(params.username.as_ref());
         let row = sqlx::query(
             "INSERT INTO users (username, sub, display_name, email) VALUES ($1, $2, $3, $4) RETURNING id, created_at",
         )
@@ -494,7 +494,7 @@ impl UserRepository for PostgresBackend {
         .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             id,
-            row.get("username"),
+            row.get::<Username, _>("username"),
             row.get("sub"),
             row.get("display_name"),
             row.get("email"),
@@ -502,7 +502,7 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+    async fn get_user_by_username(&self, username: &Username) -> Result<User> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT id, sub, display_name, email, created_at FROM users WHERE username = $1",
@@ -513,7 +513,7 @@ impl UserRepository for PostgresBackend {
         .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             row.get("id"),
-            username.to_string(),
+            username.clone(),
             row.get("sub"),
             row.get("display_name"),
             row.get("email"),
@@ -532,7 +532,7 @@ impl UserRepository for PostgresBackend {
         .ok_or(DomainError::UserNotFound)?;
         Ok(User::new(
             row.get("id"),
-            row.get("username"),
+            row.get::<Username, _>("username"),
             sub.to_string(),
             row.get("display_name"),
             row.get("email"),
@@ -579,7 +579,7 @@ impl UserRepository for PostgresBackend {
 
         Ok(User::new(
             row.get("id"),
-            row.get("username"),
+            row.get::<Username, _>("username"),
             row.get("sub"),
             row.get("display_name"),
             row.get("email"),
@@ -743,7 +743,7 @@ impl UserQueryPort for PostgresBackend {
             .map(|r| {
                 User::new(
                     r.get("id"),
-                    r.get("username"),
+                    r.get::<Username, _>("username"),
                     r.get("sub"),
                     r.get("display_name"),
                     r.get("email"),
@@ -2440,7 +2440,7 @@ mod tests {
 
         let user = backend
             .create_user(&CreateUserParams {
-                username: "testuser".to_string(),
+                username: Username("testuser".to_string()),
                 sub: None,
                 display_name: Some("Test User".to_string()),
                 email: Some("test@example.com".to_string()),
@@ -2453,7 +2453,10 @@ mod tests {
         let fetched = backend.get_user(user.id()).await.unwrap();
         assert_eq!(fetched.username(), "testuser");
 
-        let by_name = backend.get_user_by_username("testuser").await.unwrap();
+        let by_name = backend
+            .get_user_by_username(&Username("testuser".to_string()))
+            .await
+            .unwrap();
         assert_eq!(by_name.id(), user.id());
 
         backend.delete_user(user.id()).await.unwrap();

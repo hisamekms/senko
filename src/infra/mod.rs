@@ -178,3 +178,42 @@ impl<'r> sqlx::Decode<'r, sqlx::Postgres> for crate::domain::user::UserId {
         <i64 as sqlx::Decode<'r, sqlx::Postgres>>::decode(value).map(crate::domain::user::UserId)
     }
 }
+
+impl rusqlite::ToSql for crate::domain::user::Username {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        self.0.to_sql()
+    }
+}
+
+impl rusqlite::types::FromSql for crate::domain::user::Username {
+    fn column_result(value: rusqlite::types::ValueRef<'_>) -> rusqlite::types::FromSqlResult<Self> {
+        String::column_result(value).map(crate::domain::user::Username)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl sqlx::Type<sqlx::Postgres> for crate::domain::user::Username {
+    fn type_info() -> <sqlx::Postgres as sqlx::Database>::TypeInfo {
+        <String as sqlx::Type<sqlx::Postgres>>::type_info()
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'q> sqlx::Encode<'q, sqlx::Postgres> for crate::domain::user::Username {
+    fn encode_by_ref(
+        &self,
+        buf: &mut <sqlx::Postgres as sqlx::Database>::ArgumentBuffer<'q>,
+    ) -> Result<sqlx::encode::IsNull, sqlx::error::BoxDynError> {
+        <String as sqlx::Encode<'q, sqlx::Postgres>>::encode_by_ref(&self.0, buf)
+    }
+}
+
+#[cfg(feature = "postgres")]
+impl<'r> sqlx::Decode<'r, sqlx::Postgres> for crate::domain::user::Username {
+    fn decode(
+        value: <sqlx::Postgres as sqlx::Database>::ValueRef<'r>,
+    ) -> Result<Self, sqlx::error::BoxDynError> {
+        <String as sqlx::Decode<'r, sqlx::Postgres>>::decode(value)
+            .map(crate::domain::user::Username)
+    }
+}

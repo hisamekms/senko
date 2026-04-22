@@ -1703,7 +1703,7 @@ async fn get_user(
 // PUT /api/v1/users/{user_id}
 #[derive(Deserialize)]
 struct UpdateUserBody {
-    username: Option<String>,
+    username: Option<crate::domain::user::Username>,
     display_name: Option<Option<String>>,
 }
 

@@ -1,7 +1,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::domain::user::{ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User, UserId};
+use crate::domain::user::{
+    ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User, UserId, Username,
+};
 use crate::infra::config::SessionConfig;
 
 /// Application-level port that exposes all user operations.
@@ -16,7 +18,7 @@ pub trait UserOperations: Send + Sync {
     async fn list_users(&self) -> Result<Vec<User>>;
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: UserId) -> Result<User>;
-    async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn get_user_by_username(&self, username: &Username) -> Result<User>;
     async fn get_user_by_sub(&self, sub: &str) -> Result<User>;
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User>;
     async fn delete_user(&self, id: UserId) -> Result<()>;
@@ -37,7 +39,7 @@ pub trait UserOperations: Send + Sync {
     async fn get_or_create_user(
         &self,
         sub: &str,
-        username: &str,
+        username: &Username,
         display_name: Option<&str>,
         email: Option<&str>,
     ) -> Result<User>;

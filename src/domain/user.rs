@@ -3,12 +3,13 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::error::DomainError;
 use super::project::ProjectId;
+use super::validator::{MAX_USERNAME_LEN, validate_string_length};
 
 /// Newtype wrapper around the user identifier.
 ///
@@ -53,6 +54,98 @@ impl From<UserId> for i64 {
     }
 }
 
+/// Newtype wrapper around a user's login name.
+///
+/// Wraps `String` with `#[serde(transparent)]` so the JSON wire format stays a
+/// bare string (e.g. `"alice"`). Every `Username` in memory is guaranteed
+/// non-empty after trimming and at most [`MAX_USERNAME_LEN`] characters long —
+/// construction via `FromStr` / `TryFrom<String>` enforces the invariant, and
+/// the manual [`Deserialize`] impl runs the same validation so JSON inputs
+/// (HTTP bodies, config files) cannot bypass it.
+///
+/// DB reads skip the validation on purpose (see `src/infra/mod.rs`): rows were
+/// validated on write, and re-validating on read would cause historical data
+/// to surface as errors.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[serde(transparent)]
+pub struct Username(pub String);
+
+impl Username {
+    fn try_new(value: String) -> Result<Self, DomainError> {
+        if value.trim().is_empty() {
+            return Err(DomainError::ValidationError {
+                field: "username".to_string(),
+                message: "username must not be empty or whitespace".to_string(),
+            });
+        }
+        validate_string_length("username", &value, MAX_USERNAME_LEN)?;
+        Ok(Username(value))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for Username {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl AsRef<str> for Username {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl FromStr for Username {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Username::try_new(s.to_owned())
+    }
+}
+
+impl TryFrom<String> for Username {
+    type Error = DomainError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        Username::try_new(value)
+    }
+}
+
+impl From<Username> for String {
+    fn from(u: Username) -> String {
+        u.0
+    }
+}
+
+impl PartialEq<str> for Username {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Username {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl PartialEq<String> for Username {
+    fn eq(&self, other: &String) -> bool {
+        &self.0 == other
+    }
+}
+
+impl<'de> Deserialize<'de> for Username {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        Username::try_from(s).map_err(serde::de::Error::custom)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -91,7 +184,7 @@ impl FromStr for Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
     id: UserId,
-    username: String,
+    username: Username,
     #[serde(default)]
     sub: String,
     display_name: Option<String>,
@@ -102,7 +195,7 @@ pub struct User {
 impl User {
     pub fn new(
         id: UserId,
-        username: String,
+        username: Username,
         sub: String,
         display_name: Option<String>,
         email: Option<String>,
@@ -122,7 +215,7 @@ impl User {
         self.id
     }
 
-    pub fn username(&self) -> &str {
+    pub fn username(&self) -> &Username {
         &self.username
     }
 
@@ -145,7 +238,7 @@ impl User {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateUserParams {
-    pub username: String,
+    pub username: Username,
     #[serde(default)]
     pub sub: Option<String>,
     pub display_name: Option<String>,
@@ -155,7 +248,6 @@ pub struct CreateUserParams {
 impl CreateUserParams {
     pub fn validate(&self) -> Result<(), DomainError> {
         use super::validator::*;
-        validate_string_length("username", &self.username, MAX_USERNAME_LEN)?;
         validate_optional_string_length("display_name", &self.display_name, MAX_DISPLAY_NAME_LEN)?;
         Ok(())
     }
@@ -163,7 +255,7 @@ impl CreateUserParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateUserParams {
-    pub username: Option<String>,
+    pub username: Option<Username>,
     pub display_name: Option<Option<String>>,
 }
 
@@ -393,7 +485,7 @@ pub fn hash_api_key(key: &str) -> String {
 pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: UserId) -> Result<User>;
-    async fn get_user_by_username(&self, username: &str) -> Result<User>;
+    async fn get_user_by_username(&self, username: &Username) -> Result<User>;
     async fn get_user_by_sub(&self, sub: &str) -> Result<User>;
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User>;
     async fn delete_user(&self, id: UserId) -> Result<()>;

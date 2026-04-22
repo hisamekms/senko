@@ -1602,7 +1602,12 @@ mod tests {
         let task = make_task(TaskStatus::Todo);
         assert_eq!(task.assignee_user_id(), None);
         let (task, _) = task
-            .start(None, Some(UserId(5)), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(
+                None,
+                Some(UserId(5)),
+                "2026-01-02T00:00:00Z".to_string(),
+                None,
+            )
             .unwrap();
         assert_eq!(task.assignee_user_id(), Some(UserId(5)));
     }
@@ -1752,7 +1757,12 @@ mod tests {
             vec![],
         );
         let (task, _) = task
-            .start(None, Some(UserId(5)), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(
+                None,
+                Some(UserId(5)),
+                "2026-01-02T00:00:00Z".to_string(),
+                None,
+            )
             .unwrap();
         assert_eq!(task.assignee_user_id(), Some(UserId(5)));
     }
@@ -1787,7 +1797,12 @@ mod tests {
             vec![],
         );
         let err = task
-            .start(None, Some(UserId(99)), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(
+                None,
+                Some(UserId(99)),
+                "2026-01-02T00:00:00Z".to_string(),
+                None,
+            )
             .unwrap_err();
         assert!(err.to_string().contains("assigned to user 5"));
         assert!(err.to_string().contains("cannot be started by user 99"));

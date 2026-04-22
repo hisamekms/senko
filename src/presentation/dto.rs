@@ -350,7 +350,7 @@ impl From<PreviewResult> for PreviewTransitionResponse {
 #[derive(Serialize)]
 pub struct UserResponse {
     id: UserId,
-    username: String,
+    username: crate::domain::user::Username,
     sub: String,
     display_name: Option<String>,
     email: Option<String>,
@@ -361,7 +361,7 @@ impl From<User> for UserResponse {
     fn from(u: User) -> Self {
         Self {
             id: u.id(),
-            username: u.username().to_owned(),
+            username: u.username().clone(),
             sub: u.sub().to_owned(),
             display_name: u.display_name().map(|s| s.to_owned()),
             email: u.email().map(|s| s.to_owned()),
@@ -383,7 +383,7 @@ impl From<&User> for MemberUserInfo {
     fn from(u: &User) -> Self {
         Self {
             id: u.id(),
-            name: u.username().to_owned(),
+            name: u.username().as_ref().to_owned(),
             display_name: u.display_name().map(|s| s.to_owned()),
         }
     }

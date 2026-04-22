@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::application::port::HookDataSource;
 use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{Task, TaskId, TaskStatus};
-use crate::domain::user::{User, UserId};
+use crate::domain::user::{User, UserId, Username};
 
 use super::client::HttpClient;
 use super::read_json_or_error;
@@ -92,7 +92,7 @@ impl HookDataSource for RemoteHookDataSource {
         read_json_or_error(resp).await
     }
 
-    async fn get_user_by_username(&self, username: &str) -> Result<User> {
+    async fn get_user_by_username(&self, username: &Username) -> Result<User> {
         let users: Vec<User> = {
             let resp = self
                 .http

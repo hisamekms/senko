@@ -2203,6 +2203,8 @@ struct CliMeResponse {
 
 #[derive(serde::Deserialize)]
 struct CliUserInfo {
+    // Wire-read from /auth/me; keep as String so an older server's response
+    // doesn't fail Username validation on the client.
     username: String,
     display_name: Option<String>,
 }

@@ -566,23 +566,29 @@ pub async fn resolve_envelope_context(
             }),
     };
     let user = match config.user.name.as_deref() {
-        Some(name) => backend
-            .get_user_by_username(name)
-            .await
-            .map(|u| EnvelopeUserInfo {
-                id: u.id(),
-                name: u.username().to_owned(),
-            })
-            .unwrap_or_else(|_| EnvelopeUserInfo {
+        Some(name) => match crate::domain::user::Username::try_from(name.to_string()) {
+            Ok(username) => backend
+                .get_user_by_username(&username)
+                .await
+                .map(|u| EnvelopeUserInfo {
+                    id: u.id(),
+                    name: u.username().as_ref().to_owned(),
+                })
+                .unwrap_or_else(|_| EnvelopeUserInfo {
+                    id: DEFAULT_USER_ID,
+                    name: "default".into(),
+                }),
+            Err(_) => EnvelopeUserInfo {
                 id: DEFAULT_USER_ID,
                 name: "default".into(),
-            }),
+            },
+        },
         None => backend
             .get_user(DEFAULT_USER_ID)
             .await
             .map(|u| EnvelopeUserInfo {
                 id: u.id(),
-                name: u.username().to_owned(),
+                name: u.username().as_ref().to_owned(),
             })
             .unwrap_or_else(|_| EnvelopeUserInfo {
                 id: DEFAULT_USER_ID,
