@@ -307,10 +307,18 @@ pub async fn cmd_list(
         .collect::<std::result::Result<Vec<_>, _>>()
         .context("invalid status value")?;
 
-    let assignee_user_id = if ready {
-        resolve_current_user_id(&root, &config).await?
+    // For `--ready` we want to filter tasks assigned to the current user.
+    // In local mode we resolve the numeric id up front. In remote mode we
+    // cannot (the cluster-wide username→id lookup is master-gated), so we
+    // signal the intent via `assignee_self` and let the upstream resolve it.
+    let (assignee_user_id, assignee_self) = if ready && config.user.name.is_some() {
+        if config.cli.remote.url.is_some() {
+            (None, true)
+        } else {
+            (resolve_current_user_id(&root, &config).await?, false)
+        }
     } else {
-        None
+        (None, false)
     };
 
     let mut metadata_map = std::collections::HashMap::new();
@@ -337,6 +345,7 @@ pub async fn cmd_list(
         depends_on,
         ready,
         assignee_user_id,
+        assignee_self,
         include_unassigned,
         metadata: metadata_map,
         contract_id: contract,
@@ -502,7 +511,15 @@ pub async fn cmd_start(
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
-    let user_id = resolve_current_user_id(&root, &config).await?;
+    // In remote mode, the server derives user_id from the authenticated caller;
+    // the CLI must not hit GET /api/v1/users (master-gated) just to convert
+    // config.user.name. In local mode we still need the numeric id so the
+    // domain's auto-assign-on-start works (see test_assignee_user_id.sh).
+    let user_id = if config.cli.remote.url.is_some() {
+        None
+    } else {
+        resolve_current_user_id(&root, &config).await?
+    };
     let metadata: Option<MetadataUpdate> = metadata
         .map(|s| -> Result<MetadataUpdate> {
             let val: serde_json::Value = serde_json::from_str(&s)
@@ -565,7 +582,13 @@ pub async fn cmd_next(
     let config = load_config(cli, &root)?;
     let (task_ops, project_ops) = create_task_operations(&root, &config)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
-    let user_id = resolve_current_user_id(&root, &config).await?;
+    // In remote mode, the server derives user_id from the authenticated caller;
+    // see cmd_start for the rationale.
+    let user_id = if config.cli.remote.url.is_some() {
+        None
+    } else {
+        resolve_current_user_id(&root, &config).await?
+    };
     let metadata: Option<MetadataUpdate> = metadata
         .map(|s| -> Result<MetadataUpdate> {
             let val: serde_json::Value = serde_json::from_str(&s)

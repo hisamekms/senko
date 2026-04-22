@@ -340,7 +340,7 @@ struct ListTasksQuery {
     #[serde(default)]
     ready: Option<bool>,
     #[serde(default)]
-    assignee_user_id: Option<i64>,
+    assignee_user_id: Option<String>,
     #[serde(default)]
     include_unassigned: Option<bool>,
     #[serde(default)]
@@ -360,7 +360,6 @@ struct ListTasksQuery {
 #[derive(Deserialize)]
 struct StartBody {
     session_id: Option<String>,
-    user_id: Option<i64>,
     metadata: Option<serde_json::Value>,
     replace_metadata: Option<serde_json::Value>,
 }
@@ -379,7 +378,6 @@ struct CancelBody {
 #[derive(Deserialize)]
 struct NextBody {
     session_id: Option<String>,
-    user_id: Option<i64>,
     #[serde(default)]
     include_unassigned: bool,
     metadata: Option<serde_json::Value>,
@@ -880,12 +878,16 @@ async fn list_tasks(
     }
     let effective_limit = query.limit.or(Some(50));
 
+    let (assignee_user_id, assignee_self) =
+        resolve_query_assignee_self(query.assignee_user_id, &auth)?;
+
     let filter = ListTasksFilter {
         statuses,
         tags: query.tag,
         depends_on: query.depends_on,
         ready: query.ready.unwrap_or(false),
-        assignee_user_id: query.assignee_user_id,
+        assignee_user_id,
+        assignee_self,
         include_unassigned: query.include_unassigned.unwrap_or(false),
         metadata: metadata_map,
         contract_id: query.contract,
@@ -913,6 +915,33 @@ fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) 
         body["assignee_user_id"] = serde_json::Value::Number(user_id.into());
     }
     // No auth (relay): leave "self" for upstream to resolve
+}
+
+/// Resolve the `assignee_user_id` query parameter: accepts either a numeric
+/// user id or the literal string `"self"` (resolved from the auth context).
+/// Returns `(Option<i64>, assignee_self)`. On a relay server with no local
+/// auth, `"self"` is carried through by setting `assignee_self = true` so the
+/// upstream can resolve it against its own auth context.
+fn resolve_query_assignee_self(
+    raw: Option<String>,
+    auth: &OptionalAuthUser,
+) -> Result<(Option<i64>, bool), ApiError> {
+    let Some(val) = raw else {
+        return Ok((None, false));
+    };
+    if val == "self" {
+        return match auth.0.as_ref().map(|a| a.user.id()) {
+            Some(id) => Ok((Some(id), false)),
+            None => Ok((None, true)),
+        };
+    }
+    val.parse::<i64>()
+        .map(|n| (Some(n), false))
+        .map_err(|_| {
+            ApiError::BadRequest(format!(
+                "assignee_user_id must be a numeric id or 'self' (got {val:?})"
+            ))
+        })
 }
 
 // POST /api/v1/projects/{project_id}/tasks
@@ -1120,9 +1149,7 @@ async fn start_task(
     Json(body): Json<StartBody>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let user_id = body
-        .user_id
-        .or_else(|| auth.0.as_ref().map(|a| a.user.id()));
+    let user_id = auth.0.as_ref().map(|a| a.user.id());
     let metadata = if let Some(v) = body.replace_metadata {
         Some(MetadataUpdate::Replace(v))
     } else {
@@ -1178,18 +1205,17 @@ async fn next_task(
     body: Option<Json<NextBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    let (session_id, user_id, include_unassigned, metadata_raw, replace_metadata) = body
+    let (session_id, include_unassigned, metadata_raw, replace_metadata) = body
         .map(|b| {
             (
                 b.0.session_id,
-                b.0.user_id,
                 b.0.include_unassigned,
                 b.0.metadata,
                 b.0.replace_metadata,
             )
         })
-        .unwrap_or((None, None, false, None, None));
-    let user_id = user_id.or_else(|| auth.0.as_ref().map(|a| a.user.id()));
+        .unwrap_or((None, false, None, None));
+    let user_id = auth.0.as_ref().map(|a| a.user.id());
     let metadata = if let Some(v) = replace_metadata {
         Some(MetadataUpdate::Replace(v))
     } else {

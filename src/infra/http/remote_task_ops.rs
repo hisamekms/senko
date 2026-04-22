@@ -158,12 +158,14 @@ impl TaskOperations for RemoteTaskOperations {
         project_id: i64,
         id: i64,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        _user_id: Option<i64>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
 
-        let mut body = json!({ "session_id": session_id, "user_id": user_id });
+        // user_id is resolved server-side from the authenticated request — the
+        // client no longer sends it in the body. See #330.
+        let mut body = json!({ "session_id": session_id });
         if let Some(ref meta_update) = metadata {
             match meta_update {
                 MetadataUpdate::Clear => {
@@ -206,11 +208,13 @@ impl TaskOperations for RemoteTaskOperations {
         &self,
         project_id: i64,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        _user_id: Option<i64>,
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
-        let mut body = json!({ "session_id": session_id, "user_id": user_id, "include_unassigned": include_unassigned });
+        // user_id is resolved server-side from the authenticated request — the
+        // client no longer sends it in the body. See #330.
+        let mut body = json!({ "session_id": session_id, "include_unassigned": include_unassigned });
         if let Some(ref meta_update) = metadata {
             match meta_update {
                 MetadataUpdate::Clear => {
@@ -490,7 +494,10 @@ impl TaskOperations for RemoteTaskOperations {
         if filter.ready {
             params.push("ready=true".into());
         }
-        if let Some(uid) = filter.assignee_user_id {
+        if filter.assignee_self {
+            // Unresolved "self" intent — let the upstream resolve it from auth.
+            params.push("assignee_user_id=self".into());
+        } else if let Some(uid) = filter.assignee_user_id {
             params.push(format!("assignee_user_id={uid}"));
         }
         if filter.include_unassigned {

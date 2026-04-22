@@ -1108,6 +1108,10 @@ pub struct ListTasksFilter {
     pub depends_on: Option<i64>,
     pub ready: bool,
     pub assignee_user_id: Option<i64>,
+    // Unresolved "self" intent, used to carry `?assignee_user_id=self` through a
+    // relay that has no auth context to resolve it; the upstream (which does)
+    // converts it to `assignee_user_id`.
+    pub assignee_self: bool,
     pub include_unassigned: bool,
     pub metadata: HashMap<String, serde_json::Value>,
     pub contract_id: Option<i64>,
