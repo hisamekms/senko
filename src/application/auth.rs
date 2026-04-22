@@ -1,5 +1,6 @@
 use crate::application::port::TaskBackend;
 use crate::application::port::auth::AuthError;
+use crate::domain::project::ProjectId;
 use crate::domain::user::{ProjectMember, Role};
 
 #[derive(Debug, Clone, Copy)]
@@ -12,7 +13,7 @@ pub enum Permission {
 pub async fn require_project_role(
     backend: &dyn TaskBackend,
     user_id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     permission: Permission,
 ) -> std::result::Result<ProjectMember, AuthError> {
     let member = backend

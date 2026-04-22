@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataField};
+use crate::domain::project::ProjectId;
 
 /// Application-level port that exposes metadata field operations.
 ///
@@ -12,11 +13,11 @@ use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataField};
 pub trait MetadataFieldOperations: Send + Sync {
     async fn create_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField>;
 
-    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>>;
+    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>>;
 
-    async fn delete_metadata_field_by_name(&self, project_id: i64, name: &str) -> Result<()>;
+    async fn delete_metadata_field_by_name(&self, project_id: ProjectId, name: &str) -> Result<()>;
 }

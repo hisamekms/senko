@@ -5,7 +5,7 @@ use async_trait::async_trait;
 
 use crate::application::auth::{Permission, require_project_role};
 use crate::application::port::{ProjectOperations, TaskBackend};
-use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::project::{CreateProjectParams, Project, ProjectId};
 use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role};
 
@@ -41,7 +41,7 @@ impl ProjectOperations for ProjectService {
         Ok(project)
     }
 
-    async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: ProjectId) -> Result<Project> {
         self.backend.get_project(id).await
     }
 
@@ -49,7 +49,7 @@ impl ProjectOperations for ProjectService {
         self.backend.get_project_by_name(name).await
     }
 
-    async fn delete_project(&self, id: i64, caller_user_id: Option<i64>) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId, caller_user_id: Option<i64>) -> Result<()> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, id, Permission::Admin).await?;
         }
@@ -64,13 +64,13 @@ impl ProjectOperations for ProjectService {
 
     // --- Member management ---
 
-    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
         self.backend.list_project_members(project_id).await
     }
 
     async fn add_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &AddProjectMemberParams,
         caller_user_id: Option<i64>,
     ) -> Result<ProjectMember> {
@@ -82,7 +82,7 @@ impl ProjectOperations for ProjectService {
 
     async fn remove_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         caller_user_id: Option<i64>,
     ) -> Result<()> {
@@ -94,13 +94,17 @@ impl ProjectOperations for ProjectService {
             .await
     }
 
-    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+    async fn get_project_member(
+        &self,
+        project_id: ProjectId,
+        user_id: i64,
+    ) -> Result<ProjectMember> {
         self.backend.get_project_member(project_id, user_id).await
     }
 
     async fn update_member_role(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         role: Role,
         caller_user_id: Option<i64>,

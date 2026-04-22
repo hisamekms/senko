@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::application::{CompleteResult, PreviewResult};
 use crate::domain::contract::{Contract, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
-use crate::domain::project::Project;
+use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{DodItem, Task, TaskId};
 use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User};
 use crate::infra::config::Config;
@@ -12,7 +12,7 @@ use crate::infra::config::Config;
 
 #[derive(Serialize)]
 pub struct ProjectResponse {
-    id: i64,
+    id: ProjectId,
     name: String,
     description: Option<String>,
     created_at: String,
@@ -34,7 +34,7 @@ impl From<Project> for ProjectResponse {
 #[derive(Serialize)]
 pub struct MetadataFieldResponse {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     name: String,
     field_type: MetadataFieldType,
     required_on_complete: bool,
@@ -76,7 +76,7 @@ impl From<&DodItem> for DodItemResponse {
 #[derive(Serialize)]
 pub struct TaskResponse {
     id: TaskId,
-    project_id: i64,
+    project_id: ProjectId,
     title: String,
     background: Option<String>,
     description: Option<String>,
@@ -166,7 +166,7 @@ impl From<ContractNote> for ContractNoteResponse {
 #[derive(Serialize)]
 pub struct ContractResponse {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     title: String,
     description: Option<String>,
     definition_of_done: Vec<DodItemResponse>,
@@ -383,7 +383,7 @@ impl From<&User> for MemberUserInfo {
 #[derive(Serialize)]
 pub struct ProjectMemberResponse {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     user_id: i64,
     role: String,
     created_at: String,
@@ -644,7 +644,7 @@ mod tests {
         let note = ContractNote::new("n1".into(), Some(TaskId(42)), "2026-04-17T00:00:00Z".into());
         let contract = Contract::new(
             7,
-            1,
+            ProjectId(1),
             "Title".into(),
             Some("desc".into()),
             vec![
@@ -681,7 +681,7 @@ mod tests {
 
         let contract = Contract::new(
             1,
-            1,
+            ProjectId(1),
             "t".into(),
             None,
             vec![DodItem::new("a".into(), false)],
@@ -703,7 +703,7 @@ mod tests {
         use crate::domain::task::TaskId;
         let task = Task::new(
             TaskId(1),      // id
-            1,              // project_id
+            ProjectId(1),   // project_id
             "title".into(), // title
             None,           // background
             None,           // description

@@ -1,4 +1,5 @@
 use crate::domain::contract::ContractEvent;
+use crate::domain::project::ProjectId;
 use crate::domain::task::TaskEvent;
 
 /// Result of a task selection attempt (only meaningful for `task_select`).
@@ -24,7 +25,7 @@ pub enum HookTrigger {
     Task(TaskEvent),
     /// Task selection outcome (from `task next`).
     TaskSelect {
-        project_id: i64,
+        project_id: ProjectId,
         result: SelectResult,
     },
     Contract(ContractEvent),
@@ -81,7 +82,7 @@ impl HookTrigger {
             "task_complete" => Some(HookTrigger::Task(TaskEvent::Completed)),
             "task_cancel" => Some(HookTrigger::Task(TaskEvent::Canceled)),
             "task_select" => Some(HookTrigger::TaskSelect {
-                project_id: 0,
+                project_id: ProjectId(0),
                 result: SelectResult::Selected,
             }),
             "contract_add" => Some(HookTrigger::Contract(ContractEvent::Created)),

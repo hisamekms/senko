@@ -15,6 +15,7 @@ use crate::application::HookTrigger;
 use crate::application::hook_trigger::SelectResult;
 use crate::application::port::HookDataSource;
 use crate::domain::contract::Contract;
+use crate::domain::project::ProjectId;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
 use crate::infra::config::{
     ActionConfig, Config, ContractActionHooks, HookDef, HookMode, HookOutput, HookWhen, OnFailure,
@@ -58,7 +59,7 @@ pub enum BackendInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EnvelopeProjectInfo {
-    pub id: i64,
+    pub id: ProjectId,
     pub name: String,
 }
 
@@ -265,7 +266,7 @@ pub async fn build_event(
 pub async fn build_task_select_event(
     result: SelectResult,
     backend: &dyn HookDataSource,
-    project_id: i64,
+    project_id: ProjectId,
 ) -> TaskSelectEvent {
     let stats = backend.task_stats(project_id).await.unwrap_or_default();
     let ready_count = backend.ready_count(project_id).await.unwrap_or(0);
@@ -1087,7 +1088,7 @@ pub fn action_hooks<'a>(
 /// Compute newly unblocked tasks after a task completion.
 pub async fn compute_unblocked(
     backend: &dyn HookDataSource,
-    project_id: i64,
+    project_id: ProjectId,
     prev_ready_ids: &std::collections::HashSet<crate::domain::task::TaskId>,
 ) -> Vec<UnblockedTask> {
     let curr_ready = backend
@@ -1191,7 +1192,7 @@ mod tests {
         use crate::domain::task::{Priority, Task, TaskId, TaskStatus};
         let task = Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "t".into(),
             None,
             None,

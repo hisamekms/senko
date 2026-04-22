@@ -16,7 +16,7 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
-use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::project::{CreateProjectParams, Project, ProjectId};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
     TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
@@ -265,7 +265,7 @@ async fn get_task_by_id(pool: &PgPool, id: TaskDbId) -> Result<Task> {
 /// transaction can avoid acquiring a second connection from the pool.
 async fn resolve_task_number<'e, E>(
     executor: E,
-    project_id: i64,
+    project_id: ProjectId,
     task_id: TaskId,
 ) -> Result<TaskDbId>
 where
@@ -304,7 +304,7 @@ impl ProjectRepository for PostgresBackend {
         ))
     }
 
-    async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: ProjectId) -> Result<Project> {
         let pool = self.pool().await?;
         let row = sqlx::query("SELECT name, description, created_at FROM projects WHERE id = $1")
             .bind(id)
@@ -334,7 +334,7 @@ impl ProjectRepository for PostgresBackend {
         ))
     }
 
-    async fn delete_project(&self, id: i64) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM projects WHERE id = $1")
             .bind(id)
@@ -351,7 +351,7 @@ impl ProjectRepository for PostgresBackend {
 impl ProjectMemberRepository for PostgresBackend {
     async fn add_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &AddProjectMemberParams,
     ) -> Result<ProjectMember> {
         let pool = self.pool().await?;
@@ -372,7 +372,7 @@ impl ProjectMemberRepository for PostgresBackend {
         ))
     }
 
-    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+    async fn remove_project_member(&self, project_id: ProjectId, user_id: i64) -> Result<()> {
         let pool = self.pool().await?;
         let result =
             sqlx::query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2")
@@ -386,7 +386,7 @@ impl ProjectMemberRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
             "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = $1 ORDER BY id",
@@ -411,7 +411,11 @@ impl ProjectMemberRepository for PostgresBackend {
             .collect()
     }
 
-    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+    async fn get_project_member(
+        &self,
+        project_id: ProjectId,
+        user_id: i64,
+    ) -> Result<ProjectMember> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT id, role, created_at FROM project_members WHERE project_id = $1 AND user_id = $2",
@@ -434,7 +438,7 @@ impl ProjectMemberRepository for PostgresBackend {
 
     async fn update_member_role(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         role: Role,
     ) -> Result<ProjectMember> {
@@ -779,7 +783,7 @@ impl UserQueryPort for PostgresBackend {
 
 #[async_trait]
 impl TaskRepository for PostgresBackend {
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task> {
         let pool = self.pool().await?;
         // Verify project exists
         self.get_project(project_id).await?;
@@ -868,7 +872,7 @@ impl TaskRepository for PostgresBackend {
         get_task_by_id(pool, task_id).await
     }
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, id).await?;
         get_task_by_id(pool, internal_id).await
@@ -876,7 +880,7 @@ impl TaskRepository for PostgresBackend {
 
     async fn update_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
@@ -1033,7 +1037,7 @@ impl TaskRepository for PostgresBackend {
 
     async fn update_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
@@ -1130,7 +1134,7 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()> {
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
         let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
@@ -1143,7 +1147,7 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
         get_task_by_id(pool, internal_id).await?;
@@ -1245,7 +1249,11 @@ impl TaskRepository for PostgresBackend {
 
 #[async_trait]
 impl TaskQueryPort for PostgresBackend {
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(
+        &self,
+        project_id: ProjectId,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
         let pool = self.pool().await?;
 
         let mut conditions: Vec<String> = Vec::new();
@@ -1258,7 +1266,7 @@ impl TaskQueryPort for PostgresBackend {
         let mut binds: Vec<BindVal> = Vec::new();
 
         conditions.push(format!("t.project_id = ${param_idx}"));
-        binds.push(BindVal::Int(project_id));
+        binds.push(BindVal::Int(project_id.into()));
         param_idx += 1;
 
         if !filter.statuses.is_empty() {
@@ -1406,7 +1414,7 @@ impl TaskQueryPort for PostgresBackend {
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
     async fn next_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: Option<i64>,
         include_unassigned: bool,
     ) -> Result<Option<Task>> {
@@ -1444,7 +1452,7 @@ impl TaskQueryPort for PostgresBackend {
         }
     }
 
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
             "SELECT status, COUNT(*) as cnt FROM tasks WHERE project_id = $1 GROUP BY status",
@@ -1463,7 +1471,7 @@ impl TaskQueryPort for PostgresBackend {
 
     /// SQL-optimized implementation of ready-count, equivalent to
     /// `crate::domain::task::filter_ready(...).len()`.
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT COUNT(*) as cnt FROM tasks t
@@ -1481,7 +1489,7 @@ impl TaskQueryPort for PostgresBackend {
         Ok(row.get("cnt"))
     }
 
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         let filter = ListTasksFilter {
             ready: true,
             ..Default::default()
@@ -1491,7 +1499,7 @@ impl TaskQueryPort for PostgresBackend {
 
     /// Matches by public `task_number` (not internal DB id) — see
     /// `TaskQueryPort::is_task_ready` doc.
-    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: ProjectId, id: TaskId) -> Result<bool> {
         let task_number: i64 = id.into();
         let pool = self.pool().await?;
         let row: Option<(i32,)> = sqlx::query_as(
@@ -1564,7 +1572,7 @@ async fn update_content_array(
 impl MetadataFieldRepository for PostgresBackend {
     async fn create_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField> {
         let pool = self.pool().await?;
@@ -1601,7 +1609,11 @@ impl MetadataFieldRepository for PostgresBackend {
         }
     }
 
-    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField> {
+    async fn get_metadata_field(
+        &self,
+        project_id: ProjectId,
+        field_id: i64,
+    ) -> Result<MetadataField> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
@@ -1626,7 +1638,7 @@ impl MetadataFieldRepository for PostgresBackend {
         ))
     }
 
-    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
@@ -1655,7 +1667,7 @@ impl MetadataFieldRepository for PostgresBackend {
 
     async fn update_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         field_id: i64,
         params: &UpdateMetadataFieldParams,
     ) -> Result<MetadataField> {
@@ -1688,7 +1700,7 @@ impl MetadataFieldRepository for PostgresBackend {
         self.get_metadata_field(project_id, field_id).await
     }
 
-    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+    async fn delete_metadata_field(&self, project_id: ProjectId, field_id: i64) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM metadata_fields WHERE id = $1 AND project_id = $2")
             .bind(field_id)
@@ -1772,7 +1784,7 @@ async fn get_contract_by_id(pool: &PgPool, id: i64) -> Result<Contract> {
 impl ContractRepository for PostgresBackend {
     async fn create_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateContractParams,
     ) -> Result<Contract> {
         let pool = self.pool().await?;
@@ -1818,7 +1830,7 @@ impl ContractRepository for PostgresBackend {
         get_contract_by_id(pool, id).await
     }
 
-    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
+    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
         let pool = self.pool().await?;
         let ids: Vec<i64> =
             sqlx::query("SELECT id FROM contracts WHERE project_id = $1 ORDER BY id")

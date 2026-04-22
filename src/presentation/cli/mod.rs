@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::domain::project::ProjectId;
 use crate::domain::task::{Priority, TaskId};
 use crate::domain::user::Role;
 use crate::infra::config::CliOverrides;
@@ -635,7 +636,7 @@ pub enum ProjectAction {
     /// Delete a project
     Delete {
         /// Project ID
-        id: i64,
+        id: ProjectId,
     },
     /// Manage metadata fields
     #[command(name = "metadata-field")]

@@ -2,6 +2,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::application::hook_trigger::SelectResult;
+use crate::domain::project::ProjectId;
 use crate::domain::task::Task;
 
 /// Port trait for hook test operations (CLI `hooks test` command).
@@ -11,7 +12,7 @@ pub trait HookTestPort: Send + Sync {
     /// Build a JSON envelope for a task event (pretty-printed).
     async fn build_task_event_envelope(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         event_name: &str,
         task: &Task,
     ) -> Result<String>;
@@ -19,7 +20,7 @@ pub trait HookTestPort: Send + Sync {
     /// Build a JSON envelope for a `task_select` event (pretty-printed).
     async fn build_task_select_envelope(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         result: SelectResult,
     ) -> Result<String>;
 

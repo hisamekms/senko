@@ -246,6 +246,7 @@ fn json_depth(value: &serde_json::Value) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::project::ProjectId;
     use std::collections::HashMap;
 
     #[test]
@@ -446,7 +447,7 @@ mod tests {
     fn make_field(name: &str, ft: MetadataFieldType, required: bool) -> MetadataField {
         MetadataField::new(
             1,
-            1,
+            ProjectId(1),
             name.to_string(),
             ft,
             required,

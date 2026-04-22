@@ -11,6 +11,7 @@ use crate::domain::contract::{
     UpdateContractParams,
 };
 use crate::domain::error::DomainError;
+use crate::domain::project::ProjectId;
 use crate::infra::config::HookWhen;
 use crate::infra::hook::FireOutcome;
 
@@ -33,7 +34,7 @@ fn now_iso8601() -> String {
 impl ContractOperations for LocalContractOperations {
     async fn create_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateContractParams,
     ) -> Result<Contract> {
         params.validate()?;
@@ -61,17 +62,17 @@ impl ContractOperations for LocalContractOperations {
         Ok(contract)
     }
 
-    async fn get_contract(&self, _project_id: i64, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, _project_id: ProjectId, id: i64) -> Result<Contract> {
         self.backend.get_contract(id).await
     }
 
-    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
+    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
         self.backend.list_contracts(project_id).await
     }
 
     async fn edit_contract(
         &self,
-        _project_id: i64,
+        _project_id: ProjectId,
         id: i64,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
@@ -106,7 +107,7 @@ impl ContractOperations for LocalContractOperations {
         Ok(contract)
     }
 
-    async fn delete_contract(&self, _project_id: i64, id: i64) -> Result<()> {
+    async fn delete_contract(&self, _project_id: ProjectId, id: i64) -> Result<()> {
         let prev = self.backend.get_contract(id).await?;
         let trigger = HookTrigger::Contract(ContractEvent::Deleted);
         if self
@@ -133,7 +134,7 @@ impl ContractOperations for LocalContractOperations {
 
     async fn check_dod(
         &self,
-        _project_id: i64,
+        _project_id: ProjectId,
         contract_id: i64,
         index: usize,
     ) -> Result<Contract> {
@@ -163,7 +164,7 @@ impl ContractOperations for LocalContractOperations {
 
     async fn uncheck_dod(
         &self,
-        _project_id: i64,
+        _project_id: ProjectId,
         contract_id: i64,
         index: usize,
     ) -> Result<Contract> {
@@ -193,7 +194,7 @@ impl ContractOperations for LocalContractOperations {
 
     async fn add_note(
         &self,
-        _project_id: i64,
+        _project_id: ProjectId,
         contract_id: i64,
         content: String,
         source_task_id: Option<crate::domain::task::TaskId>,
@@ -226,7 +227,11 @@ impl ContractOperations for LocalContractOperations {
         Ok(created)
     }
 
-    async fn list_notes(&self, _project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>> {
+    async fn list_notes(
+        &self,
+        _project_id: ProjectId,
+        contract_id: i64,
+    ) -> Result<Vec<ContractNote>> {
         let contract = self.backend.get_contract(contract_id).await?;
         Ok(contract.notes().to_vec())
     }
@@ -243,7 +248,7 @@ mod tests {
         Arc::new(NoOpHookExecutor)
     }
 
-    async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, i64) {
+    async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, ProjectId) {
         let dir = tempdir().unwrap();
         let backend = SqliteBackend::new(
             dir.path(),
@@ -254,7 +259,7 @@ mod tests {
         .unwrap();
         let backend: Arc<dyn TaskBackend> = Arc::new(backend);
         // Default project id=1 is seeded by migration v1.
-        (dir, backend, 1)
+        (dir, backend, ProjectId(1))
     }
 
     fn simple_params() -> CreateContractParams {

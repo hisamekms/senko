@@ -1,4 +1,5 @@
 use super::PASSTHROUGH_TOKEN;
+use crate::domain::project::ProjectId;
 
 /// Shared HTTP client encapsulating base URL, reqwest client, and optional API key.
 ///
@@ -26,7 +27,7 @@ impl HttpClient {
         format!("{}{}", self.base_url, path)
     }
 
-    pub fn project_url(&self, project_id: i64, path: &str) -> String {
+    pub fn project_url(&self, project_id: ProjectId, path: &str) -> String {
         format!("{}/api/v1/projects/{project_id}{path}", self.base_url)
     }
 

@@ -9,7 +9,7 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
-use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::project::{CreateProjectParams, DEFAULT_PROJECT_ID, Project, ProjectId};
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
     TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
@@ -588,11 +588,11 @@ fn create_project(conn: &Connection, params: &CreateProjectParams) -> Result<Pro
         "INSERT INTO projects (name, description) VALUES (?1, ?2)",
         rusqlite::params![params.name, params.description],
     )?;
-    let id = conn.last_insert_rowid();
+    let id = ProjectId(conn.last_insert_rowid());
     get_project(conn, id)
 }
 
-fn get_project(conn: &Connection, id: i64) -> Result<Project> {
+fn get_project(conn: &Connection, id: ProjectId) -> Result<Project> {
     let (name, description, created_at): (String, Option<String>, String) = conn
         .query_row(
             "SELECT name, description, created_at FROM projects WHERE id = ?1",
@@ -605,7 +605,7 @@ fn get_project(conn: &Connection, id: i64) -> Result<Project> {
 }
 
 fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
-    let (id, description, created_at): (i64, Option<String>, String) = conn
+    let (id, description, created_at): (ProjectId, Option<String>, String) = conn
         .query_row(
             "SELECT id, description, created_at FROM projects WHERE name = ?1",
             params![name],
@@ -632,7 +632,7 @@ fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
     Ok(projects)
 }
 
-fn delete_project(conn: &Connection, id: i64) -> Result<()> {
+fn delete_project(conn: &Connection, id: ProjectId) -> Result<()> {
     let affected = conn.execute("DELETE FROM projects WHERE id = ?1", params![id])?;
     if affected == 0 {
         return Err(DomainError::ProjectNotFound.into());
@@ -910,7 +910,7 @@ fn delete_all_api_keys_for_user(conn: &Connection, user_id: i64) -> Result<()> {
 
 fn add_project_member(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     params: &AddProjectMemberParams,
 ) -> Result<ProjectMember> {
     conn.execute(
@@ -932,7 +932,7 @@ fn add_project_member(
     ))
 }
 
-fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<()> {
+fn remove_project_member(conn: &Connection, project_id: ProjectId, user_id: i64) -> Result<()> {
     let affected = conn.execute(
         "DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2",
         rusqlite::params![project_id, user_id],
@@ -943,7 +943,7 @@ fn remove_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Re
     Ok(())
 }
 
-fn list_project_members(conn: &Connection, project_id: i64) -> Result<Vec<ProjectMember>> {
+fn list_project_members(conn: &Connection, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = ?1 ORDER BY id",
     )?;
@@ -967,7 +967,11 @@ fn list_project_members(conn: &Connection, project_id: i64) -> Result<Vec<Projec
         .collect()
 }
 
-fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+fn get_project_member(
+    conn: &Connection,
+    project_id: ProjectId,
+    user_id: i64,
+) -> Result<ProjectMember> {
     let (id, role_str, created_at): (i64, String, String) = conn
         .query_row(
             "SELECT id, role, created_at FROM project_members WHERE project_id = ?1 AND user_id = ?2",
@@ -984,7 +988,7 @@ fn get_project_member(conn: &Connection, project_id: i64, user_id: i64) -> Resul
 
 fn update_member_role(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     user_id: i64,
     role: Role,
 ) -> Result<ProjectMember> {
@@ -1000,7 +1004,11 @@ fn update_member_role(
 
 /// Verify that a task belongs to the given project.
 /// Resolve a user-facing task_number to internal id, verifying project ownership.
-fn resolve_task_number(conn: &Connection, project_id: i64, task_id: TaskId) -> Result<TaskDbId> {
+fn resolve_task_number(
+    conn: &Connection,
+    project_id: ProjectId,
+    task_id: TaskId,
+) -> Result<TaskDbId> {
     let task_number: i64 = task_id.into();
     conn.query_row(
         "SELECT id FROM tasks WHERE project_id = ?1 AND task_number = ?2",
@@ -1013,7 +1021,11 @@ fn resolve_task_number(conn: &Connection, project_id: i64, task_id: TaskId) -> R
 
 // --- Task functions ---
 
-fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+fn create_task(
+    conn: &Connection,
+    project_id: ProjectId,
+    params: &CreateTaskParams,
+) -> Result<Task> {
     // Verify project exists
     get_project(conn, project_id)?;
     let priority: i32 = params.priority.unwrap_or(Priority::P2).into();
@@ -1082,7 +1094,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
 }
 
 type TaskRow = (
-    i64,
+    ProjectId,
     i64,
     String,
     Option<String>,
@@ -1533,7 +1545,11 @@ fn delete_task(conn: &Connection, id: TaskDbId) -> Result<()> {
     Ok(())
 }
 
-fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+fn list_tasks(
+    conn: &Connection,
+    project_id: ProjectId,
+    filter: &ListTasksFilter,
+) -> Result<Vec<Task>> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -1677,7 +1693,7 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
 /// Equivalence with domain logic is verified by integration tests.
 fn next_task(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     user_id: Option<i64>,
     include_unassigned: bool,
 ) -> Result<Option<Task>> {
@@ -1715,7 +1731,7 @@ fn next_task(
     }
 }
 
-fn task_stats(conn: &Connection, project_id: i64) -> Result<HashMap<String, i64>> {
+fn task_stats(conn: &Connection, project_id: ProjectId) -> Result<HashMap<String, i64>> {
     let mut stmt =
         conn.prepare("SELECT status, COUNT(*) FROM tasks WHERE project_id = ?1 GROUP BY status")?;
     let rows = stmt.query_map(params![project_id], |row| {
@@ -1733,7 +1749,7 @@ fn task_stats(conn: &Connection, project_id: i64) -> Result<HashMap<String, i64>
 
 /// SQL-optimized implementation of ready-count, equivalent to
 /// `crate::domain::task::filter_ready(...).len()`.
-fn ready_count(conn: &Connection, project_id: i64) -> Result<i64> {
+fn ready_count(conn: &Connection, project_id: ProjectId) -> Result<i64> {
     let sql = "
         SELECT COUNT(*) FROM tasks t
         WHERE t.project_id = ?1
@@ -1748,7 +1764,7 @@ fn ready_count(conn: &Connection, project_id: i64) -> Result<i64> {
     Ok(count)
 }
 
-fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
+fn list_ready_tasks(conn: &Connection, project_id: ProjectId) -> Result<Vec<Task>> {
     let filter = ListTasksFilter {
         ready: true,
         ..Default::default()
@@ -1762,7 +1778,7 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 ///
 /// The second argument is the public `task_number`, not the internal DB id —
 /// matching the identity exposed via HTTP / CLI / hook payloads.
-fn is_task_ready(conn: &Connection, project_id: i64, task_number: TaskId) -> Result<bool> {
+fn is_task_ready(conn: &Connection, project_id: ProjectId, task_number: TaskId) -> Result<bool> {
     let task_number_i64: i64 = task_number.into();
     let sql = "
         SELECT 1 FROM tasks t
@@ -1834,7 +1850,7 @@ fn query_task_db_id_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Res
 
 // --- Default record sync ---
 
-fn update_project_name(conn: &Connection, id: i64, name: &str) -> Result<()> {
+fn update_project_name(conn: &Connection, id: ProjectId, name: &str) -> Result<()> {
     conn.execute(
         "UPDATE projects SET name = ?1 WHERE id = ?2",
         params![name, id],
@@ -1854,7 +1870,7 @@ fn update_user_username(conn: &Connection, id: i64, username: &str) -> Result<()
 
 fn create_metadata_field(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     params: &CreateMetadataFieldParams,
 ) -> Result<MetadataField> {
     let result = conn.execute(
@@ -1884,8 +1900,12 @@ fn create_metadata_field(
     get_metadata_field(conn, project_id, id)
 }
 
-fn get_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> Result<MetadataField> {
-    let row: (i64, i64, String, String, i32, Option<String>, String) = conn
+fn get_metadata_field(
+    conn: &Connection,
+    project_id: ProjectId,
+    field_id: i64,
+) -> Result<MetadataField> {
+    let row: (i64, ProjectId, String, String, i32, Option<String>, String) = conn
         .query_row(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
              FROM metadata_fields WHERE id = ?1 AND project_id = ?2",
@@ -1916,7 +1936,7 @@ fn get_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> Resu
     ))
 }
 
-fn list_metadata_fields(conn: &Connection, project_id: i64) -> Result<Vec<MetadataField>> {
+fn list_metadata_fields(conn: &Connection, project_id: ProjectId) -> Result<Vec<MetadataField>> {
     let mut stmt = conn.prepare(
         "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
          FROM metadata_fields WHERE project_id = ?1 ORDER BY id",
@@ -1925,7 +1945,7 @@ fn list_metadata_fields(conn: &Connection, project_id: i64) -> Result<Vec<Metada
         .query_map(params![project_id], |row| {
             Ok((
                 row.get::<_, i64>(0)?,
-                row.get::<_, i64>(1)?,
+                row.get::<_, ProjectId>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, String>(3)?,
                 row.get::<_, i32>(4)?,
@@ -1952,7 +1972,7 @@ fn list_metadata_fields(conn: &Connection, project_id: i64) -> Result<Vec<Metada
 
 fn update_metadata_field(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     field_id: i64,
     params: &UpdateMetadataFieldParams,
 ) -> Result<MetadataField> {
@@ -1988,7 +2008,7 @@ fn update_metadata_field(
     get_metadata_field(conn, project_id, field_id)
 }
 
-fn delete_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> Result<()> {
+fn delete_metadata_field(conn: &Connection, project_id: ProjectId, field_id: i64) -> Result<()> {
     let affected = conn.execute(
         "DELETE FROM metadata_fields WHERE id = ?1 AND project_id = ?2",
         params![field_id, project_id],
@@ -2003,7 +2023,7 @@ fn delete_metadata_field(conn: &Connection, project_id: i64, field_id: i64) -> R
 
 fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
     let (project_id, title, description, metadata_str, created_at, updated_at): (
-        i64,
+        ProjectId,
         String,
         Option<String>,
         Option<String>,
@@ -2080,7 +2100,7 @@ fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
 
 fn create_contract(
     conn: &Connection,
-    project_id: i64,
+    project_id: ProjectId,
     params: &CreateContractParams,
 ) -> Result<Contract> {
     get_project(conn, project_id)?;
@@ -2113,7 +2133,7 @@ fn create_contract(
     get_contract(conn, contract_id)
 }
 
-fn list_contracts(conn: &Connection, project_id: i64) -> Result<Vec<Contract>> {
+fn list_contracts(conn: &Connection, project_id: ProjectId) -> Result<Vec<Contract>> {
     let ids: Vec<i64> = {
         let mut stmt =
             conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
@@ -2371,7 +2391,7 @@ impl SqliteBackend {
             .lock()
             .map_err(|e| anyhow::anyhow!("mutex lock failed: {e}"))?;
         if let Some(ref name) = config.project.name {
-            update_project_name(&conn, 1, name)
+            update_project_name(&conn, DEFAULT_PROJECT_ID, name)
                 .with_context(|| format!(
                     "failed to sync project name '{name}' to default project (id=1): name may already be used by another project"
                 ))?;
@@ -2406,7 +2426,7 @@ impl ProjectRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| create_project(conn, &params))
     }
 
-    async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: ProjectId) -> Result<Project> {
         blocking!(self, |conn: &Connection| get_project(conn, id))
     }
 
@@ -2415,7 +2435,7 @@ impl ProjectRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_project_by_name(conn, &name))
     }
 
-    async fn delete_project(&self, id: i64) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_project(conn, id))
     }
 }
@@ -2424,7 +2444,7 @@ impl ProjectRepository for SqliteBackend {
 impl ProjectMemberRepository for SqliteBackend {
     async fn add_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &AddProjectMemberParams,
     ) -> Result<ProjectMember> {
         let params = params.clone();
@@ -2433,19 +2453,23 @@ impl ProjectMemberRepository for SqliteBackend {
         ))
     }
 
-    async fn remove_project_member(&self, project_id: i64, user_id: i64) -> Result<()> {
+    async fn remove_project_member(&self, project_id: ProjectId, user_id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| remove_project_member(
             conn, project_id, user_id
         ))
     }
 
-    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
         blocking!(self, |conn: &Connection| list_project_members(
             conn, project_id
         ))
     }
 
-    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+    async fn get_project_member(
+        &self,
+        project_id: ProjectId,
+        user_id: i64,
+    ) -> Result<ProjectMember> {
         blocking!(self, |conn: &Connection| get_project_member(
             conn, project_id, user_id
         ))
@@ -2453,7 +2477,7 @@ impl ProjectMemberRepository for SqliteBackend {
 
     async fn update_member_role(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         role: Role,
     ) -> Result<ProjectMember> {
@@ -2567,14 +2591,14 @@ impl UserQueryPort for SqliteBackend {
 
 #[async_trait]
 impl TaskRepository for SqliteBackend {
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| create_task(
             conn, project_id, &params
         ))
     }
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             get_task(conn, internal_id)
@@ -2583,7 +2607,7 @@ impl TaskRepository for SqliteBackend {
 
     async fn update_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
@@ -2596,7 +2620,7 @@ impl TaskRepository for SqliteBackend {
 
     async fn update_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
@@ -2607,14 +2631,14 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()> {
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             delete_task(conn, internal_id)
         })
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, task_id)?;
             list_dependencies(conn, internal_id)
@@ -2629,7 +2653,11 @@ impl TaskRepository for SqliteBackend {
 
 #[async_trait]
 impl TaskQueryPort for SqliteBackend {
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(
+        &self,
+        project_id: ProjectId,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
         let filter = filter.clone();
         blocking!(self, |conn: &Connection| list_tasks(
             conn, project_id, &filter
@@ -2638,7 +2666,7 @@ impl TaskQueryPort for SqliteBackend {
 
     async fn next_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: Option<i64>,
         include_unassigned: bool,
     ) -> Result<Option<Task>> {
@@ -2650,19 +2678,19 @@ impl TaskQueryPort for SqliteBackend {
         ))
     }
 
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>> {
         blocking!(self, |conn: &Connection| task_stats(conn, project_id))
     }
 
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         blocking!(self, |conn: &Connection| ready_count(conn, project_id))
     }
 
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         blocking!(self, |conn: &Connection| list_ready_tasks(conn, project_id))
     }
 
-    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: ProjectId, id: TaskId) -> Result<bool> {
         blocking!(self, |conn: &Connection| is_task_ready(
             conn, project_id, id
         ))
@@ -2673,7 +2701,7 @@ impl TaskQueryPort for SqliteBackend {
 impl MetadataFieldRepository for SqliteBackend {
     async fn create_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField> {
         let params = params.clone();
@@ -2682,13 +2710,17 @@ impl MetadataFieldRepository for SqliteBackend {
         ))
     }
 
-    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField> {
+    async fn get_metadata_field(
+        &self,
+        project_id: ProjectId,
+        field_id: i64,
+    ) -> Result<MetadataField> {
         blocking!(self, |conn: &Connection| get_metadata_field(
             conn, project_id, field_id
         ))
     }
 
-    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
         blocking!(self, |conn: &Connection| list_metadata_fields(
             conn, project_id
         ))
@@ -2696,7 +2728,7 @@ impl MetadataFieldRepository for SqliteBackend {
 
     async fn update_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         field_id: i64,
         params: &UpdateMetadataFieldParams,
     ) -> Result<MetadataField> {
@@ -2706,7 +2738,7 @@ impl MetadataFieldRepository for SqliteBackend {
         ))
     }
 
-    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()> {
+    async fn delete_metadata_field(&self, project_id: ProjectId, field_id: i64) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_metadata_field(
             conn, project_id, field_id
         ))
@@ -2717,7 +2749,7 @@ impl MetadataFieldRepository for SqliteBackend {
 impl ContractRepository for SqliteBackend {
     async fn create_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateContractParams,
     ) -> Result<Contract> {
         let params = params.clone();
@@ -2730,7 +2762,7 @@ impl ContractRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_contract(conn, id))
     }
 
-    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>> {
+    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
         blocking!(self, |conn: &Connection| list_contracts(conn, project_id))
     }
 
@@ -2944,7 +2976,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "Test task".to_string(),
                 background: Some("bg".to_string()),
@@ -2995,14 +3027,15 @@ mod tests {
     #[test]
     fn create_task_default_priority() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, 1, &default_create_params("default prio")).unwrap();
+        let task =
+            create_task(&conn, ProjectId(1), &default_create_params("default prio")).unwrap();
         assert_eq!(task.priority(), Priority::P2);
     }
 
     #[test]
     fn update_task_fields() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, 1, &default_create_params("original")).unwrap();
+        let task = create_task(&conn, ProjectId(1), &default_create_params("original")).unwrap();
 
         let updated = update_task(
             &conn,
@@ -3038,7 +3071,7 @@ mod tests {
     #[test]
     fn status_transition_saved() {
         let (_tmp, conn) = setup();
-        let task = create_task(&conn, 1, &default_create_params("t")).unwrap();
+        let task = create_task(&conn, ProjectId(1), &default_create_params("t")).unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
 
         // draft -> todo via domain method + save
@@ -3078,7 +3111,7 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // cancel from draft
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
         let task = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into()))
@@ -3089,7 +3122,7 @@ mod tests {
         assert_eq!(canceled.cancel_reason(), Some("reason1"));
 
         // cancel from todo
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t2 = create_task(&conn, ProjectId(1), &default_create_params("t2")).unwrap();
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
         let task = get_task(&conn, TaskDbId(t2.id().into())).unwrap();
         let (task, _) = task
@@ -3100,7 +3133,7 @@ mod tests {
         assert_eq!(canceled.status(), TaskStatus::Canceled);
 
         // cancel from in_progress
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
+        let t3 = create_task(&conn, ProjectId(1), &default_create_params("t3")).unwrap();
         transition_to(&conn, TaskDbId(t3.id().into()), TaskStatus::InProgress);
         let task = get_task(&conn, TaskDbId(t3.id().into())).unwrap();
         let (task, _) = task
@@ -3116,7 +3149,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "to delete".to_string(),
                 background: None,
@@ -3168,25 +3201,25 @@ mod tests {
     #[test]
     fn list_tasks_no_filter() {
         let (_tmp, conn) = setup();
-        create_task(&conn, 1, &default_create_params("a")).unwrap();
-        create_task(&conn, 1, &default_create_params("b")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("a")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("b")).unwrap();
 
-        let tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         assert_eq!(tasks.len(), 2);
     }
 
     #[test]
     fn list_tasks_filter_by_status() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        let _t2 = create_task(&conn, 1, &default_create_params("todo")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("draft")).unwrap();
+        let _t2 = create_task(&conn, ProjectId(1), &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Draft],
                 ..Default::default()
@@ -3198,7 +3231,7 @@ mod tests {
 
         let todos = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 statuses: vec![TaskStatus::Todo],
                 ..Default::default()
@@ -3214,7 +3247,7 @@ mod tests {
         let (_tmp, conn) = setup();
         create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "tagged".to_string(),
                 branch: None,
@@ -3225,11 +3258,11 @@ mod tests {
             },
         )
         .unwrap();
-        create_task(&conn, 1, &default_create_params("untagged")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("untagged")).unwrap();
 
         let result = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 tags: vec!["rust".to_string()],
                 ..Default::default()
@@ -3245,13 +3278,13 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // Create dep task and move to completed
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
         transition_to(&conn, TaskDbId(dep.id().into()), TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
         let ready_t = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "ready".to_string(),
                 dependencies: vec![dep.id()],
@@ -3262,10 +3295,10 @@ mod tests {
         transition_to(&conn, TaskDbId(ready_t.id().into()), TaskStatus::Todo);
 
         // Create another dep that is NOT completed
-        let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
+        let dep2 = create_task(&conn, ProjectId(1), &default_create_params("dep2")).unwrap();
         let blocked_task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep2.id()],
@@ -3277,7 +3310,7 @@ mod tests {
 
         let result = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 ready: true,
                 ..Default::default()
@@ -3294,7 +3327,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let contract = create_contract(
             &conn,
-            1,
+            ProjectId(1),
             &CreateContractParams {
                 title: "c".to_string(),
                 description: None,
@@ -3307,12 +3340,12 @@ mod tests {
 
         let mut with_contract = default_create_params("linked");
         with_contract.contract_id = Some(contract.id());
-        create_task(&conn, 1, &with_contract).unwrap();
-        create_task(&conn, 1, &default_create_params("unlinked")).unwrap();
+        create_task(&conn, ProjectId(1), &with_contract).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("unlinked")).unwrap();
 
         let matched = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 contract_id: Some(contract.id()),
                 ..Default::default()
@@ -3324,7 +3357,7 @@ mod tests {
 
         let nomatch = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 contract_id: Some(contract.id() + 9999),
                 ..Default::default()
@@ -3337,13 +3370,13 @@ mod tests {
     #[test]
     fn list_tasks_filter_by_id_range() {
         let (_tmp, conn) = setup();
-        let a = create_task(&conn, 1, &default_create_params("a")).unwrap();
-        let b = create_task(&conn, 1, &default_create_params("b")).unwrap();
-        let c = create_task(&conn, 1, &default_create_params("c")).unwrap();
+        let a = create_task(&conn, ProjectId(1), &default_create_params("a")).unwrap();
+        let b = create_task(&conn, ProjectId(1), &default_create_params("b")).unwrap();
+        let c = create_task(&conn, ProjectId(1), &default_create_params("c")).unwrap();
 
         let ge_b = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 id_min: Some(b.id()),
                 ..Default::default()
@@ -3354,7 +3387,7 @@ mod tests {
 
         let le_b = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 id_max: Some(b.id()),
                 ..Default::default()
@@ -3365,7 +3398,7 @@ mod tests {
 
         let just_b = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 id_min: Some(b.id()),
                 id_max: Some(b.id()),
@@ -3384,15 +3417,20 @@ mod tests {
     fn list_tasks_pagination_limit_offset() {
         let (_tmp, conn) = setup();
         for i in 0..5 {
-            create_task(&conn, 1, &default_create_params(&format!("t{i}"))).unwrap();
+            create_task(
+                &conn,
+                ProjectId(1),
+                &default_create_params(&format!("t{i}")),
+            )
+            .unwrap();
         }
 
-        let all = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let all = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         assert_eq!(all.len(), 5);
 
         let limited = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 limit: Some(2),
                 ..Default::default()
@@ -3404,7 +3442,7 @@ mod tests {
 
         let offset_only = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 offset: Some(2),
                 ..Default::default()
@@ -3416,7 +3454,7 @@ mod tests {
 
         let both = list_tasks(
             &conn,
-            1,
+            ProjectId(1),
             &ListTasksFilter {
                 limit: Some(2),
                 offset: Some(2),
@@ -3434,7 +3472,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "t1".to_string(),
                 branch: None,
@@ -3457,12 +3495,12 @@ mod tests {
     #[test]
     fn task_with_dependencies() {
         let (_tmp, conn) = setup();
-        let dep1 = create_task(&conn, 1, &default_create_params("dep1")).unwrap();
-        let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
+        let dep1 = create_task(&conn, ProjectId(1), &default_create_params("dep1")).unwrap();
+        let dep2 = create_task(&conn, ProjectId(1), &default_create_params("dep2")).unwrap();
 
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "with deps".to_string(),
                 dependencies: vec![dep1.id(), dep2.id()],
@@ -3498,7 +3536,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -3531,7 +3569,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -3563,7 +3601,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 branch: None,
                 pr_url: None,
@@ -3593,7 +3631,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 definition_of_done: vec!["old".to_string()],
                 ..default_create_params("t")
@@ -3626,7 +3664,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 in_scope: vec!["a".to_string(), "b".to_string()],
                 ..default_create_params("t")
@@ -3652,7 +3690,7 @@ mod tests {
     fn make_todo(conn: &Connection, title: &str, priority: Option<Priority>) -> Task {
         let task = create_task(
             conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 priority,
                 ..default_create_params(title)
@@ -3664,7 +3702,7 @@ mod tests {
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
-        let task = create_task(conn, 1, &default_create_params(title)).unwrap();
+        let task = create_task(conn, ProjectId(1), &default_create_params(title)).unwrap();
         transition_to(conn, TaskDbId(task.id().into()), TaskStatus::Completed);
         get_task(conn, TaskDbId(task.id().into())).unwrap()
     }
@@ -3672,7 +3710,11 @@ mod tests {
     #[test]
     fn next_task_returns_none_when_empty() {
         let (_tmp, conn) = setup();
-        assert!(next_task(&conn, 1, None, false).unwrap().is_none());
+        assert!(
+            next_task(&conn, ProjectId(1), None, false)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -3680,12 +3722,12 @@ mod tests {
         let (_tmp, conn) = setup();
 
         // Create a dep that is NOT completed (still draft)
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
 
         // Create a todo task that depends on dep
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -3695,7 +3737,11 @@ mod tests {
         .unwrap();
         transition_to(&conn, TaskDbId(task.id().into()), TaskStatus::Todo);
 
-        assert!(next_task(&conn, 1, None, false).unwrap().is_none());
+        assert!(
+            next_task(&conn, ProjectId(1), None, false)
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
@@ -3706,7 +3752,9 @@ mod tests {
         make_todo(&conn, "high", Some(Priority::P0));
         make_todo(&conn, "mid", Some(Priority::P1));
 
-        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let task = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title(), "high");
     }
 
@@ -3719,7 +3767,9 @@ mod tests {
         make_todo(&conn, "first", Some(Priority::P2));
         make_todo(&conn, "second", Some(Priority::P2));
 
-        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let task = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(task.title(), "first");
     }
 
@@ -3732,7 +3782,9 @@ mod tests {
         let t1 = make_todo(&conn, "t1", Some(Priority::P2));
         let t2 = make_todo(&conn, "t2", Some(Priority::P2));
 
-        let task = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let task = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
         // t1 was created first, so it has lower id
         assert!(t1.id() < t2.id());
         assert_eq!(task.id(), t1.id());
@@ -3746,7 +3798,7 @@ mod tests {
 
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "ready".to_string(),
                 dependencies: vec![dep.id()],
@@ -3756,7 +3808,9 @@ mod tests {
         .unwrap();
         transition_to(&conn, TaskDbId(task.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let result = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.title(), "ready");
     }
 
@@ -3775,7 +3829,7 @@ mod tests {
         .unwrap();
         let t1 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 ..default_create_params("user1-task")
@@ -3784,7 +3838,7 @@ mod tests {
         .unwrap();
         let t2 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
                 ..default_create_params("user2-task")
@@ -3794,7 +3848,9 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
+        let result = next_task(&conn, ProjectId(1), Some(1), false)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.title(), "user1-task");
     }
 
@@ -3804,7 +3860,7 @@ mod tests {
         // Lower priority (P2) assigned task
         let t1 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 priority: Some(Priority::P2),
@@ -3815,7 +3871,7 @@ mod tests {
         // Higher priority (P1) unassigned task
         let t2 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: None,
                 priority: Some(Priority::P1),
@@ -3826,7 +3882,9 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1, Some(1), true).unwrap().unwrap();
+        let result = next_task(&conn, ProjectId(1), Some(1), true)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.title(), "unassigned");
     }
 
@@ -3835,7 +3893,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 priority: Some(Priority::P2),
@@ -3845,7 +3903,7 @@ mod tests {
         .unwrap();
         let t2 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: None,
                 priority: Some(Priority::P1),
@@ -3856,7 +3914,9 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
+        let result = next_task(&conn, ProjectId(1), Some(1), false)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.title(), "assigned");
     }
 
@@ -3865,7 +3925,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 priority: Some(Priority::P2),
@@ -3875,7 +3935,7 @@ mod tests {
         .unwrap();
         let t2 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: None,
                 priority: Some(Priority::P1),
@@ -3886,7 +3946,9 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let result = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
         assert_eq!(result.title(), "unassigned");
     }
 
@@ -3895,7 +3957,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 ..default_create_params("with-assignee")
@@ -3920,7 +3982,7 @@ mod tests {
         .unwrap();
         let _t1 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(1)),
                 ..default_create_params("user1-task")
@@ -3929,7 +3991,7 @@ mod tests {
         .unwrap();
         let _t2 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: Some(AssigneeUserId::Id(user2.id())),
                 ..default_create_params("user2-task")
@@ -3938,7 +4000,7 @@ mod tests {
         .unwrap();
         let _t3 = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 assignee_user_id: None,
                 ..default_create_params("unassigned-task")
@@ -3952,7 +4014,7 @@ mod tests {
             include_unassigned: false,
             ..Default::default()
         };
-        let tasks = list_tasks(&conn, 1, &filter).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title(), "user1-task");
 
@@ -3962,7 +4024,7 @@ mod tests {
             include_unassigned: true,
             ..Default::default()
         };
-        let tasks = list_tasks(&conn, 1, &filter).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap();
         assert_eq!(tasks.len(), 2);
         let titles: Vec<&str> = tasks.iter().map(|t| t.title()).collect();
         assert!(titles.contains(&"user1-task"));
@@ -3974,9 +4036,9 @@ mod tests {
     #[test]
     fn save_persists_dependencies() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, ProjectId(1), &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, ProjectId(1), &default_create_params("t3")).unwrap();
 
         let (t1, _) = t1
             .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
@@ -3995,9 +4057,9 @@ mod tests {
     #[test]
     fn save_replaces_dependencies() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, ProjectId(1), &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, ProjectId(1), &default_create_params("t3")).unwrap();
 
         let (t1, _) = t1
             .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
@@ -4016,8 +4078,8 @@ mod tests {
     #[test]
     fn save_clears_dependencies() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, ProjectId(1), &default_create_params("t2")).unwrap();
 
         let (t1, _) = t1
             .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
@@ -4036,9 +4098,9 @@ mod tests {
     #[test]
     fn list_dependencies_basic() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
+        let t2 = create_task(&conn, ProjectId(1), &default_create_params("t2")).unwrap();
+        let t3 = create_task(&conn, ProjectId(1), &default_create_params("t3")).unwrap();
 
         let (t1, _) = t1
             .add_dependency(t2.id(), Some("2026-01-01T00:00:00Z".into()))
@@ -4058,7 +4120,7 @@ mod tests {
     #[test]
     fn list_dependencies_empty() {
         let (_tmp, conn) = setup();
-        let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
+        let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
 
         let deps = list_dependencies(&conn, TaskDbId(t1.id().into())).unwrap();
         assert!(deps.is_empty());
@@ -4069,7 +4131,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "t".to_string(),
                 background: Some("bg".to_string()),
@@ -4109,7 +4171,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let task = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 definition_of_done: vec!["item1".to_string(), "item2".to_string()],
                 ..default_create_params("t")
@@ -4357,7 +4419,7 @@ mod tests {
         let backend = mem_backend();
         let task = backend
             .create_task(
-                1,
+                ProjectId(1),
                 &CreateTaskParams {
                     title: "Round-trip test".into(),
                     background: Some("bg".into()),
@@ -4378,7 +4440,7 @@ mod tests {
             .await
             .unwrap();
 
-        let got = backend.get_task(1, task.id()).await.unwrap();
+        let got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(got.title(), "Round-trip test");
         assert_eq!(got.background(), Some("bg"));
         assert_eq!(got.description(), Some("desc"));
@@ -4397,12 +4459,15 @@ mod tests {
     #[tokio::test]
     async fn inmem_task_lifecycle() {
         let backend = mem_backend();
-        let task = backend.create_task(1, &params("Lifecycle")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("Lifecycle"))
+            .await
+            .unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
 
         let (task, _) = task.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        let task_got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Todo);
 
         let (task, _) = task_got
@@ -4414,7 +4479,7 @@ mod tests {
             )
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        let task_got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::InProgress);
         assert_eq!(task_got.assignee_session_id(), Some("sess-1"));
         assert!(task_got.started_at().is_some());
@@ -4423,7 +4488,7 @@ mod tests {
             .complete("2026-01-02T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        let task_got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Completed);
         assert!(task_got.completed_at().is_some());
     }
@@ -4431,7 +4496,10 @@ mod tests {
     #[tokio::test]
     async fn inmem_task_cancel() {
         let backend = mem_backend();
-        let task = backend.create_task(1, &params("Cancel me")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("Cancel me"))
+            .await
+            .unwrap();
         let (task, _) = task
             .cancel(
                 "2026-01-01T00:00:00Z".to_string(),
@@ -4439,7 +4507,7 @@ mod tests {
             )
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task_got = backend.get_task(1, task.id()).await.unwrap();
+        let task_got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task_got.status(), TaskStatus::Canceled);
         assert_eq!(task_got.cancel_reason(), Some("no longer needed"));
     }
@@ -4518,35 +4586,47 @@ mod tests {
 
         let member = backend
             .add_project_member(
-                1,
+                ProjectId(1),
                 &AddProjectMemberParams::new(user.id(), Some(Role::Member)),
             )
             .await
             .unwrap();
         assert_eq!(member.role(), Role::Member);
 
-        let got = backend.get_project_member(1, user.id()).await.unwrap();
+        let got = backend
+            .get_project_member(ProjectId(1), user.id())
+            .await
+            .unwrap();
         assert_eq!(got.user_id(), user.id());
 
         let updated = backend
-            .update_member_role(1, user.id(), Role::Owner)
+            .update_member_role(ProjectId(1), user.id(), Role::Owner)
             .await
             .unwrap();
         assert_eq!(updated.role(), Role::Owner);
 
-        let members = backend.list_project_members(1).await.unwrap();
+        let members = backend.list_project_members(ProjectId(1)).await.unwrap();
         assert_eq!(members.len(), 2); // default user (owner) + bob
 
-        backend.remove_project_member(1, user.id()).await.unwrap();
-        let members = backend.list_project_members(1).await.unwrap();
+        backend
+            .remove_project_member(ProjectId(1), user.id())
+            .await
+            .unwrap();
+        let members = backend.list_project_members(ProjectId(1)).await.unwrap();
         assert_eq!(members.len(), 1); // only default user (owner) remains
     }
 
     #[tokio::test]
     async fn inmem_dependencies() {
         let backend = mem_backend();
-        let t1 = backend.create_task(1, &params("T1")).await.unwrap();
-        let t2 = backend.create_task(1, &params("T2")).await.unwrap();
+        let t1 = backend
+            .create_task(ProjectId(1), &params("T1"))
+            .await
+            .unwrap();
+        let t2 = backend
+            .create_task(ProjectId(1), &params("T2"))
+            .await
+            .unwrap();
         let (t1, _) = t1.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
         backend.save(&t1).await.unwrap();
         let (t2, _) = t2.publish("2026-01-01T00:00:00Z".to_string()).unwrap();
@@ -4556,21 +4636,24 @@ mod tests {
             .add_dependency(t1.id(), Some("2026-01-01T00:00:01Z".into()))
             .unwrap();
         backend.save(&t2).await.unwrap();
-        let t2 = backend.get_task(1, t2.id()).await.unwrap();
+        let t2 = backend.get_task(ProjectId(1), t2.id()).await.unwrap();
         assert_eq!(t2.dependencies(), &[t1.id()]);
 
-        let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
+        let deps = backend
+            .list_dependencies(ProjectId(1), t2.id())
+            .await
+            .unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id(), t1.id());
 
-        let next = backend.next_task(1, None, false).await.unwrap();
+        let next = backend.next_task(ProjectId(1), None, false).await.unwrap();
         assert!(next.is_none() || next.unwrap().id() == t1.id());
 
         let (t2, _) = t2
             .remove_dependency(t1.id(), Some("2026-01-01T00:00:02Z".into()))
             .unwrap();
         backend.save(&t2).await.unwrap();
-        let t2 = backend.get_task(1, t2.id()).await.unwrap();
+        let t2 = backend.get_task(ProjectId(1), t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
     }
 
@@ -4579,7 +4662,7 @@ mod tests {
         let backend = mem_backend();
         let mut p = params("DoD test");
         p.definition_of_done = vec!["Item A".into(), "Item B".into()];
-        let task = backend.create_task(1, &p).await.unwrap();
+        let task = backend.create_task(ProjectId(1), &p).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
@@ -4587,7 +4670,7 @@ mod tests {
             .check_dod(1, "2026-01-01T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
@@ -4595,7 +4678,7 @@ mod tests {
             .check_dod(2, "2026-01-01T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(task.definition_of_done()[1].checked());
 
@@ -4603,7 +4686,7 @@ mod tests {
             .uncheck_dod(1, "2026-01-01T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert!(task.definition_of_done()[1].checked());
     }
@@ -4611,14 +4694,14 @@ mod tests {
     #[tokio::test]
     async fn test_sync_config_defaults_project_name() {
         let backend = SqliteBackend::new_in_memory().unwrap();
-        let project = backend.get_project(1).await.unwrap();
+        let project = backend.get_project(ProjectId(1)).await.unwrap();
         assert_eq!(project.name(), "default");
 
         let mut config = Config::default();
         config.project.name = Some("my-project".to_string());
         backend.sync_config_defaults(&config).unwrap();
 
-        let project = backend.get_project(1).await.unwrap();
+        let project = backend.get_project(ProjectId(1)).await.unwrap();
         assert_eq!(project.name(), "my-project");
     }
 
@@ -4642,7 +4725,7 @@ mod tests {
         let config = Config::default();
         backend.sync_config_defaults(&config).unwrap();
 
-        let project = backend.get_project(1).await.unwrap();
+        let project = backend.get_project(ProjectId(1)).await.unwrap();
         assert_eq!(project.name(), "default");
         let user = backend.get_user(1).await.unwrap();
         assert_eq!(user.username(), "default");
@@ -4677,9 +4760,11 @@ mod tests {
         make_todo(&conn, "high", Some(Priority::P0));
         make_todo(&conn, "mid", Some(Priority::P1));
 
-        let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let sql_result = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
 
-        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         let domain_result = crate::domain::task::select_next(all_tasks, &HashMap::new()).unwrap();
 
         assert_eq!(sql_result.id(), domain_result.id());
@@ -4689,12 +4774,12 @@ mod tests {
     fn sql_next_task_matches_domain_with_deps() {
         let (_tmp, conn) = setup();
 
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
         // dep stays draft (not completed) => blocks dependents
 
         let blocked = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -4706,9 +4791,11 @@ mod tests {
 
         let free = make_todo(&conn, "free", Some(Priority::P1));
 
-        let sql_result = next_task(&conn, 1, None, false).unwrap().unwrap();
+        let sql_result = next_task(&conn, ProjectId(1), None, false)
+            .unwrap()
+            .unwrap();
 
-        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
@@ -4725,11 +4812,11 @@ mod tests {
     fn sql_ready_filter_matches_domain_filter_ready() {
         let (_tmp, conn) = setup();
 
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
 
         let blocked = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -4742,9 +4829,9 @@ mod tests {
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
 
-        let sql_ready = list_ready_tasks(&conn, 1).unwrap();
+        let sql_ready = list_ready_tasks(&conn, ProjectId(1)).unwrap();
 
-        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
@@ -4764,11 +4851,11 @@ mod tests {
     fn sql_ready_count_matches_domain() {
         let (_tmp, conn) = setup();
 
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
 
         let blocked = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -4781,9 +4868,9 @@ mod tests {
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
 
-        let sql_count = ready_count(&conn, 1).unwrap();
+        let sql_count = ready_count(&conn, ProjectId(1)).unwrap();
 
-        let all_tasks = list_tasks(&conn, 1, &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
@@ -4800,38 +4887,38 @@ mod tests {
     fn is_task_ready_true_for_todo_with_no_deps() {
         let (_tmp, conn) = setup();
         let t = make_todo(&conn, "free", None);
-        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(is_task_ready(&conn, ProjectId(1), t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_draft() {
         let (_tmp, conn) = setup();
-        let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        let t = create_task(&conn, ProjectId(1), &default_create_params("draft")).unwrap();
+        assert!(!is_task_ready(&conn, ProjectId(1), t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_in_progress() {
         let (_tmp, conn) = setup();
-        let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
+        let t = create_task(&conn, ProjectId(1), &default_create_params("wip")).unwrap();
         transition_to(&conn, TaskDbId(t.id().into()), TaskStatus::InProgress);
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, ProjectId(1), t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_completed() {
         let (_tmp, conn) = setup();
         let t = make_completed(&conn, "done");
-        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
+        assert!(!is_task_ready(&conn, ProjectId(1), t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_when_blocked_by_incomplete_dep() {
         let (_tmp, conn) = setup();
-        let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
+        let dep = create_task(&conn, ProjectId(1), &default_create_params("dep")).unwrap();
         let blocked = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "blocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -4840,7 +4927,7 @@ mod tests {
         )
         .unwrap();
         transition_to(&conn, TaskDbId(blocked.id().into()), TaskStatus::Todo);
-        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
+        assert!(!is_task_ready(&conn, ProjectId(1), blocked.id()).unwrap());
     }
 
     #[test]
@@ -4849,7 +4936,7 @@ mod tests {
         let dep = make_completed(&conn, "dep");
         let unblocked = create_task(
             &conn,
-            1,
+            ProjectId(1),
             &CreateTaskParams {
                 title: "unblocked".to_string(),
                 dependencies: vec![dep.id()],
@@ -4858,13 +4945,13 @@ mod tests {
         )
         .unwrap();
         transition_to(&conn, TaskDbId(unblocked.id().into()), TaskStatus::Todo);
-        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
+        assert!(is_task_ready(&conn, ProjectId(1), unblocked.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_missing_task() {
         let (_tmp, conn) = setup();
-        assert!(!is_task_ready(&conn, 1, TaskId(9_999)).unwrap());
+        assert!(!is_task_ready(&conn, ProjectId(1), TaskId(9_999)).unwrap());
     }
 
     // --- MetadataField tests ---
@@ -4878,14 +4965,14 @@ mod tests {
             required_on_complete: false,
             description: Some("Sprint name".to_string()),
         };
-        let field = create_metadata_field(&conn, 1, &params).unwrap();
+        let field = create_metadata_field(&conn, ProjectId(1), &params).unwrap();
         assert_eq!(field.name(), "sprint");
         assert_eq!(field.field_type(), MetadataFieldType::String);
         assert!(!field.required_on_complete());
         assert_eq!(field.description(), Some("Sprint name"));
-        assert_eq!(field.project_id(), 1);
+        assert_eq!(field.project_id(), ProjectId(1));
 
-        let fetched = get_metadata_field(&conn, 1, field.id()).unwrap();
+        let fetched = get_metadata_field(&conn, ProjectId(1), field.id()).unwrap();
         assert_eq!(fetched.id(), field.id());
         assert_eq!(fetched.name(), "sprint");
     }
@@ -4895,7 +4982,7 @@ mod tests {
         let (_tmp, conn) = setup();
         create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -4906,7 +4993,7 @@ mod tests {
         .unwrap();
         create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "points".to_string(),
                 field_type: MetadataFieldType::Number,
@@ -4916,7 +5003,7 @@ mod tests {
         )
         .unwrap();
 
-        let fields = list_metadata_fields(&conn, 1).unwrap();
+        let fields = list_metadata_fields(&conn, ProjectId(1)).unwrap();
         assert_eq!(fields.len(), 2);
 
         // Different project should be empty
@@ -4928,7 +5015,7 @@ mod tests {
             },
         )
         .unwrap();
-        let other_fields = list_metadata_fields(&conn, 2).unwrap();
+        let other_fields = list_metadata_fields(&conn, ProjectId(2)).unwrap();
         assert!(other_fields.is_empty());
     }
 
@@ -4937,7 +5024,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let field = create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -4949,7 +5036,7 @@ mod tests {
 
         let updated = update_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             field.id(),
             &UpdateMetadataFieldParams {
                 required_on_complete: Some(true),
@@ -4966,7 +5053,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let field = create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -4978,7 +5065,7 @@ mod tests {
 
         let updated = update_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             field.id(),
             &UpdateMetadataFieldParams {
                 required_on_complete: None,
@@ -4994,7 +5081,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let field = create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -5006,7 +5093,7 @@ mod tests {
 
         let updated = update_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             field.id(),
             &UpdateMetadataFieldParams {
                 required_on_complete: None,
@@ -5022,7 +5109,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let field = create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -5032,15 +5119,15 @@ mod tests {
         )
         .unwrap();
 
-        delete_metadata_field(&conn, 1, field.id()).unwrap();
-        let result = get_metadata_field(&conn, 1, field.id());
+        delete_metadata_field(&conn, ProjectId(1), field.id()).unwrap();
+        let result = get_metadata_field(&conn, ProjectId(1), field.id());
         assert!(result.is_err());
     }
 
     #[test]
     fn delete_metadata_field_not_found() {
         let (_tmp, conn) = setup();
-        let result = delete_metadata_field(&conn, 1, 999);
+        let result = delete_metadata_field(&conn, ProjectId(1), 999);
         assert!(result.is_err());
     }
 
@@ -5053,8 +5140,8 @@ mod tests {
             required_on_complete: false,
             description: None,
         };
-        create_metadata_field(&conn, 1, &params).unwrap();
-        let result = create_metadata_field(&conn, 1, &params);
+        create_metadata_field(&conn, ProjectId(1), &params).unwrap();
+        let result = create_metadata_field(&conn, ProjectId(1), &params);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(
@@ -5080,8 +5167,8 @@ mod tests {
             required_on_complete: false,
             description: None,
         };
-        create_metadata_field(&conn, 1, &params).unwrap();
-        let result = create_metadata_field(&conn, 2, &params);
+        create_metadata_field(&conn, ProjectId(1), &params).unwrap();
+        let result = create_metadata_field(&conn, ProjectId(2), &params);
         assert!(result.is_ok());
     }
 
@@ -5090,7 +5177,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let field = create_metadata_field(
             &conn,
-            1,
+            ProjectId(1),
             &CreateMetadataFieldParams {
                 name: "sprint".to_string(),
                 field_type: MetadataFieldType::String,
@@ -5108,7 +5195,7 @@ mod tests {
             },
         )
         .unwrap();
-        let result = get_metadata_field(&conn, 2, field.id());
+        let result = get_metadata_field(&conn, ProjectId(2), field.id());
         assert!(result.is_err());
     }
 
@@ -5211,11 +5298,11 @@ mod tests {
     async fn inmem_contract_create_and_get() {
         let backend = mem_backend();
         let created = backend
-            .create_contract(1, &make_contract_params("Contract A"))
+            .create_contract(ProjectId(1), &make_contract_params("Contract A"))
             .await
             .unwrap();
         assert_eq!(created.title(), "Contract A");
-        assert_eq!(created.project_id(), 1);
+        assert_eq!(created.project_id(), ProjectId(1));
         assert_eq!(created.definition_of_done().len(), 2);
         assert_eq!(created.tags(), &["api".to_string()]);
         assert_eq!(
@@ -5234,15 +5321,15 @@ mod tests {
     async fn inmem_contract_list_ordered() {
         let backend = mem_backend();
         let a = backend
-            .create_contract(1, &make_contract_params("A"))
+            .create_contract(ProjectId(1), &make_contract_params("A"))
             .await
             .unwrap();
         let b = backend
-            .create_contract(1, &make_contract_params("B"))
+            .create_contract(ProjectId(1), &make_contract_params("B"))
             .await
             .unwrap();
 
-        let list = backend.list_contracts(1).await.unwrap();
+        let list = backend.list_contracts(ProjectId(1)).await.unwrap();
         assert_eq!(list.len(), 2);
         assert_eq!(list[0].id(), a.id());
         assert_eq!(list[1].id(), b.id());
@@ -5252,7 +5339,7 @@ mod tests {
     async fn inmem_contract_update_scalar_and_arrays() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("Spec"))
+            .create_contract(ProjectId(1), &make_contract_params("Spec"))
             .await
             .unwrap();
 
@@ -5290,7 +5377,7 @@ mod tests {
     async fn inmem_contract_check_and_uncheck_dod() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("DoD"))
+            .create_contract(ProjectId(1), &make_contract_params("DoD"))
             .await
             .unwrap();
         let checked = backend.check_dod(c.id(), 1).await.unwrap();
@@ -5309,10 +5396,13 @@ mod tests {
     async fn inmem_contract_add_note_preserves_source_task() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("With note"))
+            .create_contract(ProjectId(1), &make_contract_params("With note"))
             .await
             .unwrap();
-        let task = backend.create_task(1, &params("source")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("source"))
+            .await
+            .unwrap();
         let note = ContractNote::new(
             "first observation".to_string(),
             Some(task.id()),
@@ -5326,7 +5416,7 @@ mod tests {
         assert_eq!(refreshed.notes()[0].source_task_id(), Some(task.id()));
 
         // ON DELETE SET NULL: deleting the source task nullifies the reference
-        backend.delete_task(1, task.id()).await.unwrap();
+        backend.delete_task(ProjectId(1), task.id()).await.unwrap();
         let refreshed = backend.get_contract(c.id()).await.unwrap();
         assert_eq!(refreshed.notes().len(), 1);
         assert_eq!(refreshed.notes()[0].source_task_id(), None);
@@ -5336,7 +5426,7 @@ mod tests {
     async fn inmem_contract_delete_cascades_children() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("Delete me"))
+            .create_contract(ProjectId(1), &make_contract_params("Delete me"))
             .await
             .unwrap();
         backend
@@ -5351,7 +5441,7 @@ mod tests {
 
         // Child rows must be gone (SQLite FK cascade)
         assert!(backend.get_contract(c.id()).await.is_err());
-        let list = backend.list_contracts(1).await.unwrap();
+        let list = backend.list_contracts(ProjectId(1)).await.unwrap();
         assert!(list.is_empty());
     }
 
@@ -5359,15 +5449,15 @@ mod tests {
     async fn inmem_create_task_with_contract_id() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("linked at create"))
+            .create_contract(ProjectId(1), &make_contract_params("linked at create"))
             .await
             .unwrap();
         let mut p = params("task with contract");
         p.contract_id = Some(c.id());
-        let task = backend.create_task(1, &p).await.unwrap();
+        let task = backend.create_task(ProjectId(1), &p).await.unwrap();
         assert_eq!(task.contract_id(), Some(c.id()));
 
-        let got = backend.get_task(1, task.id()).await.unwrap();
+        let got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(got.contract_id(), Some(c.id()));
     }
 
@@ -5375,11 +5465,11 @@ mod tests {
     async fn inmem_task_contract_id_roundtrip() {
         let backend = mem_backend();
         let c = backend
-            .create_contract(1, &make_contract_params("linked"))
+            .create_contract(ProjectId(1), &make_contract_params("linked"))
             .await
             .unwrap();
         let task = backend
-            .create_task(1, &params("linked task"))
+            .create_task(ProjectId(1), &params("linked task"))
             .await
             .unwrap();
 
@@ -5388,7 +5478,7 @@ mod tests {
 
         let updated = backend
             .update_task(
-                1,
+                ProjectId(1),
                 task.id(),
                 &UpdateTaskParams {
                     title: None,
@@ -5415,7 +5505,7 @@ mod tests {
         // Clearing back to None
         let cleared = backend
             .update_task(
-                1,
+                ProjectId(1),
                 task.id(),
                 &UpdateTaskParams {
                     title: None,

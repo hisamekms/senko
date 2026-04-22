@@ -3,6 +3,7 @@ use async_trait::async_trait;
 
 use crate::application::port::MetadataFieldOperations;
 use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataField};
+use crate::domain::project::ProjectId;
 
 use super::client::HttpClient;
 use super::{check_success, read_json_or_error};
@@ -35,7 +36,7 @@ impl RemoteMetadataFieldOperations {
 impl MetadataFieldOperations for RemoteMetadataFieldOperations {
     async fn create_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField> {
         let resp = self
@@ -49,7 +50,7 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>> {
+    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
         let resp = self
             .auth(
                 self.client()
@@ -60,7 +61,7 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_metadata_field_by_name(&self, project_id: i64, name: &str) -> Result<()> {
+    async fn delete_metadata_field_by_name(&self, project_id: ProjectId, name: &str) -> Result<()> {
         let resp = self
             .auth(
                 self.client().delete(

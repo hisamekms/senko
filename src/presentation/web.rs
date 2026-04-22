@@ -14,6 +14,7 @@ use pulldown_cmark::{Options, Parser};
 
 use crate::application::{ListTasksFilter, TaskOperations};
 use crate::bootstrap;
+use crate::domain::project::ProjectId;
 use crate::domain::task::TaskId;
 use crate::infra::config::Config;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
@@ -21,7 +22,7 @@ use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 #[derive(Clone)]
 struct AppState {
     task_service: Arc<dyn TaskOperations>,
-    project_id: i64,
+    project_id: ProjectId,
 }
 
 #[derive(serde::Deserialize)]
@@ -38,7 +39,7 @@ pub async fn serve(
     port_is_explicit: bool,
     config: &Config,
     task_service: Arc<dyn TaskOperations>,
-    project_id: i64,
+    project_id: ProjectId,
 ) -> Result<()> {
     bootstrap::init_tracing(&config.log);
 

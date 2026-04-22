@@ -8,6 +8,7 @@ use chrono::Utc;
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
+use crate::domain::project::ProjectId;
 use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskEvent,
     TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
@@ -45,7 +46,7 @@ impl LocalTaskOperations {
     /// Find tasks that would become ready if the given task were completed.
     async fn compute_would_be_unblocked(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         completing_task_id: TaskId,
     ) -> Result<Vec<Task>> {
         let all_tasks = self
@@ -86,7 +87,7 @@ impl LocalTaskOperations {
 impl TaskOperations for LocalTaskOperations {
     // --- Task CRUD with business logic ---
 
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task> {
         params.validate()?;
         if let Some(ref metadata) = params.metadata {
             validate_metadata(metadata)?;
@@ -116,7 +117,7 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn publish_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn publish_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let prev = self.backend.get_task(project_id, id).await?;
         let prev_status = prev.status();
 
@@ -157,7 +158,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn start_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
         user_id: Option<i64>,
@@ -219,7 +220,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn next_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         session_id: Option<String>,
         user_id: Option<i64>,
         include_unassigned: bool,
@@ -322,7 +323,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn complete_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         skip_pr_check: bool,
     ) -> Result<CompleteResult> {
@@ -415,7 +416,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn cancel_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         reason: Option<String>,
     ) -> Result<Task> {
@@ -466,7 +467,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn preview_transition(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         target: TaskStatus,
     ) -> Result<PreviewResult> {
@@ -572,7 +573,7 @@ impl TaskOperations for LocalTaskOperations {
         })
     }
 
-    async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
+    async fn preview_next(&self, project_id: ProjectId) -> Result<PreviewResult> {
         let task = match self.backend.next_task(project_id, None, false).await? {
             Some(t) => t,
             None => return Err(DomainError::NoEligibleTask.into()),
@@ -599,11 +600,15 @@ impl TaskOperations for LocalTaskOperations {
 
     // --- Passthrough methods (no hooks) ---
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         self.backend.get_task(project_id, id).await
     }
 
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(
+        &self,
+        project_id: ProjectId,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
         if filter.metadata.is_empty() {
             return self.backend.list_tasks(project_id, filter).await;
         }
@@ -613,7 +618,7 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.list_tasks(project_id, &resolved_filter).await
     }
 
-    async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
+    async fn list_all_tags(&self, project_id: ProjectId) -> Result<Vec<String>> {
         let tasks = self
             .backend
             .list_tasks(project_id, &ListTasksFilter::default())
@@ -627,13 +632,16 @@ impl TaskOperations for LocalTaskOperations {
         Ok(tags)
     }
 
-    async fn task_stats(&self, project_id: i64) -> Result<std::collections::HashMap<String, i64>> {
+    async fn task_stats(
+        &self,
+        project_id: ProjectId,
+    ) -> Result<std::collections::HashMap<String, i64>> {
         self.backend.task_stats(project_id).await
     }
 
     async fn edit_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
@@ -649,7 +657,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn edit_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
@@ -659,15 +667,20 @@ impl TaskOperations for LocalTaskOperations {
             .await
     }
 
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()> {
         self.backend.delete_task(project_id, id).await
     }
 
-    async fn save_task(&self, _project_id: i64, _id: TaskId, task: &Task) -> Result<()> {
+    async fn save_task(&self, _project_id: ProjectId, _id: TaskId, task: &Task) -> Result<()> {
         self.backend.save(task).await
     }
 
-    async fn check_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
+    async fn check_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+    ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.check_dod(index, now)?;
@@ -675,7 +688,12 @@ impl TaskOperations for LocalTaskOperations {
         Ok(task)
     }
 
-    async fn uncheck_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
+    async fn uncheck_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+    ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, _events) = task.uncheck_dod(index, now)?;
@@ -685,7 +703,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn add_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task> {
@@ -718,7 +736,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn remove_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task> {
@@ -731,7 +749,7 @@ impl TaskOperations for LocalTaskOperations {
 
     async fn set_dependencies(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_ids: &[TaskId],
     ) -> Result<Task> {
@@ -767,15 +785,15 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
         self.backend.list_dependencies(project_id, task_id).await
     }
 
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         self.backend.list_ready_tasks(project_id).await
     }
 
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         self.backend.ready_count(project_id).await
     }
 }

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::domain::project::ProjectId;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskId, TaskStatus, UnblockedTask,
     UpdateTaskArrayParams, UpdateTaskParams,
@@ -35,11 +36,11 @@ pub struct PreviewResult {
 pub trait TaskOperations: Send + Sync {
     // --- State transitions ---
 
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
-    async fn publish_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task>;
+    async fn publish_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task>;
     async fn start_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
         user_id: Option<i64>,
@@ -47,7 +48,7 @@ pub trait TaskOperations: Send + Sync {
     ) -> Result<Task>;
     async fn next_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         session_id: Option<String>,
         user_id: Option<i64>,
         include_unassigned: bool,
@@ -55,13 +56,13 @@ pub trait TaskOperations: Send + Sync {
     ) -> Result<Task>;
     async fn complete_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         skip_pr_check: bool,
     ) -> Result<CompleteResult>;
     async fn cancel_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         reason: Option<String>,
     ) -> Result<Task>;
@@ -70,62 +71,72 @@ pub trait TaskOperations: Send + Sync {
 
     async fn preview_transition(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         target: TaskStatus,
     ) -> Result<PreviewResult>;
-    async fn preview_next(&self, project_id: i64) -> Result<PreviewResult>;
+    async fn preview_next(&self, project_id: ProjectId) -> Result<PreviewResult>;
 
     // --- Queries ---
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>>;
-    async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>>;
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>>;
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task>;
+    async fn list_tasks(
+        &self,
+        project_id: ProjectId,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>>;
+    async fn list_all_tags(&self, project_id: ProjectId) -> Result<Vec<String>>;
+    async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>>;
 
     // --- Edit ---
 
     async fn edit_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task>;
     async fn edit_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()>;
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()>;
-    async fn save_task(&self, project_id: i64, id: TaskId, task: &Task) -> Result<()>;
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()>;
+    async fn save_task(&self, project_id: ProjectId, id: TaskId, task: &Task) -> Result<()>;
 
     // --- Definition of Done ---
 
-    async fn check_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task>;
-    async fn uncheck_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task>;
+    async fn check_dod(&self, project_id: ProjectId, task_id: TaskId, index: usize)
+    -> Result<Task>;
+    async fn uncheck_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+    ) -> Result<Task>;
 
     // --- Dependencies ---
 
     async fn add_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task>;
     async fn remove_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task>;
     async fn set_dependencies(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_ids: &[TaskId],
     ) -> Result<Task>;
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>>;
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>>;
-    async fn ready_count(&self, project_id: i64) -> Result<i64>;
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>>;
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>>;
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64>;
 }

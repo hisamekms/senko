@@ -12,6 +12,7 @@ use crate::application::hook_trigger::SelectResult;
 use crate::application::port::task_operations::{CompleteResult, PreviewResult};
 use crate::application::port::{HookExecutor, TaskOperations};
 use crate::domain::error::DomainError;
+use crate::domain::project::ProjectId;
 use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, Task, TaskEvent, TaskId,
     TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
@@ -75,7 +76,7 @@ impl RemoteTaskOperations {
         }
     }
 
-    fn project_url(&self, project_id: i64, path: &str) -> String {
+    fn project_url(&self, project_id: ProjectId, path: &str) -> String {
         self.http.project_url(project_id, path)
     }
 
@@ -102,7 +103,7 @@ fn parse_unblocked(items: Vec<UnblockedApiInfo>) -> Vec<UnblockedTask> {
 impl TaskOperations for RemoteTaskOperations {
     // --- State transitions ---
 
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task> {
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task> {
         let resp = self
             .auth(
                 self.client()
@@ -127,7 +128,7 @@ impl TaskOperations for RemoteTaskOperations {
         Ok(task)
     }
 
-    async fn publish_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn publish_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
 
         let resp = self
@@ -155,7 +156,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn start_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
         _user_id: Option<i64>,
@@ -206,7 +207,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn next_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         session_id: Option<String>,
         _user_id: Option<i64>,
         include_unassigned: bool,
@@ -292,7 +293,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn complete_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         skip_pr_check: bool,
     ) -> Result<CompleteResult> {
@@ -333,7 +334,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn cancel_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         reason: Option<String>,
     ) -> Result<Task> {
@@ -371,7 +372,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn preview_transition(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         target: TaskStatus,
     ) -> Result<PreviewResult> {
@@ -433,7 +434,7 @@ impl TaskOperations for RemoteTaskOperations {
         })
     }
 
-    async fn preview_next(&self, project_id: i64) -> Result<PreviewResult> {
+    async fn preview_next(&self, project_id: ProjectId) -> Result<PreviewResult> {
         let resp = self
             .auth(
                 self.client()
@@ -469,7 +470,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Queries ---
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let resp = self
             .auth(
                 self.client()
@@ -480,7 +481,11 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_tasks(&self, project_id: i64, filter: &ListTasksFilter) -> Result<Vec<Task>> {
+    async fn list_tasks(
+        &self,
+        project_id: ProjectId,
+        filter: &ListTasksFilter,
+    ) -> Result<Vec<Task>> {
         let mut url = self.project_url(project_id, "/tasks");
         let mut params: Vec<String> = Vec::new();
 
@@ -543,7 +548,7 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_all_tags(&self, project_id: i64) -> Result<Vec<String>> {
+    async fn list_all_tags(&self, project_id: ProjectId) -> Result<Vec<String>> {
         let tasks = self
             .list_tasks(project_id, &ListTasksFilter::default())
             .await?;
@@ -557,7 +562,7 @@ impl TaskOperations for RemoteTaskOperations {
         Ok(tags)
     }
 
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>> {
         let resp = self
             .auth(self.client().get(self.project_url(project_id, "/stats")))
             .send()
@@ -569,7 +574,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn edit_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
@@ -587,7 +592,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn edit_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
@@ -604,7 +609,7 @@ impl TaskOperations for RemoteTaskOperations {
         Ok(())
     }
 
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -615,7 +620,7 @@ impl TaskOperations for RemoteTaskOperations {
         check_success(resp).await
     }
 
-    async fn save_task(&self, project_id: i64, id: TaskId, task: &Task) -> Result<()> {
+    async fn save_task(&self, project_id: ProjectId, id: TaskId, task: &Task) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -629,7 +634,12 @@ impl TaskOperations for RemoteTaskOperations {
 
     // --- Definition of Done ---
 
-    async fn check_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
+    async fn check_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+    ) -> Result<Task> {
         let resp =
             self.auth(self.client().post(
                 self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check")),
@@ -639,7 +649,12 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn uncheck_dod(&self, project_id: i64, task_id: TaskId, index: usize) -> Result<Task> {
+    async fn uncheck_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+    ) -> Result<Task> {
         let resp = self
             .auth(self.client().post(
                 self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/uncheck")),
@@ -653,7 +668,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn add_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task> {
@@ -670,7 +685,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn remove_dependency(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_id: TaskId,
     ) -> Result<Task> {
@@ -687,7 +702,7 @@ impl TaskOperations for RemoteTaskOperations {
 
     async fn set_dependencies(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: TaskId,
         dep_ids: &[TaskId],
     ) -> Result<Task> {
@@ -702,7 +717,7 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
         let resp = self
             .auth(
                 self.client()
@@ -713,7 +728,7 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         self.list_tasks(
             project_id,
             &ListTasksFilter {
@@ -724,7 +739,7 @@ impl TaskOperations for RemoteTaskOperations {
         .await
     }
 
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         let tasks = self.list_ready_tasks(project_id).await?;
         Ok(tasks.len() as i64)
     }

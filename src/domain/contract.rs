@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
+use super::project::ProjectId;
 use super::task::{DodItem, MetadataUpdate, TaskId, shallow_merge_metadata};
 use super::validator::{
     MAX_ITEMS_COUNT, MAX_LONG_TEXT_LEN, MAX_SHORT_TEXT_LEN, MAX_TAG_LEN, MAX_TAGS_COUNT,
@@ -64,7 +65,7 @@ impl ContractNote {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     title: String,
     description: Option<String>,
     definition_of_done: Vec<DodItem>,
@@ -79,7 +80,7 @@ impl Contract {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: i64,
-        project_id: i64,
+        project_id: ProjectId,
         title: String,
         description: Option<String>,
         definition_of_done: Vec<DodItem>,
@@ -113,7 +114,7 @@ impl Contract {
         self.id = id;
     }
 
-    pub fn project_id(&self) -> i64 {
+    pub fn project_id(&self) -> ProjectId {
         self.project_id
     }
 
@@ -398,13 +399,13 @@ impl UpdateContractArrayParams {
 pub trait ContractRepository: Send + Sync {
     async fn create_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateContractParams,
     ) -> Result<Contract>;
 
     async fn get_contract(&self, id: i64) -> Result<Contract>;
 
-    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>>;
+    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>>;
 
     async fn update_contract(
         &self,
@@ -431,7 +432,7 @@ mod tests {
     fn make_contract(dod: Vec<DodItem>) -> Contract {
         Contract::new(
             1,
-            1,
+            ProjectId(1),
             "test-contract".to_string(),
             Some("desc".to_string()),
             dod,

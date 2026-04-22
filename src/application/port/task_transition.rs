@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 
 use crate::domain::TaskRepository;
+use crate::domain::project::ProjectId;
 use crate::domain::task::{MetadataUpdate, Task, TaskId};
 
 /// Port for task state transitions.
@@ -12,20 +13,24 @@ use crate::domain::task::{MetadataUpdate, Task, TaskId};
 /// Remote mode uses `RemoteTaskOperations` which calls the server's POST endpoints directly.
 #[async_trait]
 pub trait TaskTransitionPort: Send + Sync {
-    async fn publish_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
+    async fn publish_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task>;
     async fn start_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
         user_id: Option<i64>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
-    async fn complete_task(&self, project_id: i64, id: TaskId, skip_pr_check: bool)
-    -> Result<Task>;
+    async fn complete_task(
+        &self,
+        project_id: ProjectId,
+        id: TaskId,
+        skip_pr_check: bool,
+    ) -> Result<Task>;
     async fn cancel_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         reason: Option<String>,
     ) -> Result<Task>;
@@ -37,7 +42,7 @@ fn now_rfc3339() -> String {
 
 pub async fn default_publish_task(
     repo: &(dyn TaskRepository + Sync),
-    project_id: i64,
+    project_id: ProjectId,
     id: TaskId,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
@@ -48,7 +53,7 @@ pub async fn default_publish_task(
 
 pub async fn default_start_task(
     repo: &(dyn TaskRepository + Sync),
-    project_id: i64,
+    project_id: ProjectId,
     id: TaskId,
     session_id: Option<String>,
     user_id: Option<i64>,
@@ -62,7 +67,7 @@ pub async fn default_start_task(
 
 pub async fn default_complete_task(
     repo: &(dyn TaskRepository + Sync),
-    project_id: i64,
+    project_id: ProjectId,
     id: TaskId,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
@@ -73,7 +78,7 @@ pub async fn default_complete_task(
 
 pub async fn default_cancel_task(
     repo: &(dyn TaskRepository + Sync),
-    project_id: i64,
+    project_id: ProjectId,
     id: TaskId,
     reason: Option<String>,
 ) -> Result<Task> {
@@ -90,7 +95,7 @@ macro_rules! impl_task_transition_default {
         impl $crate::application::port::task_transition::TaskTransitionPort for $ty {
             async fn publish_task(
                 &self,
-                project_id: i64,
+                project_id: ProjectId,
                 id: $crate::domain::task::TaskId,
             ) -> anyhow::Result<$crate::domain::task::Task> {
                 $crate::application::port::task_transition::default_publish_task(
@@ -100,7 +105,7 @@ macro_rules! impl_task_transition_default {
             }
             async fn start_task(
                 &self,
-                project_id: i64,
+                project_id: ProjectId,
                 id: $crate::domain::task::TaskId,
                 session_id: Option<String>,
                 user_id: Option<i64>,
@@ -113,7 +118,7 @@ macro_rules! impl_task_transition_default {
             }
             async fn complete_task(
                 &self,
-                project_id: i64,
+                project_id: ProjectId,
                 id: $crate::domain::task::TaskId,
                 _skip_pr_check: bool,
             ) -> anyhow::Result<$crate::domain::task::Task> {
@@ -124,7 +129,7 @@ macro_rules! impl_task_transition_default {
             }
             async fn cancel_task(
                 &self,
-                project_id: i64,
+                project_id: ProjectId,
                 id: $crate::domain::task::TaskId,
                 reason: Option<String>,
             ) -> anyhow::Result<$crate::domain::task::Task> {

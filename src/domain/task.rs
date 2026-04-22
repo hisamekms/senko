@@ -7,12 +7,13 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
+use super::project::ProjectId;
 
 /// Newtype wrapper around the per-project task identifier.
 ///
 /// Wraps `i64` with `#[serde(transparent)]` so that the JSON wire format stays a
 /// bare integer (e.g. `42`), not `{"0": 42}`. The goal is compile-time safety: a
-/// `TaskId` cannot be accidentally mixed with a `project_id`, `user_id`, or
+/// `TaskId` cannot be accidentally mixed with a `ProjectId`, `user_id`, or
 /// `contract_id` that also happen to be `i64`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -307,7 +308,7 @@ impl DodItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
     id: TaskId,
-    project_id: i64,
+    project_id: ProjectId,
     title: String,
     background: Option<String>,
     description: Option<String>,
@@ -337,7 +338,7 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: TaskId,
-        project_id: i64,
+        project_id: ProjectId,
         title: String,
         background: Option<String>,
         description: Option<String>,
@@ -397,7 +398,7 @@ impl Task {
         self.id
     }
 
-    pub fn project_id(&self) -> i64 {
+    pub fn project_id(&self) -> ProjectId {
         self.project_id
     }
 
@@ -1263,22 +1264,22 @@ impl CompletionPolicy {
 
 #[async_trait]
 pub trait TaskRepository: Send + Sync {
-    async fn create_task(&self, project_id: i64, params: &CreateTaskParams) -> Result<Task>;
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task>;
+    async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task>;
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task>;
     async fn update_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task>;
     async fn update_task_arrays(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()>;
-    async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()>;
-    async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>>;
+    async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()>;
+    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>>;
     async fn save(&self, task: &Task) -> Result<()>;
 }
 
@@ -1423,7 +1424,7 @@ mod tests {
     fn make_task(status: TaskStatus) -> Task {
         Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -1685,7 +1686,7 @@ mod tests {
     fn start_self_assigned_task_succeeds() {
         let task = Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -1720,7 +1721,7 @@ mod tests {
     fn start_other_assigned_task_fails() {
         let task = Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -1756,7 +1757,7 @@ mod tests {
     fn start_with_none_user_preserves_assignee() {
         let task = Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -1948,7 +1949,7 @@ mod tests {
     fn make_task_with_dod() -> Task {
         Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -1994,7 +1995,7 @@ mod tests {
     fn task_uncheck_dod() {
         let task = Task::new(
             TaskId(1),
-            1,
+            ProjectId(1),
             "test".to_string(),
             None,
             None,
@@ -2112,7 +2113,7 @@ mod tests {
     fn make_task_with_id(id: i64, status: TaskStatus) -> Task {
         Task::new(
             TaskId(id),
-            1,
+            ProjectId(1),
             format!("task-{id}"),
             None,
             None,
@@ -2149,7 +2150,7 @@ mod tests {
     ) -> Task {
         Task::new(
             TaskId(id),
-            1,
+            ProjectId(1),
             format!("task-{id}"),
             None,
             None,

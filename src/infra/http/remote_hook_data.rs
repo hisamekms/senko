@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::application::port::HookDataSource;
-use crate::domain::project::Project;
+use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{Task, TaskId, TaskStatus};
 use crate::domain::user::User;
 
@@ -29,7 +29,7 @@ impl RemoteHookDataSource {
 
 #[async_trait]
 impl HookDataSource for RemoteHookDataSource {
-    async fn task_stats(&self, project_id: i64) -> Result<HashMap<String, i64>> {
+    async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>> {
         let resp = self
             .http
             .auth(
@@ -42,7 +42,7 @@ impl HookDataSource for RemoteHookDataSource {
         read_json_or_error(resp).await
     }
 
-    async fn ready_count(&self, project_id: i64) -> Result<i64> {
+    async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         let tasks: Vec<Task> = {
             let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
             let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
@@ -51,7 +51,7 @@ impl HookDataSource for RemoteHookDataSource {
         Ok(tasks.len() as i64)
     }
 
-    async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: ProjectId) -> Result<Project> {
         let resp = self
             .http
             .auth(
@@ -107,7 +107,7 @@ impl HookDataSource for RemoteHookDataSource {
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
-    async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
+    async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let resp = self
             .http
             .auth(
@@ -120,19 +120,20 @@ impl HookDataSource for RemoteHookDataSource {
         read_json_or_error(resp).await
     }
 
-    async fn list_ready_tasks(&self, project_id: i64) -> Result<Vec<Task>> {
+    async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
         let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
-    async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
+    async fn is_task_ready(&self, project_id: ProjectId, id: TaskId) -> Result<bool> {
         let task = match self.get_task(project_id, id).await {
             Ok(t) => t,
             Err(e) => {
                 let task_number: i64 = id.into();
+                let project_id_value: i64 = project_id.into();
                 tracing::warn!(
-                    project_id,
+                    project_id = project_id_value,
                     task_number,
                     error = %e,
                     "RemoteHookDataSource::is_task_ready: get_task failed, returning false"

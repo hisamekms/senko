@@ -32,6 +32,7 @@ use crate::infra::xdg::XdgDirs;
 pub use crate::infra::hook;
 pub use crate::infra::project_root::resolve_project_root;
 
+pub use crate::domain::project::ProjectId;
 pub use crate::domain::{DEFAULT_PROJECT_ID, DEFAULT_USER_ID};
 
 /// Create the appropriate backend based on config (env + CLI already applied).
@@ -396,7 +397,7 @@ pub fn create_hook_test_service(
 pub async fn resolve_project_id(
     project_ops: &dyn ProjectOperations,
     config: &Config,
-) -> Result<i64> {
+) -> Result<ProjectId> {
     match config.project.name.as_deref() {
         Some(n) => {
             let project = project_ops

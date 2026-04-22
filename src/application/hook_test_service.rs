@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use anyhow::Result;
 
+use crate::domain::project::ProjectId;
 use crate::domain::task::{Priority, Task, TaskStatus};
 
 use super::hook_trigger::SelectResult;
@@ -42,7 +43,7 @@ impl HookTestService {
     /// or executing configured hook commands synchronously.
     pub async fn test_event(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         event_name: &str,
         task_id: Option<crate::domain::task::TaskId>,
         dry_run: bool,
@@ -113,7 +114,7 @@ impl HookTestService {
     /// Resolve the task for the hook test: fetch by ID or create a sample task.
     async fn resolve_task(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         task_id: Option<crate::domain::task::TaskId>,
     ) -> Result<Task> {
         if let Some(id) = task_id {

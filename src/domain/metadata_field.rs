@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
+use super::project::ProjectId;
 
 // --- MetadataFieldType enum ---
 
@@ -52,7 +53,7 @@ pub const METADATA_FIELD_NAME_MAX_LEN: usize = 64;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MetadataField {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     name: String,
     field_type: MetadataFieldType,
     required_on_complete: bool,
@@ -63,7 +64,7 @@ pub struct MetadataField {
 impl MetadataField {
     pub fn new(
         id: i64,
-        project_id: i64,
+        project_id: ProjectId,
         name: String,
         field_type: MetadataFieldType,
         required_on_complete: bool,
@@ -85,7 +86,7 @@ impl MetadataField {
         self.id
     }
 
-    pub fn project_id(&self) -> i64 {
+    pub fn project_id(&self) -> ProjectId {
         self.project_id
     }
 
@@ -168,22 +169,26 @@ pub struct UpdateMetadataFieldParams {
 pub trait MetadataFieldRepository: Send + Sync {
     async fn create_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField>;
 
-    async fn get_metadata_field(&self, project_id: i64, field_id: i64) -> Result<MetadataField>;
+    async fn get_metadata_field(
+        &self,
+        project_id: ProjectId,
+        field_id: i64,
+    ) -> Result<MetadataField>;
 
-    async fn list_metadata_fields(&self, project_id: i64) -> Result<Vec<MetadataField>>;
+    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>>;
 
     async fn update_metadata_field(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         field_id: i64,
         params: &UpdateMetadataFieldParams,
     ) -> Result<MetadataField>;
 
-    async fn delete_metadata_field(&self, project_id: i64, field_id: i64) -> Result<()>;
+    async fn delete_metadata_field(&self, project_id: ProjectId, field_id: i64) -> Result<()>;
 }
 
 // --- Tests ---
@@ -344,7 +349,7 @@ mod tests {
     fn new_and_getters() {
         let field = MetadataField::new(
             1,
-            10,
+            ProjectId(10),
             "sprint".to_string(),
             MetadataFieldType::String,
             true,
@@ -352,7 +357,7 @@ mod tests {
             "2026-04-12T00:00:00Z".to_string(),
         );
         assert_eq!(field.id(), 1);
-        assert_eq!(field.project_id(), 10);
+        assert_eq!(field.project_id(), ProjectId(10));
         assert_eq!(field.name(), "sprint");
         assert_eq!(field.field_type(), MetadataFieldType::String);
         assert!(field.required_on_complete());
@@ -364,7 +369,7 @@ mod tests {
     fn new_with_none_description() {
         let field = MetadataField::new(
             2,
-            10,
+            ProjectId(10),
             "points".to_string(),
             MetadataFieldType::Number,
             false,

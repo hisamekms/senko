@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use crate::domain::contract::{
     Contract, ContractNote, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
 };
+use crate::domain::project::ProjectId;
 use crate::domain::task::TaskId;
 
 /// Application-level port that exposes all contract operations.
@@ -17,30 +18,35 @@ pub trait ContractOperations: Send + Sync {
 
     async fn create_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &CreateContractParams,
     ) -> Result<Contract>;
 
-    async fn get_contract(&self, project_id: i64, id: i64) -> Result<Contract>;
+    async fn get_contract(&self, project_id: ProjectId, id: i64) -> Result<Contract>;
 
-    async fn list_contracts(&self, project_id: i64) -> Result<Vec<Contract>>;
+    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>>;
 
     async fn edit_contract(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         id: i64,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract>;
 
-    async fn delete_contract(&self, project_id: i64, id: i64) -> Result<()>;
+    async fn delete_contract(&self, project_id: ProjectId, id: i64) -> Result<()>;
 
     // --- Definition of Done ---
 
-    async fn check_dod(&self, project_id: i64, contract_id: i64, index: usize) -> Result<Contract>;
+    async fn check_dod(
+        &self,
+        project_id: ProjectId,
+        contract_id: i64,
+        index: usize,
+    ) -> Result<Contract>;
     async fn uncheck_dod(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         contract_id: i64,
         index: usize,
     ) -> Result<Contract>;
@@ -49,11 +55,15 @@ pub trait ContractOperations: Send + Sync {
 
     async fn add_note(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         contract_id: i64,
         content: String,
         source_task_id: Option<TaskId>,
     ) -> Result<ContractNote>;
 
-    async fn list_notes(&self, project_id: i64, contract_id: i64) -> Result<Vec<ContractNote>>;
+    async fn list_notes(
+        &self,
+        project_id: ProjectId,
+        contract_id: i64,
+    ) -> Result<Vec<ContractNote>>;
 }

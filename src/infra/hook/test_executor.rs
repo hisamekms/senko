@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use crate::application::hook_trigger::SelectResult;
 use crate::application::port::{HookDataSource, HookTestPort};
+use crate::domain::project::ProjectId;
 use crate::domain::task::Task;
 use crate::infra::config::Config;
 
@@ -41,7 +42,7 @@ impl ShellHookTestExecutor {
 impl HookTestPort for ShellHookTestExecutor {
     async fn build_task_event_envelope(
         &self,
-        _project_id: i64,
+        _project_id: ProjectId,
         event_name: &str,
         task: &Task,
     ) -> Result<String> {
@@ -60,7 +61,7 @@ impl HookTestPort for ShellHookTestExecutor {
 
     async fn build_task_select_envelope(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         result: SelectResult,
     ) -> Result<String> {
         let (envelope_project, envelope_user) =

@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::application::port::ProjectOperations;
 use crate::domain::error::DomainError;
-use crate::domain::project::{CreateProjectParams, Project};
+use crate::domain::project::{CreateProjectParams, Project, ProjectId};
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role};
 
 use super::client::HttpClient;
@@ -66,7 +66,7 @@ impl ProjectOperations for RemoteProjectOperations {
         read_json_or_error(resp).await
     }
 
-    async fn get_project(&self, id: i64) -> Result<Project> {
+    async fn get_project(&self, id: ProjectId) -> Result<Project> {
         let resp = self
             .auth(
                 self.client()
@@ -85,7 +85,7 @@ impl ProjectOperations for RemoteProjectOperations {
             .ok_or_else(|| DomainError::ProjectNotFound.into())
     }
 
-    async fn delete_project(&self, id: i64, _caller_user_id: Option<i64>) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<i64>) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -98,7 +98,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     // --- Member management ---
 
-    async fn list_project_members(&self, project_id: i64) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
         let resp = self
             .auth(
                 self.client()
@@ -111,7 +111,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     async fn add_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         params: &AddProjectMemberParams,
         _caller_user_id: Option<i64>,
     ) -> Result<ProjectMember> {
@@ -128,7 +128,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     async fn remove_project_member(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         _caller_user_id: Option<i64>,
     ) -> Result<()> {
@@ -142,7 +142,11 @@ impl ProjectOperations for RemoteProjectOperations {
         check_success(resp).await
     }
 
-    async fn get_project_member(&self, project_id: i64, user_id: i64) -> Result<ProjectMember> {
+    async fn get_project_member(
+        &self,
+        project_id: ProjectId,
+        user_id: i64,
+    ) -> Result<ProjectMember> {
         let resp = self
             .auth(
                 self.client()
@@ -155,7 +159,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     async fn update_member_role(
         &self,
-        project_id: i64,
+        project_id: ProjectId,
         user_id: i64,
         role: Role,
         _caller_user_id: Option<i64>,

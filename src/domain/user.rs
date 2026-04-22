@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::error::DomainError;
+use super::project::ProjectId;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -126,14 +127,20 @@ pub struct UpdateUserParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProjectMember {
     id: i64,
-    project_id: i64,
+    project_id: ProjectId,
     user_id: i64,
     role: Role,
     created_at: String,
 }
 
 impl ProjectMember {
-    pub fn new(id: i64, project_id: i64, user_id: i64, role: Role, created_at: String) -> Self {
+    pub fn new(
+        id: i64,
+        project_id: ProjectId,
+        user_id: i64,
+        role: Role,
+        created_at: String,
+    ) -> Self {
         Self {
             id,
             project_id,
@@ -147,7 +154,7 @@ impl ProjectMember {
         self.id
     }
 
-    pub fn project_id(&self) -> i64 {
+    pub fn project_id(&self) -> ProjectId {
         self.project_id
     }
 
