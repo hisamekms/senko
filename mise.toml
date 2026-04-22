@@ -5,7 +5,7 @@ _.file = ".env"
 [tools]
 rust = "latest"
 gh = "latest"
-"github:hisamekms/senko" = "0.36.1"
+"github:hisamekms/senko" = "0.36.2"
 
 [tasks.build]
 description = "Build senko binary"
