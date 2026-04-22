@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::domain::contract::ContractId;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{Priority, TaskId};
 use crate::domain::user::Role;
@@ -242,7 +243,7 @@ pub enum TaskAction {
         metadata: Vec<String>,
         /// Filter by contract ID
         #[arg(long)]
-        contract: Option<i64>,
+        contract: Option<ContractId>,
         /// Minimum task ID (inclusive)
         #[arg(long)]
         id_min: Option<TaskId>,
@@ -322,7 +323,7 @@ pub enum TaskAction {
         clear_pr_url: bool,
         /// Link this task to a contract
         #[arg(long, conflicts_with = "clear_contract")]
-        contract: Option<i64>,
+        contract: Option<ContractId>,
         /// Remove contract link from this task
         #[arg(long)]
         clear_contract: bool,
@@ -427,12 +428,12 @@ pub enum ContractAction {
     /// Get contract details
     Get {
         /// Contract ID
-        id: i64,
+        id: ContractId,
     },
     /// Edit a contract
     Edit {
         /// Contract ID
-        id: i64,
+        id: ContractId,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -463,7 +464,7 @@ pub enum ContractAction {
     /// Delete a contract
     Delete {
         /// Contract ID
-        id: i64,
+        id: ContractId,
     },
     /// Manage Definition of Done items
     Dod {
@@ -482,14 +483,14 @@ pub enum ContractDodCommand {
     /// Mark a DoD item as checked
     Check {
         /// Contract ID
-        contract_id: i64,
+        contract_id: ContractId,
         /// DoD item index (1-based)
         index: usize,
     },
     /// Unmark a DoD item
     Uncheck {
         /// Contract ID
-        contract_id: i64,
+        contract_id: ContractId,
         /// DoD item index (1-based)
         index: usize,
     },
@@ -500,7 +501,7 @@ pub enum ContractNoteCommand {
     /// Add a note to a contract
     Add {
         /// Contract ID
-        contract_id: i64,
+        contract_id: ContractId,
         /// Note content
         #[arg(long)]
         content: String,
@@ -511,7 +512,7 @@ pub enum ContractNoteCommand {
     /// List notes on a contract
     List {
         /// Contract ID
-        contract_id: i64,
+        contract_id: ContractId,
     },
 }
 

@@ -33,7 +33,7 @@ use crate::application::{
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
 use crate::domain::contract::{
-    CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    ContractId, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::CreateMetadataFieldParams;
@@ -346,7 +346,7 @@ struct ListTasksQuery {
     #[serde(default)]
     metadata: Vec<String>,
     #[serde(default)]
-    contract: Option<i64>,
+    contract: Option<ContractId>,
     #[serde(default)]
     id_min: Option<TaskId>,
     #[serde(default)]
@@ -418,7 +418,7 @@ struct EditTaskBody {
     pr_url: Option<String>,
     #[serde(default)]
     clear_pr_url: bool,
-    contract_id: Option<i64>,
+    contract_id: Option<ContractId>,
     #[serde(default)]
     clear_contract: bool,
     metadata: Option<serde_json::Value>,
@@ -1445,7 +1445,7 @@ async fn list_contracts(
 async fn get_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(ProjectId, i64)>,
+    Path((project_id, id)): Path<(ProjectId, ContractId)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let contract = state
@@ -1460,7 +1460,7 @@ async fn get_contract(
 async fn edit_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(ProjectId, i64)>,
+    Path((project_id, id)): Path<(ProjectId, ContractId)>,
     Json(body): Json<EditContractBody>,
 ) -> Result<Json<ContractResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1500,7 +1500,7 @@ async fn edit_contract(
 async fn delete_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(ProjectId, i64)>,
+    Path((project_id, id)): Path<(ProjectId, ContractId)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     state
@@ -1515,7 +1515,7 @@ async fn delete_contract(
 async fn check_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id, index)): Path<(ProjectId, i64, usize)>,
+    Path((project_id, id, index)): Path<(ProjectId, ContractId, usize)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let contract = state
@@ -1530,7 +1530,7 @@ async fn check_contract_dod(
 async fn uncheck_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id, index)): Path<(ProjectId, i64, usize)>,
+    Path((project_id, id, index)): Path<(ProjectId, ContractId, usize)>,
 ) -> Result<Json<ContractResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
     let contract = state
@@ -1545,7 +1545,7 @@ async fn uncheck_contract_dod(
 async fn add_contract_note(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(ProjectId, i64)>,
+    Path((project_id, id)): Path<(ProjectId, ContractId)>,
     Json(body): Json<AddContractNoteBody>,
 ) -> Result<Json<ContractNoteResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
@@ -1561,7 +1561,7 @@ async fn add_contract_note(
 async fn list_contract_notes(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, id)): Path<(ProjectId, i64)>,
+    Path((project_id, id)): Path<(ProjectId, ContractId)>,
 ) -> Result<Json<Vec<ContractNoteResponse>>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let notes = state

@@ -7,8 +7,8 @@ use chrono::Utc;
 use crate::application::HookTrigger;
 use crate::application::port::{ContractOperations, HookExecutor, TaskBackend};
 use crate::domain::contract::{
-    Contract, ContractEvent, ContractNote, CreateContractParams, UpdateContractArrayParams,
-    UpdateContractParams,
+    Contract, ContractEvent, ContractId, ContractNote, CreateContractParams,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::project::ProjectId;
@@ -62,7 +62,7 @@ impl ContractOperations for LocalContractOperations {
         Ok(contract)
     }
 
-    async fn get_contract(&self, _project_id: ProjectId, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, _project_id: ProjectId, id: ContractId) -> Result<Contract> {
         self.backend.get_contract(id).await
     }
 
@@ -73,7 +73,7 @@ impl ContractOperations for LocalContractOperations {
     async fn edit_contract(
         &self,
         _project_id: ProjectId,
-        id: i64,
+        id: ContractId,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract> {
@@ -107,7 +107,7 @@ impl ContractOperations for LocalContractOperations {
         Ok(contract)
     }
 
-    async fn delete_contract(&self, _project_id: ProjectId, id: i64) -> Result<()> {
+    async fn delete_contract(&self, _project_id: ProjectId, id: ContractId) -> Result<()> {
         let prev = self.backend.get_contract(id).await?;
         let trigger = HookTrigger::Contract(ContractEvent::Deleted);
         if self
@@ -135,7 +135,7 @@ impl ContractOperations for LocalContractOperations {
     async fn check_dod(
         &self,
         _project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         index: usize,
     ) -> Result<Contract> {
         let prev = self.backend.get_contract(contract_id).await?;
@@ -165,7 +165,7 @@ impl ContractOperations for LocalContractOperations {
     async fn uncheck_dod(
         &self,
         _project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         index: usize,
     ) -> Result<Contract> {
         let prev = self.backend.get_contract(contract_id).await?;
@@ -195,7 +195,7 @@ impl ContractOperations for LocalContractOperations {
     async fn add_note(
         &self,
         _project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         content: String,
         source_task_id: Option<crate::domain::task::TaskId>,
     ) -> Result<ContractNote> {
@@ -230,7 +230,7 @@ impl ContractOperations for LocalContractOperations {
     async fn list_notes(
         &self,
         _project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
     ) -> Result<Vec<ContractNote>> {
         let contract = self.backend.get_contract(contract_id).await?;
         Ok(contract.notes().to_vec())

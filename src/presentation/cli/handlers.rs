@@ -23,7 +23,7 @@ use crate::bootstrap::{
     resolve_user_id,
 };
 use crate::domain::contract::{
-    CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    ContractId, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataFieldType, validate_field_name,
@@ -290,7 +290,7 @@ pub async fn cmd_list(
     ready: bool,
     include_unassigned: bool,
     metadata: Vec<String>,
-    contract: Option<i64>,
+    contract: Option<ContractId>,
     id_min: Option<TaskId>,
     id_max: Option<TaskId>,
     limit: Option<u32>,
@@ -1273,7 +1273,7 @@ pub async fn cmd_edit(
     clear_branch: bool,
     pr_url: &Option<String>,
     clear_pr_url: bool,
-    contract: &Option<i64>,
+    contract: &Option<ContractId>,
     clear_contract: bool,
     metadata: &Option<String>,
     replace_metadata: &Option<String>,

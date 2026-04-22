@@ -1,3 +1,6 @@
+use std::fmt;
+use std::str::FromStr;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -10,6 +13,48 @@ use super::validator::{
     MAX_TITLE_LEN, validate_metadata, validate_optional_nullable_string_length,
     validate_optional_string_length, validate_string_length, validate_string_vec_items,
 };
+
+/// Newtype wrapper around the contract identifier.
+///
+/// Wraps `i64` with `#[serde(transparent)]` so that the JSON wire format stays a
+/// bare integer (e.g. `6`), not `{"0": 6}`. The goal is compile-time safety: a
+/// `ContractId` cannot be accidentally mixed with a `TaskId`, `ProjectId`, or
+/// `user_id` that also happen to be `i64`.
+///
+/// Like [`ProjectId`] (and unlike [`crate::domain::task::TaskId`], which has a
+/// distinct `TaskDbId` sealed inside `infra`), `ContractId` is the DB primary
+/// key itself. The infrastructure layer implements `rusqlite` / `sqlx` traits
+/// directly on `ContractId` (see `src/infra/mod.rs`), so no separate sealed
+/// newtype is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ContractId(pub i64);
+
+impl fmt::Display for ContractId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ContractId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(ContractId)
+    }
+}
+
+impl From<i64> for ContractId {
+    fn from(n: i64) -> Self {
+        ContractId(n)
+    }
+}
+
+impl From<ContractId> for i64 {
+    fn from(id: ContractId) -> i64 {
+        id.0
+    }
+}
 
 // --- Domain events ---
 
@@ -64,7 +109,7 @@ impl ContractNote {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Contract {
-    id: i64,
+    id: ContractId,
     project_id: ProjectId,
     title: String,
     description: Option<String>,
@@ -79,7 +124,7 @@ pub struct Contract {
 impl Contract {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        id: i64,
+        id: ContractId,
         project_id: ProjectId,
         title: String,
         description: Option<String>,
@@ -106,12 +151,8 @@ impl Contract {
 
     // --- Getters ---
 
-    pub fn id(&self) -> i64 {
+    pub fn id(&self) -> ContractId {
         self.id
-    }
-
-    pub fn set_id(&mut self, id: i64) {
-        self.id = id;
     }
 
     pub fn project_id(&self) -> ProjectId {
@@ -269,7 +310,7 @@ impl Contract {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.id,
+                task_id: self.id.into(),
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -289,7 +330,7 @@ impl Contract {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.id,
+                task_id: self.id.into(),
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -403,24 +444,24 @@ pub trait ContractRepository: Send + Sync {
         params: &CreateContractParams,
     ) -> Result<Contract>;
 
-    async fn get_contract(&self, id: i64) -> Result<Contract>;
+    async fn get_contract(&self, id: ContractId) -> Result<Contract>;
 
     async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>>;
 
     async fn update_contract(
         &self,
-        id: i64,
+        id: ContractId,
         update: &UpdateContractParams,
         array_update: &UpdateContractArrayParams,
     ) -> Result<Contract>;
 
-    async fn delete_contract(&self, id: i64) -> Result<()>;
+    async fn delete_contract(&self, id: ContractId) -> Result<()>;
 
-    async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote>;
+    async fn add_note(&self, contract_id: ContractId, note: &ContractNote) -> Result<ContractNote>;
 
-    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract>;
+    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract>;
 
-    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract>;
+    async fn uncheck_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract>;
 }
 
 // --- Tests ---
@@ -431,7 +472,7 @@ mod tests {
 
     fn make_contract(dod: Vec<DodItem>) -> Contract {
         Contract::new(
-            1,
+            ContractId(1),
             ProjectId(1),
             "test-contract".to_string(),
             Some("desc".to_string()),

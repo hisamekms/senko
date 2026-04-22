@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::domain::contract::{
-    Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
-    UpdateContractParams,
+    Contract, ContractId, ContractNote, ContractRepository, CreateContractParams,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
@@ -1113,7 +1113,7 @@ type TaskRow = (
     Option<String>,
     Option<String>,
     Option<i64>,
-    Option<i64>,
+    Option<ContractId>,
 );
 
 fn get_task(conn: &Connection, id: TaskDbId) -> Result<Task> {
@@ -2021,7 +2021,7 @@ fn delete_metadata_field(conn: &Connection, project_id: ProjectId, field_id: i64
 
 // --- Contract CRUD (sync helpers) ---
 
-fn get_contract(conn: &Connection, id: i64) -> Result<Contract> {
+fn get_contract(conn: &Connection, id: ContractId) -> Result<Contract> {
     let (project_id, title, description, metadata_str, created_at, updated_at): (
         ProjectId,
         String,
@@ -2115,7 +2115,7 @@ fn create_contract(
         "INSERT INTO contracts (project_id, title, description, metadata) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![project_id, params.title, params.description, metadata_str],
     )?;
-    let contract_id = conn.last_insert_rowid();
+    let contract_id = ContractId(conn.last_insert_rowid());
 
     for content in &params.definition_of_done {
         conn.execute(
@@ -2134,7 +2134,7 @@ fn create_contract(
 }
 
 fn list_contracts(conn: &Connection, project_id: ProjectId) -> Result<Vec<Contract>> {
-    let ids: Vec<i64> = {
+    let ids: Vec<ContractId> = {
         let mut stmt =
             conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
         stmt.query_map(params![project_id], |row| row.get(0))?
@@ -2149,7 +2149,7 @@ fn list_contracts(conn: &Connection, project_id: ProjectId) -> Result<Vec<Contra
 
 fn update_contract(
     conn: &Connection,
-    id: i64,
+    id: ContractId,
     update: &UpdateContractParams,
     array_update: &UpdateContractArrayParams,
 ) -> Result<Contract> {
@@ -2266,7 +2266,7 @@ fn update_contract(
     get_contract(conn, id)
 }
 
-fn delete_contract(conn: &Connection, id: i64) -> Result<()> {
+fn delete_contract(conn: &Connection, id: ContractId) -> Result<()> {
     let affected = conn.execute("DELETE FROM contracts WHERE id = ?1", params![id])?;
     if affected == 0 {
         return Err(DomainError::ContractNotFound.into());
@@ -2276,7 +2276,7 @@ fn delete_contract(conn: &Connection, id: i64) -> Result<()> {
 
 fn add_contract_note(
     conn: &Connection,
-    contract_id: i64,
+    contract_id: ContractId,
     note: &ContractNote,
 ) -> Result<ContractNote> {
     // Verify exists
@@ -2306,7 +2306,7 @@ fn add_contract_note(
 
 fn set_contract_dod_checked(
     conn: &Connection,
-    contract_id: i64,
+    contract_id: ContractId,
     index: usize,
     checked: bool,
 ) -> Result<Contract> {
@@ -2316,7 +2316,7 @@ fn set_contract_dod_checked(
     if index == 0 || index > dod_len {
         return Err(DomainError::DodIndexOutOfRange {
             index,
-            task_id: contract_id,
+            task_id: contract_id.into(),
             count: dod_len,
         }
         .into());
@@ -2758,7 +2758,7 @@ impl ContractRepository for SqliteBackend {
         ))
     }
 
-    async fn get_contract(&self, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, id: ContractId) -> Result<Contract> {
         blocking!(self, |conn: &Connection| get_contract(conn, id))
     }
 
@@ -2768,7 +2768,7 @@ impl ContractRepository for SqliteBackend {
 
     async fn update_contract(
         &self,
-        id: i64,
+        id: ContractId,
         update: &UpdateContractParams,
         array_update: &UpdateContractArrayParams,
     ) -> Result<Contract> {
@@ -2782,11 +2782,11 @@ impl ContractRepository for SqliteBackend {
         ))
     }
 
-    async fn delete_contract(&self, id: i64) -> Result<()> {
+    async fn delete_contract(&self, id: ContractId) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_contract(conn, id))
     }
 
-    async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote> {
+    async fn add_note(&self, contract_id: ContractId, note: &ContractNote) -> Result<ContractNote> {
         let note = note.clone();
         blocking!(self, |conn: &Connection| add_contract_note(
             conn,
@@ -2795,7 +2795,7 @@ impl ContractRepository for SqliteBackend {
         ))
     }
 
-    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
         blocking!(self, |conn: &Connection| set_contract_dod_checked(
             conn,
             contract_id,
@@ -2804,7 +2804,7 @@ impl ContractRepository for SqliteBackend {
         ))
     }
 
-    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn uncheck_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
         blocking!(self, |conn: &Connection| set_contract_dod_checked(
             conn,
             contract_id,
@@ -3359,7 +3359,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &ListTasksFilter {
-                contract_id: Some(contract.id() + 9999),
+                contract_id: Some(ContractId(contract.id().0 + 9999)),
                 ..Default::default()
             },
         )

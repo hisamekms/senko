@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::application::{CompleteResult, PreviewResult};
-use crate::domain::contract::{Contract, ContractNote};
+use crate::domain::contract::{Contract, ContractId, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{DodItem, Task, TaskId};
@@ -93,7 +93,7 @@ pub struct TaskResponse {
     cancel_reason: Option<String>,
     branch: Option<String>,
     pr_url: Option<String>,
-    contract_id: Option<i64>,
+    contract_id: Option<ContractId>,
     metadata: Option<serde_json::Value>,
     definition_of_done: Vec<DodItemResponse>,
     in_scope: Vec<String>,
@@ -165,7 +165,7 @@ impl From<ContractNote> for ContractNoteResponse {
 
 #[derive(Serialize)]
 pub struct ContractResponse {
-    id: i64,
+    id: ContractId,
     project_id: ProjectId,
     title: String,
     description: Option<String>,
@@ -638,12 +638,12 @@ mod tests {
 
     #[test]
     fn contract_response_from_domain_includes_is_completed_and_notes() {
-        use crate::domain::contract::{Contract, ContractNote};
+        use crate::domain::contract::{Contract, ContractId, ContractNote};
         use crate::domain::task::{DodItem, TaskId};
 
         let note = ContractNote::new("n1".into(), Some(TaskId(42)), "2026-04-17T00:00:00Z".into());
         let contract = Contract::new(
-            7,
+            ContractId(7),
             ProjectId(1),
             "Title".into(),
             Some("desc".into()),
@@ -676,11 +676,11 @@ mod tests {
 
     #[test]
     fn contract_response_is_completed_false_for_unchecked_dod() {
-        use crate::domain::contract::Contract;
+        use crate::domain::contract::{Contract, ContractId};
         use crate::domain::task::DodItem;
 
         let contract = Contract::new(
-            1,
+            ContractId(1),
             ProjectId(1),
             "t".into(),
             None,
@@ -720,7 +720,7 @@ mod tests {
             None,                          // cancel_reason
             None,                          // branch
             None,                          // pr_url
-            Some(99),                      // contract_id
+            Some(ContractId(99)),          // contract_id
             None,                          // metadata
             vec![],                        // definition_of_done
             vec![],                        // in_scope

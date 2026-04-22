@@ -6,6 +6,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+use super::contract::ContractId;
 use super::error::DomainError;
 use super::project::ProjectId;
 
@@ -325,7 +326,7 @@ pub struct Task {
     cancel_reason: Option<String>,
     branch: Option<String>,
     pr_url: Option<String>,
-    contract_id: Option<i64>,
+    contract_id: Option<ContractId>,
     metadata: Option<serde_json::Value>,
     definition_of_done: Vec<DodItem>,
     in_scope: Vec<String>,
@@ -355,7 +356,7 @@ impl Task {
         cancel_reason: Option<String>,
         branch: Option<String>,
         pr_url: Option<String>,
-        contract_id: Option<i64>,
+        contract_id: Option<ContractId>,
         metadata: Option<serde_json::Value>,
         definition_of_done: Vec<DodItem>,
         in_scope: Vec<String>,
@@ -466,7 +467,7 @@ impl Task {
         self.pr_url.as_deref()
     }
 
-    pub fn contract_id(&self) -> Option<i64> {
+    pub fn contract_id(&self) -> Option<ContractId> {
         self.contract_id
     }
 
@@ -981,7 +982,7 @@ pub struct CreateTaskParams {
     #[serde(default)]
     pub assignee_user_id: Option<AssigneeUserId>,
     #[serde(default)]
-    pub contract_id: Option<i64>,
+    pub contract_id: Option<ContractId>,
 }
 
 /// Describes how to update metadata on a task.
@@ -1081,7 +1082,7 @@ pub struct UpdateTaskParams {
     pub cancel_reason: Option<Option<String>>,
     pub branch: Option<Option<String>>,
     pub pr_url: Option<Option<String>>,
-    pub contract_id: Option<Option<i64>>,
+    pub contract_id: Option<Option<ContractId>>,
     pub metadata: Option<MetadataUpdate>,
 }
 
@@ -1129,7 +1130,7 @@ pub struct ListTasksFilter {
     pub assignee_self: bool,
     pub include_unassigned: bool,
     pub metadata: HashMap<String, serde_json::Value>,
-    pub contract_id: Option<i64>,
+    pub contract_id: Option<ContractId>,
     pub id_min: Option<TaskId>,
     pub id_max: Option<TaskId>,
     pub limit: Option<u32>,

@@ -9,8 +9,8 @@ use crate::application::port::{
     AuthenticationPort, ProjectQueryPort, TaskQueryPort, UserQueryPort,
 };
 use crate::domain::contract::{
-    Contract, ContractNote, ContractRepository, CreateContractParams, UpdateContractArrayParams,
-    UpdateContractParams,
+    Contract, ContractId, ContractNote, ContractRepository, CreateContractParams,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
@@ -1318,7 +1318,7 @@ impl TaskQueryPort for PostgresBackend {
 
         if let Some(contract_id) = filter.contract_id {
             conditions.push(format!("t.contract_id = ${param_idx}"));
-            binds.push(BindVal::Int(contract_id));
+            binds.push(BindVal::Int(contract_id.into()));
             param_idx += 1;
         }
 
@@ -1718,7 +1718,7 @@ impl MetadataFieldRepository for PostgresBackend {
 // ContractRepository
 // =============================================================================
 
-async fn get_contract_by_id(pool: &PgPool, id: i64) -> Result<Contract> {
+async fn get_contract_by_id(pool: &PgPool, id: ContractId) -> Result<Contract> {
     let row = sqlx::query(
         "SELECT project_id, title, description, metadata, created_at, updated_at \
          FROM contracts WHERE id = $1",
@@ -1802,7 +1802,7 @@ impl ContractRepository for PostgresBackend {
         .bind(&params.metadata)
         .fetch_one(&mut *tx)
         .await?;
-        let contract_id: i64 = row.get("id");
+        let contract_id: ContractId = row.get("id");
 
         for content in &params.definition_of_done {
             sqlx::query(
@@ -1825,14 +1825,14 @@ impl ContractRepository for PostgresBackend {
         get_contract_by_id(pool, contract_id).await
     }
 
-    async fn get_contract(&self, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, id: ContractId) -> Result<Contract> {
         let pool = self.pool().await?;
         get_contract_by_id(pool, id).await
     }
 
     async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
         let pool = self.pool().await?;
-        let ids: Vec<i64> =
+        let ids: Vec<ContractId> =
             sqlx::query("SELECT id FROM contracts WHERE project_id = $1 ORDER BY id")
                 .bind(project_id)
                 .fetch_all(pool)
@@ -1850,7 +1850,7 @@ impl ContractRepository for PostgresBackend {
 
     async fn update_contract(
         &self,
-        id: i64,
+        id: ContractId,
         update: &UpdateContractParams,
         array_update: &UpdateContractArrayParams,
     ) -> Result<Contract> {
@@ -1981,7 +1981,7 @@ impl ContractRepository for PostgresBackend {
         get_contract_by_id(pool, id).await
     }
 
-    async fn delete_contract(&self, id: i64) -> Result<()> {
+    async fn delete_contract(&self, id: ContractId) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM contracts WHERE id = $1")
             .bind(id)
@@ -1993,7 +1993,7 @@ impl ContractRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn add_note(&self, contract_id: i64, note: &ContractNote) -> Result<ContractNote> {
+    async fn add_note(&self, contract_id: ContractId, note: &ContractNote) -> Result<ContractNote> {
         let pool = self.pool().await?;
         let _existing = get_contract_by_id(pool, contract_id).await?;
 
@@ -2022,18 +2022,18 @@ impl ContractRepository for PostgresBackend {
         ))
     }
 
-    async fn check_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
         set_contract_dod_checked_pg(self, contract_id, index, true).await
     }
 
-    async fn uncheck_dod(&self, contract_id: i64, index: usize) -> Result<Contract> {
+    async fn uncheck_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
         set_contract_dod_checked_pg(self, contract_id, index, false).await
     }
 }
 
 async fn set_contract_dod_checked_pg(
     backend: &PostgresBackend,
-    contract_id: i64,
+    contract_id: ContractId,
     index: usize,
     checked: bool,
 ) -> Result<Contract> {
@@ -2043,7 +2043,7 @@ async fn set_contract_dod_checked_pg(
     if index == 0 || index > dod_len {
         return Err(DomainError::DodIndexOutOfRange {
             index,
-            task_id: contract_id,
+            task_id: contract_id.into(),
             count: dod_len,
         }
         .into());

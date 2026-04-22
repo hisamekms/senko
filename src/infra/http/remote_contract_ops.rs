@@ -7,8 +7,8 @@ use serde_json::{Map, Value, json};
 use crate::application::HookTrigger;
 use crate::application::port::{ContractOperations, HookExecutor};
 use crate::domain::contract::{
-    Contract, ContractEvent, ContractNote, CreateContractParams, UpdateContractArrayParams,
-    UpdateContractParams,
+    Contract, ContractEvent, ContractId, ContractNote, CreateContractParams,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::project::ProjectId;
@@ -159,7 +159,7 @@ impl ContractOperations for RemoteContractOperations {
         Ok(contract)
     }
 
-    async fn get_contract(&self, project_id: ProjectId, id: i64) -> Result<Contract> {
+    async fn get_contract(&self, project_id: ProjectId, id: ContractId) -> Result<Contract> {
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
@@ -174,7 +174,7 @@ impl ContractOperations for RemoteContractOperations {
     async fn edit_contract(
         &self,
         project_id: ProjectId,
-        id: i64,
+        id: ContractId,
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract> {
@@ -193,7 +193,7 @@ impl ContractOperations for RemoteContractOperations {
         Ok(contract)
     }
 
-    async fn delete_contract(&self, project_id: ProjectId, id: i64) -> Result<()> {
+    async fn delete_contract(&self, project_id: ProjectId, id: ContractId) -> Result<()> {
         let trigger = HookTrigger::Contract(ContractEvent::Deleted);
         self.fire_pre(&trigger, None).await?;
 
@@ -208,7 +208,7 @@ impl ContractOperations for RemoteContractOperations {
     async fn check_dod(
         &self,
         project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         index: usize,
     ) -> Result<Contract> {
         let trigger = HookTrigger::Contract(ContractEvent::DodChecked { index });
@@ -228,7 +228,7 @@ impl ContractOperations for RemoteContractOperations {
     async fn uncheck_dod(
         &self,
         project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         index: usize,
     ) -> Result<Contract> {
         let trigger = HookTrigger::Contract(ContractEvent::DodUnchecked { index });
@@ -248,7 +248,7 @@ impl ContractOperations for RemoteContractOperations {
     async fn add_note(
         &self,
         project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
         content: String,
         source_task_id: Option<crate::domain::task::TaskId>,
     ) -> Result<ContractNote> {
@@ -273,7 +273,7 @@ impl ContractOperations for RemoteContractOperations {
     async fn list_notes(
         &self,
         project_id: ProjectId,
-        contract_id: i64,
+        contract_id: ContractId,
     ) -> Result<Vec<ContractNote>> {
         let url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
         let resp = self.auth(self.client().get(&url)).send().await?;
