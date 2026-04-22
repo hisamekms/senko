@@ -246,7 +246,7 @@ pub async fn build_event(
         .unwrap_or_default();
     let ready_count = backend.ready_count(task.project_id()).await.unwrap_or(0);
     let is_ready = backend
-        .is_task_ready(task.project_id(), task.task_number())
+        .is_task_ready(task.project_id(), task.id())
         .await
         .unwrap_or(false);
     HookEvent {
@@ -790,7 +790,7 @@ pub async fn fire(
                 event,
             };
             match serde_json::to_string(&envelope) {
-                Ok(s) => (s, event_id, Some(task.task_number())),
+                Ok(s) => (s, event_id, Some(task.id())),
                 Err(e) => {
                     eprintln!("hook serialize error ({event_name}): {e}");
                     return FireOutcome::Continue;
@@ -1190,7 +1190,6 @@ mod tests {
     fn hook_event_serializes_is_ready_field() {
         use crate::domain::task::{Priority, Task, TaskStatus};
         let task = Task::new(
-            1,
             1,
             1,
             "t".into(),

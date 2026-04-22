@@ -1147,7 +1147,6 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     )?;
 
     Ok(Task::new(
-        id,
         task_number,
         project_id,
         title,
@@ -1358,6 +1357,7 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
 }
 
 fn save_task(conn: &Connection, task: &Task) -> Result<()> {
+    let internal_id = resolve_task_number(conn, task.project_id(), task.id())?;
     let metadata_str: Option<String> = task
         .metadata()
         .map(serde_json::to_string)
@@ -1374,7 +1374,7 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
             updated_at = ?18
         WHERE id = ?1",
         params![
-            task.id(),
+            internal_id,
             task.title(),
             task.background(),
             task.description(),
@@ -1398,26 +1398,26 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
     // Sync definition_of_done
     conn.execute(
         "DELETE FROM task_definition_of_done WHERE task_id = ?1",
-        params![task.id()],
+        params![internal_id],
     )?;
     for dod in task.definition_of_done() {
         let checked_val: i32 = if dod.checked() { 1 } else { 0 };
         conn.execute(
             "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES (?1, ?2, ?3)",
-            params![task.id(), dod.content(), checked_val],
+            params![internal_id, dod.content(), checked_val],
         )?;
     }
 
     // Sync dependencies (task.dependencies() contains task_numbers, resolve to internal IDs)
     conn.execute(
         "DELETE FROM task_dependencies WHERE task_id = ?1",
-        params![task.id()],
+        params![internal_id],
     )?;
     for &dep_task_number in task.dependencies() {
         let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number)?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
-            params![task.id(), dep_internal_id],
+            params![internal_id, dep_internal_id],
         )?;
     }
 
@@ -4779,14 +4779,14 @@ mod tests {
     fn is_task_ready_true_for_todo_with_no_deps() {
         let (_tmp, conn) = setup();
         let t = make_todo(&conn, "free", None);
-        assert!(is_task_ready(&conn, 1, t.task_number()).unwrap());
+        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_draft() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
@@ -4794,14 +4794,14 @@ mod tests {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
         transition_to(&conn, t.id(), TaskStatus::InProgress);
-        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_completed() {
         let (_tmp, conn) = setup();
         let t = make_completed(&conn, "done");
-        assert!(!is_task_ready(&conn, 1, t.task_number()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
@@ -4813,13 +4813,13 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "blocked".to_string(),
-                dependencies: vec![dep.task_number()],
+                dependencies: vec![dep.id()],
                 ..default_create_params("blocked")
             },
         )
         .unwrap();
         transition_to(&conn, blocked.id(), TaskStatus::Todo);
-        assert!(!is_task_ready(&conn, 1, blocked.task_number()).unwrap());
+        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
     }
 
     #[test]
@@ -4831,13 +4831,13 @@ mod tests {
             1,
             &CreateTaskParams {
                 title: "unblocked".to_string(),
-                dependencies: vec![dep.task_number()],
+                dependencies: vec![dep.id()],
                 ..default_create_params("unblocked")
             },
         )
         .unwrap();
         transition_to(&conn, unblocked.id(), TaskStatus::Todo);
-        assert!(is_task_ready(&conn, 1, unblocked.task_number()).unwrap());
+        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
     }
 
     #[test]
@@ -5305,7 +5305,7 @@ mod tests {
         assert_eq!(refreshed.notes()[0].source_task_id(), Some(task.id()));
 
         // ON DELETE SET NULL: deleting the source task nullifies the reference
-        backend.delete_task(1, task.task_number()).await.unwrap();
+        backend.delete_task(1, task.id()).await.unwrap();
         let refreshed = backend.get_contract(c.id()).await.unwrap();
         assert_eq!(refreshed.notes().len(), 1);
         assert_eq!(refreshed.notes()[0].source_task_id(), None);
@@ -5346,7 +5346,7 @@ mod tests {
         let task = backend.create_task(1, &p).await.unwrap();
         assert_eq!(task.contract_id(), Some(c.id()));
 
-        let got = backend.get_task(1, task.task_number()).await.unwrap();
+        let got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(got.contract_id(), Some(c.id()));
     }
 

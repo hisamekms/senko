@@ -82,10 +82,7 @@ pub enum TaskEvent {
 /// A task that became eligible (ready) after another task was completed.
 #[derive(Debug, Serialize, Clone)]
 pub struct UnblockedTask {
-    #[serde(skip_serializing)]
     id: i64,
-    #[serde(rename = "id")]
-    task_number: i64,
     title: String,
     priority: Priority,
     metadata: Option<serde_json::Value>,
@@ -94,14 +91,12 @@ pub struct UnblockedTask {
 impl UnblockedTask {
     pub fn new(
         id: i64,
-        task_number: i64,
         title: String,
         priority: Priority,
         metadata: Option<serde_json::Value>,
     ) -> Self {
         Self {
             id,
-            task_number,
             title,
             priority,
             metadata,
@@ -110,10 +105,6 @@ impl UnblockedTask {
 
     pub fn id(&self) -> i64 {
         self.id
-    }
-
-    pub fn task_number(&self) -> i64 {
-        self.task_number
     }
 
     pub fn title(&self) -> &str {
@@ -279,10 +270,7 @@ impl DodItem {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
-    #[serde(skip)]
     id: i64,
-    #[serde(rename = "id")]
-    task_number: i64,
     project_id: i64,
     title: String,
     background: Option<String>,
@@ -313,7 +301,6 @@ impl Task {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         id: i64,
-        task_number: i64,
         project_id: i64,
         title: String,
         background: Option<String>,
@@ -341,7 +328,6 @@ impl Task {
     ) -> Self {
         Self {
             id,
-            task_number,
             project_id,
             title,
             background,
@@ -373,14 +359,6 @@ impl Task {
 
     pub fn id(&self) -> i64 {
         self.id
-    }
-
-    pub fn set_id(&mut self, id: i64) {
-        self.id = id;
-    }
-
-    pub fn task_number(&self) -> i64 {
-        self.task_number
     }
 
     pub fn project_id(&self) -> i64 {
@@ -724,7 +702,7 @@ impl Task {
             .count();
         if unchecked_count > 0 {
             return Err(DomainError::CannotCompleteTask {
-                task_id: self.task_number,
+                task_id: self.id,
                 reason: format!("{} unchecked DoD item(s)", unchecked_count),
             }
             .into());
@@ -754,7 +732,7 @@ impl Task {
         dep_id: i64,
         now: Option<String>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
-        if self.task_number == dep_id {
+        if self.id == dep_id {
             return Err(DomainError::SelfDependency.into());
         }
         if !self.dependencies.contains(&dep_id) {
@@ -778,7 +756,7 @@ impl Task {
         self.dependencies.retain(|&d| d != dep_id);
         if self.dependencies.len() == before {
             return Err(DomainError::DependencyNotFound {
-                task_id: self.task_number,
+                task_id: self.id,
                 dep_id,
             }
             .into());
@@ -796,7 +774,7 @@ impl Task {
         now: Option<String>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         for &dep_id in dep_ids {
-            if dep_id == self.task_number {
+            if dep_id == self.id {
                 return Err(DomainError::SelfDependency.into());
             }
         }
@@ -821,7 +799,7 @@ impl Task {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.task_number,
+                task_id: self.id,
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -840,7 +818,7 @@ impl Task {
         if index == 0 || index > self.definition_of_done.len() {
             return Err(DomainError::DodIndexOutOfRange {
                 index,
-                task_id: self.task_number,
+                task_id: self.id,
                 count: self.definition_of_done.len(),
             }
             .into());
@@ -878,7 +856,7 @@ pub fn select_next(tasks: Vec<Task>, dep_statuses: &HashMap<i64, TaskStatus>) ->
         a.priority()
             .cmp(&b.priority())
             .then_with(|| a.created_at().cmp(b.created_at()))
-            .then_with(|| a.task_number().cmp(&b.task_number()))
+            .then_with(|| a.id().cmp(&b.id()))
     });
     ready.into_iter().next()
 }
@@ -1206,7 +1184,6 @@ pub fn compute_unblocked(
         .map(|t| {
             UnblockedTask::new(
                 t.id(),
-                t.task_number(),
                 t.title().to_string(),
                 t.priority(),
                 t.metadata().cloned(),
@@ -1240,8 +1217,8 @@ impl CompletionPolicy {
             anyhow::anyhow!(
                 "cannot complete task #{}: merge_via is pr but no pr_url is set. \
                  Use `senko task edit {} --pr-url <url>` to set it.",
-                task.task_number(),
-                task.task_number(),
+                task.id(),
+                task.id(),
             )
         })?;
         Ok(Some(pr_url))
@@ -1409,7 +1386,6 @@ mod tests {
 
     fn make_task(status: TaskStatus) -> Task {
         Task::new(
-            1,
             1,
             1,
             "test".to_string(),
@@ -1674,7 +1650,6 @@ mod tests {
         let task = Task::new(
             1,
             1,
-            1,
             "test".to_string(),
             None,
             None,
@@ -1708,7 +1683,6 @@ mod tests {
     #[test]
     fn start_other_assigned_task_fails() {
         let task = Task::new(
-            1,
             1,
             1,
             "test".to_string(),
@@ -1745,7 +1719,6 @@ mod tests {
     #[test]
     fn start_with_none_user_preserves_assignee() {
         let task = Task::new(
-            1,
             1,
             1,
             "test".to_string(),
@@ -1929,7 +1902,6 @@ mod tests {
         Task::new(
             1,
             1,
-            1,
             "test".to_string(),
             None,
             None,
@@ -1974,7 +1946,6 @@ mod tests {
     #[test]
     fn task_uncheck_dod() {
         let task = Task::new(
-            1,
             1,
             1,
             "test".to_string(),
@@ -2094,7 +2065,6 @@ mod tests {
     fn make_task_with_id(id: i64, status: TaskStatus) -> Task {
         Task::new(
             id,
-            id,
             1,
             format!("task-{id}"),
             None,
@@ -2131,7 +2101,6 @@ mod tests {
         created_at: &str,
     ) -> Task {
         Task::new(
-            id,
             id,
             1,
             format!("task-{id}"),

@@ -117,7 +117,6 @@ impl HookTestService {
         } else {
             Ok(Task::new(
                 0,
-                0,
                 project_id,
                 "Sample task".into(),
                 None,

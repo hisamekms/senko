@@ -229,7 +229,6 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
     .collect();
 
     Ok(Task::new(
-        id,
         row.get("task_number"),
         row.get("project_id"),
         row.get("title"),
@@ -1165,6 +1164,7 @@ impl TaskRepository for PostgresBackend {
             .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
 
         let mut tx = pool.begin().await?;
+        let internal_id = resolve_task_number(&mut *tx, task.project_id(), task.id()).await?;
 
         sqlx::query(
             "UPDATE tasks SET
@@ -1176,7 +1176,7 @@ impl TaskRepository for PostgresBackend {
                 updated_at = $18
             WHERE id = $1",
         )
-        .bind(task.id())
+        .bind(internal_id)
         .bind(task.title())
         .bind(task.background())
         .bind(task.description())
@@ -1199,7 +1199,7 @@ impl TaskRepository for PostgresBackend {
 
         // Sync definition_of_done
         sqlx::query("DELETE FROM task_definition_of_done WHERE task_id = $1")
-            .bind(task.id())
+            .bind(internal_id)
             .execute(&mut *tx)
             .await?;
         for dod in task.definition_of_done() {
@@ -1207,7 +1207,7 @@ impl TaskRepository for PostgresBackend {
             sqlx::query(
                 "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES ($1, $2, $3)",
             )
-            .bind(task.id())
+            .bind(internal_id)
             .bind(dod.content())
             .bind(checked_val)
             .execute(&mut *tx)
@@ -1216,7 +1216,7 @@ impl TaskRepository for PostgresBackend {
 
         // Sync dependencies (task.dependencies() contains task_numbers, resolve to internal IDs)
         sqlx::query("DELETE FROM task_dependencies WHERE task_id = $1")
-            .bind(task.id())
+            .bind(internal_id)
             .execute(&mut *tx)
             .await?;
         for &dep_task_number in task.dependencies() {
@@ -1225,7 +1225,7 @@ impl TaskRepository for PostgresBackend {
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
-            .bind(task.id())
+            .bind(internal_id)
             .bind(dep_internal_id)
             .execute(&mut *tx)
             .await?;
@@ -2265,53 +2265,43 @@ mod tests {
 
         // Draft → false
         let draft = backend.create_task(1, &params("Draft")).await.unwrap();
-        assert!(!backend.is_task_ready(1, draft.task_number()).await.unwrap());
+        assert!(!backend.is_task_ready(1, draft.id()).await.unwrap());
 
         // Todo, no deps → true
         let (free, _) = draft.ready(now_utc()).unwrap();
         backend.save(&free).await.unwrap();
-        assert!(backend.is_task_ready(1, free.task_number()).await.unwrap());
+        assert!(backend.is_task_ready(1, free.id()).await.unwrap());
 
         // In-progress → false
         let (wip, _) = free.start(None, None, now_utc(), None).unwrap();
         backend.save(&wip).await.unwrap();
-        assert!(!backend.is_task_ready(1, wip.task_number()).await.unwrap());
+        assert!(!backend.is_task_ready(1, wip.id()).await.unwrap());
 
         // Completed → false
         let (done, _) = wip.complete(now_utc()).unwrap();
         backend.save(&done).await.unwrap();
-        assert!(!backend.is_task_ready(1, done.task_number()).await.unwrap());
+        assert!(!backend.is_task_ready(1, done.id()).await.unwrap());
 
         // Todo with completed dep → true
         let unblocked_raw = backend.create_task(1, &params("Unblocked")).await.unwrap();
         let (unblocked_raw, _) = unblocked_raw
-            .add_dependency(done.task_number(), Some(now_utc()))
+            .add_dependency(done.id(), Some(now_utc()))
             .unwrap();
         backend.save(&unblocked_raw).await.unwrap();
         let (unblocked, _) = unblocked_raw.ready(now_utc()).unwrap();
         backend.save(&unblocked).await.unwrap();
-        assert!(
-            backend
-                .is_task_ready(1, unblocked.task_number())
-                .await
-                .unwrap()
-        );
+        assert!(backend.is_task_ready(1, unblocked.id()).await.unwrap());
 
         // Todo with incomplete dep → false
         let dep = backend.create_task(1, &params("Dep")).await.unwrap();
         let blocked_raw = backend.create_task(1, &params("Blocked")).await.unwrap();
         let (blocked_raw, _) = blocked_raw
-            .add_dependency(dep.task_number(), Some(now_utc()))
+            .add_dependency(dep.id(), Some(now_utc()))
             .unwrap();
         backend.save(&blocked_raw).await.unwrap();
         let (blocked, _) = blocked_raw.ready(now_utc()).unwrap();
         backend.save(&blocked).await.unwrap();
-        assert!(
-            !backend
-                .is_task_ready(1, blocked.task_number())
-                .await
-                .unwrap()
-        );
+        assert!(!backend.is_task_ready(1, blocked.id()).await.unwrap());
 
         // Missing task → false
         assert!(!backend.is_task_ready(1, 999_999).await.unwrap());
@@ -2801,7 +2791,7 @@ mod tests {
         let task = backend.create_task(1, &p).await.unwrap();
         assert_eq!(task.contract_id(), Some(c.id()));
 
-        let got = backend.get_task(1, task.task_number()).await.unwrap();
+        let got = backend.get_task(1, task.id()).await.unwrap();
         assert_eq!(got.contract_id(), Some(c.id()));
     }
 

@@ -70,7 +70,7 @@ impl LocalTaskOperations {
                 .all(|&dep_id| {
                     all_tasks
                         .iter()
-                        .find(|tt| tt.task_number() == dep_id)
+                        .find(|tt| tt.id() == dep_id)
                         .is_some_and(|tt| tt.status() == TaskStatus::Completed)
                 });
             if all_other_done {
@@ -302,13 +302,7 @@ impl TaskOperations for LocalTaskOperations {
                 .into());
             }
             self.backend
-                .start_task(
-                    project_id,
-                    task.task_number(),
-                    session_id,
-                    user_id,
-                    metadata,
-                )
+                .start_task(project_id, task.id(), session_id, user_id, metadata)
                 .await?
         };
 
@@ -560,11 +554,7 @@ impl TaskOperations for LocalTaskOperations {
         };
 
         for t in &unblocked_tasks {
-            operations.push(format!(
-                "Unblock task #{}: \"{}\"",
-                t.task_number(),
-                t.title()
-            ));
+            operations.push(format!("Unblock task #{}: \"{}\"", t.id(), t.title()));
         }
 
         Ok(PreviewResult {
@@ -586,7 +576,7 @@ impl TaskOperations for LocalTaskOperations {
         let operations = vec![
             format!(
                 "Start next eligible task #{}: \"{}\"",
-                task.task_number(),
+                task.id(),
                 task.title()
             ),
             format!("Change status: {} → in_progress", task.status()),
@@ -663,11 +653,8 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.delete_task(project_id, id).await
     }
 
-    async fn save_task(&self, project_id: i64, id: i64, task: &Task) -> Result<()> {
-        let existing = self.backend.get_task(project_id, id).await?;
-        let mut task = task.clone();
-        task.set_id(existing.id());
-        self.backend.save(&task).await
+    async fn save_task(&self, _project_id: i64, _id: i64, task: &Task) -> Result<()> {
+        self.backend.save(task).await
     }
 
     async fn check_dod(&self, project_id: i64, task_id: i64, index: usize) -> Result<Task> {
@@ -699,7 +686,7 @@ impl TaskOperations for LocalTaskOperations {
                 backend
                     .list_dependencies(project_id, id)
                     .await
-                    .map(|tasks| tasks.iter().map(|t| t.task_number()).collect())
+                    .map(|tasks| tasks.iter().map(|t| t.id()).collect())
                     .unwrap_or_default()
             }
         })
@@ -744,7 +731,7 @@ impl TaskOperations for LocalTaskOperations {
                     backend
                         .list_dependencies(project_id, id)
                         .await
-                        .map(|tasks| tasks.iter().map(|t| t.task_number()).collect())
+                        .map(|tasks| tasks.iter().map(|t| t.id()).collect())
                         .unwrap_or_default()
                 }
             })

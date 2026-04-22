@@ -142,7 +142,7 @@ impl HookDataSource for RemoteHookDataSource {
         let mut dep_statuses: HashMap<i64, TaskStatus> = HashMap::new();
         for dep_task_number in task.dependencies() {
             if let Ok(dep) = self.get_task(project_id, *dep_task_number).await {
-                dep_statuses.insert(dep.task_number(), dep.status());
+                dep_statuses.insert(dep.id(), dep.status());
             }
         }
         Ok(task.is_ready(&dep_statuses))

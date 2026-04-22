@@ -935,13 +935,11 @@ fn resolve_query_assignee_self(
             None => Ok((None, true)),
         };
     }
-    val.parse::<i64>()
-        .map(|n| (Some(n), false))
-        .map_err(|_| {
-            ApiError::BadRequest(format!(
-                "assignee_user_id must be a numeric id or 'self' (got {val:?})"
-            ))
-        })
+    val.parse::<i64>().map(|n| (Some(n), false)).map_err(|_| {
+        ApiError::BadRequest(format!(
+            "assignee_user_id must be a numeric id or 'self' (got {val:?})"
+        ))
+    })
 }
 
 // POST /api/v1/projects/{project_id}/tasks
@@ -1098,7 +1096,7 @@ async fn save_task_handler(
     Json(task): Json<Task>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
-    if task.task_number() != id || task.project_id() != project_id {
+    if task.id() != id || task.project_id() != project_id {
         return Err(ApiError::BadRequest(
             "task ID or project ID mismatch".into(),
         ));

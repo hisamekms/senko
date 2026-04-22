@@ -105,7 +105,7 @@ pub struct TaskResponse {
 impl From<Task> for TaskResponse {
     fn from(t: Task) -> Self {
         Self {
-            id: t.task_number(),
+            id: t.id(),
             project_id: t.project_id(),
             title: t.title().to_owned(),
             background: t.background().map(|s| s.to_owned()),
@@ -236,7 +236,7 @@ pub struct TaskViewModel {
 impl From<Task> for TaskViewModel {
     fn from(t: Task) -> Self {
         Self {
-            id: t.task_number(),
+            id: t.id(),
             title: t.title().to_owned(),
             status: t.status().to_string(),
             priority: t.priority().to_string(),
@@ -285,7 +285,7 @@ impl From<CompleteResult> for CompleteTaskResponse {
                 .unblocked
                 .into_iter()
                 .map(|t| UnblockedTaskInfo {
-                    id: t.task_number(),
+                    id: t.id(),
                     title: t.title().to_owned(),
                     status: "todo".to_owned(),
                     priority: t.priority().to_string(),
@@ -326,7 +326,7 @@ impl From<PreviewResult> for PreviewTransitionResponse {
                 .unblocked_tasks
                 .into_iter()
                 .map(|t| UnblockedTaskInfo {
-                    id: t.task_number(),
+                    id: t.id(),
                     title: t.title().to_owned(),
                     status: t.status().to_string(),
                     priority: t.priority().to_string(),
@@ -702,7 +702,6 @@ mod tests {
 
         let task = Task::new(
             1,              // id
-            1,              // task_number
             1,              // project_id
             "title".into(), // title
             None,           // background

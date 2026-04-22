@@ -93,7 +93,7 @@ fn parse_unblocked(items: Vec<UnblockedApiInfo>) -> Vec<UnblockedTask> {
         .into_iter()
         .map(|u| {
             let priority = u.priority.parse::<Priority>().unwrap_or(Priority::P2);
-            UnblockedTask::new(0, u.id, u.title, priority, None)
+            UnblockedTask::new(u.id, u.title, priority, None)
         })
         .collect()
 }
@@ -214,7 +214,8 @@ impl TaskOperations for RemoteTaskOperations {
     ) -> Result<Task> {
         // user_id is resolved server-side from the authenticated request — the
         // client no longer sends it in the body. See #330.
-        let mut body = json!({ "session_id": session_id, "include_unassigned": include_unassigned });
+        let mut body =
+            json!({ "session_id": session_id, "include_unassigned": include_unassigned });
         if let Some(ref meta_update) = metadata {
             match meta_update {
                 MetadataUpdate::Clear => {
@@ -388,7 +389,6 @@ impl TaskOperations for RemoteTaskOperations {
                 let priority = u.priority.parse::<Priority>().ok()?;
                 let status = u.status.parse::<TaskStatus>().ok()?;
                 Some(Task::new(
-                    0,
                     u.id,
                     project_id,
                     u.title,

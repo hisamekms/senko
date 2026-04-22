@@ -23,13 +23,11 @@ pub trait TaskQueryPort: Send + Sync {
     /// Returns whether a single task is currently "ready to be worked on"
     /// (status == todo AND every dependency is completed).
     ///
-    /// The second argument is the public **`task_number`** (the per-project
-    /// sequential identifier), not the internal DB primary key. This matches
-    /// the identity exposed by HTTP APIs / CLI output / hook payloads, so
-    /// remote callers (e.g. deserialized `Task` via `#[serde(skip)] id`) can
-    /// use `task.task_number()` safely.
+    /// The second argument is the task's public `id` (the per-project sequential
+    /// identifier exposed by HTTP APIs / CLI output / hook payloads). The infra
+    /// layer resolves it to an internal DB primary key on its own.
     ///
     /// Must mirror the canonical definition in `crate::domain::task::Task::is_ready`.
     /// Returns `Ok(false)` if the task does not exist in the given project.
-    async fn is_task_ready(&self, project_id: i64, task_number: i64) -> Result<bool>;
+    async fn is_task_ready(&self, project_id: i64, id: i64) -> Result<bool>;
 }
