@@ -29,6 +29,7 @@ use crate::domain::{
     ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
     TaskRepository, UserRepository,
 };
+use crate::infra::TaskDbId;
 
 pub struct PostgresBackend {
     url: String,
@@ -158,7 +159,7 @@ async fn run_migrations(pool: &PgPool) -> Result<()> {
 
 // --- Helper: build a Task from a tasks row + child queries ---
 
-async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
+async fn get_task_by_id(pool: &PgPool, id: TaskDbId) -> Result<Task> {
     let row = sqlx::query(
         "SELECT project_id, task_number, title, background, description, plan, status, priority,
                 assignee_session_id, created_at, updated_at, started_at, completed_at,
@@ -262,17 +263,22 @@ async fn get_task_by_id(pool: &PgPool, id: i64) -> Result<Task> {
 ///
 /// Accepts any sqlx executor (pool or transaction) so callers inside a
 /// transaction can avoid acquiring a second connection from the pool.
-async fn resolve_task_number<'e, E>(executor: E, project_id: i64, task_number: i64) -> Result<i64>
+async fn resolve_task_number<'e, E>(
+    executor: E,
+    project_id: i64,
+    task_id: TaskId,
+) -> Result<TaskDbId>
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    let task_number: i64 = task_id.into();
     let row = sqlx::query("SELECT id FROM tasks WHERE project_id = $1 AND task_number = $2")
         .bind(project_id)
         .bind(task_number)
         .fetch_optional(executor)
         .await?
         .ok_or(DomainError::TaskNotFound)?;
-    Ok(row.get("id"))
+    Ok(TaskDbId(row.get("id")))
 }
 
 // =============================================================================
@@ -804,7 +810,7 @@ impl TaskRepository for PostgresBackend {
         .bind(params.contract_id)
         .fetch_one(&mut *tx)
         .await?;
-        let task_id: i64 = row.get("id");
+        let task_id = TaskDbId(row.get::<i64, _>("id"));
         let task_number: i64 = row.get("task_number");
 
         if let Some(ref branch) = params.branch {
@@ -848,7 +854,7 @@ impl TaskRepository for PostgresBackend {
         }
         for &dep_task_number in &params.dependencies {
             let dep_internal_id =
-                resolve_task_number(&mut *tx, project_id, dep_task_number.into()).await?;
+                resolve_task_number(&mut *tx, project_id, dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -863,7 +869,6 @@ impl TaskRepository for PostgresBackend {
     }
 
     async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
-        let id: i64 = id.into();
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, id).await?;
         get_task_by_id(pool, internal_id).await
@@ -875,7 +880,6 @@ impl TaskRepository for PostgresBackend {
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
-        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
 
@@ -1033,7 +1037,6 @@ impl TaskRepository for PostgresBackend {
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
-        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
 
@@ -1128,7 +1131,6 @@ impl TaskRepository for PostgresBackend {
     }
 
     async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
-        let id: i64 = id.into();
         let pool = self.pool().await?;
         let id = resolve_task_number(pool, project_id, id).await?;
         let result = sqlx::query("DELETE FROM tasks WHERE id = $1")
@@ -1136,13 +1138,12 @@ impl TaskRepository for PostgresBackend {
             .execute(pool)
             .await?;
         if result.rows_affected() == 0 {
-            anyhow::bail!("task not found: {id}");
+            anyhow::bail!("task not found: {}", id.0);
         }
         Ok(())
     }
 
     async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
-        let task_id: i64 = task_id.into();
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
         get_task_by_id(pool, internal_id).await?;
@@ -1155,7 +1156,7 @@ impl TaskRepository for PostgresBackend {
 
         let mut tasks = Vec::with_capacity(rows.len());
         for row in rows {
-            let dep_id: i64 = row.get("depends_on_task_id");
+            let dep_id = TaskDbId(row.get::<i64, _>("depends_on_task_id"));
             tasks.push(get_task_by_id(pool, dep_id).await?);
         }
         Ok(tasks)
@@ -1170,8 +1171,7 @@ impl TaskRepository for PostgresBackend {
             .map_err(|e| anyhow::anyhow!("failed to serialize metadata: {e}"))?;
 
         let mut tx = pool.begin().await?;
-        let internal_id =
-            resolve_task_number(&mut *tx, task.project_id(), task.id().into()).await?;
+        let internal_id = resolve_task_number(&mut *tx, task.project_id(), task.id()).await?;
 
         sqlx::query(
             "UPDATE tasks SET
@@ -1228,7 +1228,7 @@ impl TaskRepository for PostgresBackend {
             .await?;
         for &dep_task_number in task.dependencies() {
             let dep_internal_id =
-                resolve_task_number(&mut *tx, task.project_id(), dep_task_number.into()).await?;
+                resolve_task_number(&mut *tx, task.project_id(), dep_task_number).await?;
             sqlx::query(
                 "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES ($1, $2)",
             )
@@ -1391,7 +1391,10 @@ impl TaskQueryPort for PostgresBackend {
         }
 
         let rows = query.fetch_all(pool).await?;
-        let ids: Vec<i64> = rows.iter().map(|r| r.get("id")).collect();
+        let ids: Vec<TaskDbId> = rows
+            .iter()
+            .map(|r| TaskDbId(r.get::<i64, _>("id")))
+            .collect();
 
         let mut tasks = Vec::with_capacity(ids.len());
         for id in ids {
@@ -1434,7 +1437,7 @@ impl TaskQueryPort for PostgresBackend {
         let row = query.fetch_optional(pool).await?;
         match row {
             Some(r) => {
-                let id: i64 = r.get("id");
+                let id = TaskDbId(r.get::<i64, _>("id"));
                 Ok(Some(get_task_by_id(pool, id).await?))
             }
             None => Ok(None),
@@ -1515,7 +1518,7 @@ impl TaskQueryPort for PostgresBackend {
 
 async fn update_content_array(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    task_id: i64,
+    task_id: TaskDbId,
     table: &str,
     set: &Option<Vec<String>>,
     add: &[String],

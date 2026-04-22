@@ -18,6 +18,7 @@ use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
     Role, UpdateUserParams, User,
 };
+use crate::infra::TaskDbId;
 use crate::infra::xdg::XdgDirs;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -999,11 +1000,12 @@ fn update_member_role(
 
 /// Verify that a task belongs to the given project.
 /// Resolve a user-facing task_number to internal id, verifying project ownership.
-fn resolve_task_number(conn: &Connection, project_id: i64, task_number: i64) -> Result<i64> {
+fn resolve_task_number(conn: &Connection, project_id: i64, task_id: TaskId) -> Result<TaskDbId> {
+    let task_number: i64 = task_id.into();
     conn.query_row(
         "SELECT id FROM tasks WHERE project_id = ?1 AND task_number = ?2",
         params![project_id, task_number],
-        |row| row.get(0),
+        |row| row.get::<_, i64>(0).map(TaskDbId),
     )
     .optional()?
     .ok_or_else(|| DomainError::TaskNotFound.into())
@@ -1032,7 +1034,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         "INSERT INTO tasks (title, background, description, priority, branch, pr_url, metadata, project_id, task_number, assignee_user_id, contract_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![params.title, params.background, params.description, priority, params.branch, params.pr_url, metadata_str, project_id, task_number, params.assignee_user_id.as_ref().and_then(|a| a.as_id()), params.contract_id],
     )?;
-    let task_id = conn.last_insert_rowid();
+    let task_id = TaskDbId(conn.last_insert_rowid());
 
     if let Some(ref branch) = params.branch
         && branch.contains("${task_id}")
@@ -1069,7 +1071,7 @@ fn create_task(conn: &Connection, project_id: i64, params: &CreateTaskParams) ->
         )?;
     }
     for &dep_task_number in &params.dependencies {
-        let dep_internal_id = resolve_task_number(conn, project_id, dep_task_number.into())?;
+        let dep_internal_id = resolve_task_number(conn, project_id, dep_task_number)?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
             params![task_id, dep_internal_id],
@@ -1102,7 +1104,7 @@ type TaskRow = (
     Option<i64>,
 );
 
-fn get_task(conn: &Connection, id: i64) -> Result<Task> {
+fn get_task(conn: &Connection, id: TaskDbId) -> Result<Task> {
     let (project_id, task_number, title, background, description, plan, status_str, priority_val, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata_str, assignee_user_id, contract_id): TaskRow = conn
         .query_row(
             "SELECT project_id, task_number, title, background, description, plan, status, priority, assignee_session_id, created_at, updated_at, started_at, completed_at, canceled_at, cancel_reason, branch, pr_url, metadata, assignee_user_id, contract_id FROM tasks WHERE id = ?1",
@@ -1178,7 +1180,7 @@ fn get_task(conn: &Connection, id: i64) -> Result<Task> {
     ))
 }
 
-fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<Task> {
+fn update_task(conn: &Connection, id: TaskDbId, params: &UpdateTaskParams) -> Result<Task> {
     let mut columns = Vec::new();
     let mut values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
@@ -1283,7 +1285,11 @@ fn update_task(conn: &Connection, id: i64, params: &UpdateTaskParams) -> Result<
     get_task(conn, id)
 }
 
-fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams) -> Result<()> {
+fn update_task_arrays(
+    conn: &Connection,
+    id: TaskDbId,
+    params: &UpdateTaskArrayParams,
+) -> Result<()> {
     // tags
     if let Some(ref values) = params.set_tags {
         conn.execute("DELETE FROM task_tags WHERE task_id = ?1", params![id])?;
@@ -1360,7 +1366,7 @@ fn update_task_arrays(conn: &Connection, id: i64, params: &UpdateTaskArrayParams
 }
 
 fn save_task(conn: &Connection, task: &Task) -> Result<()> {
-    let internal_id = resolve_task_number(conn, task.project_id(), task.id().into())?;
+    let internal_id = resolve_task_number(conn, task.project_id(), task.id())?;
     let metadata_str: Option<String> = task
         .metadata()
         .map(serde_json::to_string)
@@ -1417,7 +1423,7 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
         params![internal_id],
     )?;
     for &dep_task_number in task.dependencies() {
-        let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number.into())?;
+        let dep_internal_id = resolve_task_number(conn, task.project_id(), dep_task_number)?;
         conn.execute(
             "INSERT INTO task_dependencies (task_id, depends_on_task_id) VALUES (?1, ?2)",
             params![internal_id, dep_internal_id],
@@ -1485,7 +1491,7 @@ impl ContentTable {
 
 fn update_content_array(
     conn: &Connection,
-    task_id: i64,
+    task_id: TaskDbId,
     table: ContentTable,
     set: &Option<Vec<String>>,
     add: &[String],
@@ -1519,7 +1525,7 @@ fn update_content_array(
     Ok(())
 }
 
-fn delete_task(conn: &Connection, id: i64) -> Result<()> {
+fn delete_task(conn: &Connection, id: TaskDbId) -> Result<()> {
     let affected = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
     if affected == 0 {
         return Err(DomainError::TaskNotFound.into());
@@ -1656,8 +1662,8 @@ fn list_tasks(conn: &Connection, project_id: i64, filter: &ListTasksFilter) -> R
         param_values.iter().map(|v| v.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let ids: Vec<i64> = stmt
-        .query_map(param_refs.as_slice(), |row| row.get(0))?
+    let ids: Vec<TaskDbId> = stmt
+        .query_map(param_refs.as_slice(), |row| row.get::<_, TaskDbId>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     let mut tasks = Vec::with_capacity(ids.len());
@@ -1694,11 +1700,13 @@ fn next_task(
          ORDER BY t.priority ASC, t.created_at ASC, t.id ASC
          LIMIT 1"
     );
-    let id: Option<i64> = if let Some(uid) = user_id {
-        conn.query_row(&sql, params![project_id, uid], |row| row.get(0))
-            .optional()?
+    let id: Option<TaskDbId> = if let Some(uid) = user_id {
+        conn.query_row(&sql, params![project_id, uid], |row| {
+            row.get::<_, TaskDbId>(0)
+        })
+        .optional()?
     } else {
-        conn.query_row(&sql, params![project_id], |row| row.get(0))
+        conn.query_row(&sql, params![project_id], |row| row.get::<_, TaskDbId>(0))
             .optional()?
     };
     match id {
@@ -1754,7 +1762,8 @@ fn list_ready_tasks(conn: &Connection, project_id: i64) -> Result<Vec<Task>> {
 ///
 /// The second argument is the public `task_number`, not the internal DB id —
 /// matching the identity exposed via HTTP / CLI / hook payloads.
-fn is_task_ready(conn: &Connection, project_id: i64, task_number: i64) -> Result<bool> {
+fn is_task_ready(conn: &Connection, project_id: i64, task_number: TaskId) -> Result<bool> {
+    let task_number_i64: i64 = task_number.into();
     let sql = "
         SELECT 1 FROM tasks t
         WHERE t.project_id = ?1
@@ -1768,14 +1777,14 @@ fn is_task_ready(conn: &Connection, project_id: i64, task_number: i64) -> Result
         LIMIT 1
     ";
     let found: Option<i64> = conn
-        .query_row(sql, params![project_id, task_number], |row| row.get(0))
+        .query_row(sql, params![project_id, task_number_i64], |row| row.get(0))
         .optional()?;
     Ok(found.is_some())
 }
 
-fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
+fn list_dependencies(conn: &Connection, task_id: TaskDbId) -> Result<Vec<Task>> {
     get_task(conn, task_id)?;
-    let dep_ids = query_i64_list(
+    let dep_ids = query_task_db_id_list(
         conn,
         "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
         task_id,
@@ -1787,7 +1796,7 @@ fn list_dependencies(conn: &Connection, task_id: i64) -> Result<Vec<Task>> {
     Ok(tasks)
 }
 
-fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
+fn query_dod_list(conn: &Connection, task_id: TaskDbId) -> Result<Vec<DodItem>> {
     let mut stmt = conn.prepare(
         "SELECT content, checked FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
     )?;
@@ -1799,7 +1808,7 @@ fn query_dod_list(conn: &Connection, task_id: i64) -> Result<Vec<DodItem>> {
     Ok(items)
 }
 
-fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<String>> {
+fn query_string_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Result<Vec<String>> {
     let mut stmt = conn.prepare(sql)?;
     let items: Vec<String> = stmt
         .query_map(params![task_id], |row| row.get(0))?
@@ -1807,10 +1816,18 @@ fn query_string_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<S
     Ok(items)
 }
 
-fn query_i64_list(conn: &Connection, sql: &str, task_id: i64) -> Result<Vec<i64>> {
+fn query_i64_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Result<Vec<i64>> {
     let mut stmt = conn.prepare(sql)?;
     let items: Vec<i64> = stmt
         .query_map(params![task_id], |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(items)
+}
+
+fn query_task_db_id_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Result<Vec<TaskDbId>> {
+    let mut stmt = conn.prepare(sql)?;
+    let items: Vec<TaskDbId> = stmt
+        .query_map(params![task_id], |row| row.get::<_, TaskDbId>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(items)
 }
@@ -2558,7 +2575,6 @@ impl TaskRepository for SqliteBackend {
     }
 
     async fn get_task(&self, project_id: i64, id: TaskId) -> Result<Task> {
-        let id: i64 = id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             get_task(conn, internal_id)
@@ -2571,7 +2587,6 @@ impl TaskRepository for SqliteBackend {
         id: TaskId,
         params: &UpdateTaskParams,
     ) -> Result<Task> {
-        let id: i64 = id.into();
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2585,7 +2600,6 @@ impl TaskRepository for SqliteBackend {
         id: TaskId,
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
-        let id: i64 = id.into();
         let params = params.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
@@ -2594,7 +2608,6 @@ impl TaskRepository for SqliteBackend {
     }
 
     async fn delete_task(&self, project_id: i64, id: TaskId) -> Result<()> {
-        let id: i64 = id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, id)?;
             delete_task(conn, internal_id)
@@ -2602,7 +2615,6 @@ impl TaskRepository for SqliteBackend {
     }
 
     async fn list_dependencies(&self, project_id: i64, task_id: TaskId) -> Result<Vec<Task>> {
-        let task_id: i64 = task_id.into();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, task_id)?;
             list_dependencies(conn, internal_id)
@@ -2651,11 +2663,8 @@ impl TaskQueryPort for SqliteBackend {
     }
 
     async fn is_task_ready(&self, project_id: i64, id: TaskId) -> Result<bool> {
-        let task_number: i64 = id.into();
         blocking!(self, |conn: &Connection| is_task_ready(
-            conn,
-            project_id,
-            task_number
+            conn, project_id, id
         ))
     }
 }
@@ -2813,7 +2822,7 @@ mod tests {
     }
 
     /// Helper to transition a task through statuses using domain methods + save
-    fn transition_to(conn: &Connection, id: i64, target: TaskStatus) {
+    fn transition_to(conn: &Connection, id: TaskDbId, target: TaskStatus) {
         let task = get_task(conn, id).unwrap();
         match target {
             TaskStatus::Draft => {} // already draft
@@ -2978,7 +2987,7 @@ mod tests {
         assert!(task.canceled_at().is_none());
         assert!(task.cancel_reason().is_none());
 
-        let fetched = get_task(&conn, task.id().into()).unwrap();
+        let fetched = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(fetched.title(), task.title());
         assert_eq!(fetched.tags(), task.tags());
     }
@@ -2997,7 +3006,7 @@ mod tests {
 
         let updated = update_task(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskParams {
                 title: Some("updated".to_string()),
                 background: Some(Some("new bg".to_string())),
@@ -3033,10 +3042,10 @@ mod tests {
         assert_eq!(task.status(), TaskStatus::Draft);
 
         // draft -> todo via domain method + save
-        let task = get_task(&conn, task.id().into()).unwrap();
+        let task = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         let (task, _) = task.publish("2025-01-01T00:00:00Z".to_string()).unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.status(), TaskStatus::Todo);
 
         // todo -> in_progress
@@ -3049,7 +3058,7 @@ mod tests {
             )
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.status(), TaskStatus::InProgress);
         assert_eq!(updated.assignee_session_id(), Some("session-1"));
         assert_eq!(updated.started_at(), Some("2025-01-01T00:00:00Z"));
@@ -3059,7 +3068,7 @@ mod tests {
             .complete("2025-01-01T01:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.status(), TaskStatus::Completed);
         assert_eq!(updated.completed_at(), Some("2025-01-01T01:00:00Z"));
     }
@@ -3070,35 +3079,35 @@ mod tests {
 
         // cancel from draft
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
-        let task = get_task(&conn, t1.id().into()).unwrap();
+        let task = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), Some("reason1".into()))
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t1.id().into()).unwrap();
+        let canceled = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
         assert_eq!(canceled.cancel_reason(), Some("reason1"));
 
         // cancel from todo
         let t2 = create_task(&conn, 1, &default_create_params("t2")).unwrap();
-        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
-        let task = get_task(&conn, t2.id().into()).unwrap();
+        transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
+        let task = get_task(&conn, TaskDbId(t2.id().into())).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), None)
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t2.id().into()).unwrap();
+        let canceled = get_task(&conn, TaskDbId(t2.id().into())).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
 
         // cancel from in_progress
         let t3 = create_task(&conn, 1, &default_create_params("t3")).unwrap();
-        transition_to(&conn, t3.id().into(), TaskStatus::InProgress);
-        let task = get_task(&conn, t3.id().into()).unwrap();
+        transition_to(&conn, TaskDbId(t3.id().into()), TaskStatus::InProgress);
+        let task = get_task(&conn, TaskDbId(t3.id().into())).unwrap();
         let (task, _) = task
             .cancel("2025-01-01T00:00:00Z".to_string(), None)
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let canceled = get_task(&conn, t3.id().into()).unwrap();
+        let canceled = get_task(&conn, TaskDbId(t3.id().into())).unwrap();
         assert_eq!(canceled.status(), TaskStatus::Canceled);
     }
 
@@ -3127,9 +3136,9 @@ mod tests {
         )
         .unwrap();
 
-        delete_task(&conn, task.id().into()).unwrap();
+        delete_task(&conn, TaskDbId(task.id().into())).unwrap();
 
-        assert!(get_task(&conn, task.id().into()).is_err());
+        assert!(get_task(&conn, TaskDbId(task.id().into())).is_err());
 
         let count: i32 = conn
             .query_row(
@@ -3153,7 +3162,7 @@ mod tests {
     #[test]
     fn delete_nonexistent_task() {
         let (_tmp, conn) = setup();
-        assert!(delete_task(&conn, 99999).is_err());
+        assert!(delete_task(&conn, TaskDbId(99999)).is_err());
     }
 
     #[test]
@@ -3173,7 +3182,7 @@ mod tests {
         let _t2 = create_task(&conn, 1, &default_create_params("todo")).unwrap();
 
         // Move t1 to todo
-        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
 
         let drafts = list_tasks(
             &conn,
@@ -3237,7 +3246,7 @@ mod tests {
 
         // Create dep task and move to completed
         let dep = create_task(&conn, 1, &default_create_params("dep")).unwrap();
-        transition_to(&conn, dep.id().into(), TaskStatus::Completed);
+        transition_to(&conn, TaskDbId(dep.id().into()), TaskStatus::Completed);
 
         // Create task with completed dep -> should be ready
         let ready_t = create_task(
@@ -3250,7 +3259,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, ready_t.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(ready_t.id().into()), TaskStatus::Todo);
 
         // Create another dep that is NOT completed
         let dep2 = create_task(&conn, 1, &default_create_params("dep2")).unwrap();
@@ -3264,7 +3273,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked_task.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(blocked_task.id().into()), TaskStatus::Todo);
 
         let result = list_tasks(
             &conn,
@@ -3502,7 +3511,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
                 set_tags: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -3510,7 +3519,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.tags().len(), 2);
         assert!(updated.tags().contains(&"new1".to_string()));
         assert!(updated.tags().contains(&"new2".to_string()));
@@ -3535,7 +3544,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
                 add_tags: vec!["new".to_string(), "existing".to_string()],
                 ..default_array_params()
@@ -3543,7 +3552,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.tags().len(), 2);
         assert!(updated.tags().contains(&"existing".to_string()));
         assert!(updated.tags().contains(&"new".to_string()));
@@ -3567,7 +3576,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
                 remove_tags: vec!["remove".to_string()],
                 ..default_array_params()
@@ -3575,7 +3584,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.tags(), &["keep"]);
     }
 
@@ -3594,7 +3603,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
                 set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
                 ..default_array_params()
@@ -3602,7 +3611,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(
             updated.definition_of_done(),
             &[
@@ -3627,7 +3636,7 @@ mod tests {
 
         update_task_arrays(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
                 add_in_scope: vec!["c".to_string()],
                 remove_in_scope: vec!["a".to_string()],
@@ -3636,7 +3645,7 @@ mod tests {
         )
         .unwrap();
 
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert_eq!(updated.in_scope(), &["b", "c"]);
     }
 
@@ -3650,14 +3659,14 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(conn, task.id().into(), TaskStatus::Todo);
-        get_task(conn, task.id().into()).unwrap()
+        transition_to(conn, TaskDbId(task.id().into()), TaskStatus::Todo);
+        get_task(conn, TaskDbId(task.id().into())).unwrap()
     }
 
     fn make_completed(conn: &Connection, title: &str) -> Task {
         let task = create_task(conn, 1, &default_create_params(title)).unwrap();
-        transition_to(conn, task.id().into(), TaskStatus::Completed);
-        get_task(conn, task.id().into()).unwrap()
+        transition_to(conn, TaskDbId(task.id().into()), TaskStatus::Completed);
+        get_task(conn, TaskDbId(task.id().into())).unwrap()
     }
 
     #[test]
@@ -3684,7 +3693,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, task.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(task.id().into()), TaskStatus::Todo);
 
         assert!(next_task(&conn, 1, None, false).unwrap().is_none());
     }
@@ -3745,7 +3754,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, task.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(task.id().into()), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(result.title(), "ready");
@@ -3782,8 +3791,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
-        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
         assert_eq!(result.title(), "user1-task");
@@ -3814,8 +3823,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
-        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), true).unwrap().unwrap();
         assert_eq!(result.title(), "unassigned");
@@ -3844,8 +3853,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
-        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, Some(1), false).unwrap().unwrap();
         assert_eq!(result.title(), "assigned");
@@ -3874,8 +3883,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, t1.id().into(), TaskStatus::Todo);
-        transition_to(&conn, t2.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
         let result = next_task(&conn, 1, None, false).unwrap().unwrap();
         assert_eq!(result.title(), "unassigned");
@@ -3977,7 +3986,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id().into()).unwrap();
+        let loaded = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         assert_eq!(loaded.dependencies().len(), 2);
         assert!(loaded.dependencies().contains(&t2.id()));
         assert!(loaded.dependencies().contains(&t3.id()));
@@ -4000,7 +4009,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id().into()).unwrap();
+        let loaded = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         assert_eq!(loaded.dependencies(), &[t3.id()]);
     }
 
@@ -4020,7 +4029,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let loaded = get_task(&conn, t1.id().into()).unwrap();
+        let loaded = get_task(&conn, TaskDbId(t1.id().into())).unwrap();
         assert!(loaded.dependencies().is_empty());
     }
 
@@ -4039,7 +4048,7 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id().into()).unwrap();
+        let deps = list_dependencies(&conn, TaskDbId(t1.id().into())).unwrap();
         assert_eq!(deps.len(), 2);
         let dep_ids: Vec<TaskId> = deps.iter().map(|t| t.id()).collect();
         assert!(dep_ids.contains(&t2.id()));
@@ -4051,7 +4060,7 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, 1, &default_create_params("t1")).unwrap();
 
-        let deps = list_dependencies(&conn, t1.id().into()).unwrap();
+        let deps = list_dependencies(&conn, TaskDbId(t1.id().into())).unwrap();
         assert!(deps.is_empty());
     }
 
@@ -4072,7 +4081,7 @@ mod tests {
 
         let updated = update_task(
             &conn,
-            task.id().into(),
+            TaskDbId(task.id().into()),
             &UpdateTaskParams {
                 title: None,
                 background: Some(None), // clear it
@@ -4109,12 +4118,12 @@ mod tests {
         .unwrap();
 
         // Check first item via domain method + save
-        let task = get_task(&conn, task.id().into()).unwrap();
+        let task = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         let (task, _) = task
             .check_dod(1, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(!updated.definition_of_done()[1].checked());
 
@@ -4123,7 +4132,7 @@ mod tests {
             .check_dod(2, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert!(updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
 
@@ -4132,7 +4141,7 @@ mod tests {
             .uncheck_dod(1, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
-        let updated = get_task(&conn, task.id().into()).unwrap();
+        let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         assert!(!updated.definition_of_done()[0].checked());
         assert!(updated.definition_of_done()[1].checked());
     }
@@ -4693,7 +4702,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(blocked.id().into()), TaskStatus::Todo);
 
         let free = make_todo(&conn, "free", Some(Priority::P1));
 
@@ -4728,7 +4737,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(blocked.id().into()), TaskStatus::Todo);
 
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
@@ -4767,7 +4776,7 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
+        transition_to(&conn, TaskDbId(blocked.id().into()), TaskStatus::Todo);
 
         make_todo(&conn, "free1", None);
         make_todo(&conn, "free2", None);
@@ -4791,29 +4800,29 @@ mod tests {
     fn is_task_ready_true_for_todo_with_no_deps() {
         let (_tmp, conn) = setup();
         let t = make_todo(&conn, "free", None);
-        assert!(is_task_ready(&conn, 1, t.id().into()).unwrap());
+        assert!(is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_draft() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("draft")).unwrap();
-        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_in_progress() {
         let (_tmp, conn) = setup();
         let t = create_task(&conn, 1, &default_create_params("wip")).unwrap();
-        transition_to(&conn, t.id().into(), TaskStatus::InProgress);
-        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
+        transition_to(&conn, TaskDbId(t.id().into()), TaskStatus::InProgress);
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_completed() {
         let (_tmp, conn) = setup();
         let t = make_completed(&conn, "done");
-        assert!(!is_task_ready(&conn, 1, t.id().into()).unwrap());
+        assert!(!is_task_ready(&conn, 1, t.id()).unwrap());
     }
 
     #[test]
@@ -4830,8 +4839,8 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, blocked.id().into(), TaskStatus::Todo);
-        assert!(!is_task_ready(&conn, 1, blocked.id().into()).unwrap());
+        transition_to(&conn, TaskDbId(blocked.id().into()), TaskStatus::Todo);
+        assert!(!is_task_ready(&conn, 1, blocked.id()).unwrap());
     }
 
     #[test]
@@ -4848,14 +4857,14 @@ mod tests {
             },
         )
         .unwrap();
-        transition_to(&conn, unblocked.id().into(), TaskStatus::Todo);
-        assert!(is_task_ready(&conn, 1, unblocked.id().into()).unwrap());
+        transition_to(&conn, TaskDbId(unblocked.id().into()), TaskStatus::Todo);
+        assert!(is_task_ready(&conn, 1, unblocked.id()).unwrap());
     }
 
     #[test]
     fn is_task_ready_false_for_missing_task() {
         let (_tmp, conn) = setup();
-        assert!(!is_task_ready(&conn, 1, 9_999).unwrap());
+        assert!(!is_task_ready(&conn, 1, TaskId(9_999)).unwrap());
     }
 
     // --- MetadataField tests ---
