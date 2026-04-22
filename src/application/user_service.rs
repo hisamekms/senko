@@ -7,7 +7,7 @@ use crate::application::port::TaskBackend;
 use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User, UserId,
 };
 use crate::infra::config::SessionConfig;
 
@@ -34,7 +34,7 @@ impl UserOperations for UserService {
         self.backend.create_user(params).await
     }
 
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         self.backend.get_user(id).await
     }
 
@@ -46,11 +46,11 @@ impl UserOperations for UserService {
         self.backend.get_user_by_sub(sub).await
     }
 
-    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         self.backend.update_user(id, params).await
     }
 
-    async fn delete_user(&self, id: i64) -> Result<()> {
+    async fn delete_user(&self, id: UserId) -> Result<()> {
         self.backend.delete_user(id).await
     }
 
@@ -58,7 +58,7 @@ impl UserOperations for UserService {
 
     async fn create_api_key(
         &self,
-        user_id: i64,
+        user_id: UserId,
         name: &str,
         device_name: Option<&str>,
     ) -> Result<ApiKeyWithSecret> {
@@ -68,11 +68,11 @@ impl UserOperations for UserService {
             .await
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+    async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         self.backend.list_api_keys(user_id).await
     }
 
-    async fn delete_api_key(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<()> {
         self.backend.delete_api_key_for_user(key_id, user_id).await
     }
 
@@ -104,7 +104,7 @@ impl UserOperations for UserService {
     /// When the limit is reached, the oldest key is revoked to make room.
     async fn create_session_token(
         &self,
-        user_id: i64,
+        user_id: UserId,
         device_name: Option<&str>,
         session_config: &SessionConfig,
     ) -> Result<ApiKeyWithSecret> {
@@ -130,7 +130,7 @@ impl UserOperations for UserService {
     /// List active (non-expired) sessions for a user.
     async fn list_active_sessions(
         &self,
-        user_id: i64,
+        user_id: UserId,
         session_config: &SessionConfig,
     ) -> Result<Vec<ApiKey>> {
         let keys = self.backend.list_api_keys(user_id).await?;
@@ -143,12 +143,12 @@ impl UserOperations for UserService {
     }
 
     /// Revoke a specific session, verifying ownership.
-    async fn revoke_session(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {
         self.backend.delete_api_key_for_user(key_id, user_id).await
     }
 
     /// Revoke all sessions for a user.
-    async fn revoke_all_sessions(&self, user_id: i64) -> Result<()> {
+    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<()> {
         self.backend.delete_all_api_keys_for_user(user_id).await
     }
 

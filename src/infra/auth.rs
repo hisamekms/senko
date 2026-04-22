@@ -49,7 +49,7 @@ impl AuthProvider for ApiKeyProvider {
         {
             return Ok(AuthResult {
                 user: crate::domain::user::User::new(
-                    0,
+                    crate::domain::user::UserId(0),
                     "master".to_string(),
                     "master".to_string(),
                     None,
@@ -586,7 +586,7 @@ mod tests {
 
         let result = provider.authenticate("master-secret").await.unwrap();
 
-        assert_eq!(result.user.id(), 0);
+        assert_eq!(result.user.id(), crate::domain::user::UserId(0));
         assert_eq!(result.user.username(), "master");
         assert!(result.is_master);
     }

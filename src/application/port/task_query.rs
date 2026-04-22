@@ -5,6 +5,7 @@ use async_trait::async_trait;
 
 use crate::domain::project::ProjectId;
 use crate::domain::task::{ListTasksFilter, ListTasksPage, Task, TaskId};
+use crate::domain::user::UserId;
 
 /// Port trait for querying tasks.
 /// Separated from TaskRepository to keep the repository focused on
@@ -19,7 +20,7 @@ pub trait TaskQueryPort: Send + Sync {
     async fn next_task(
         &self,
         project_id: ProjectId,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         include_unassigned: bool,
     ) -> Result<Option<Task>>;
     async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>>;

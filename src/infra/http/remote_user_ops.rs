@@ -4,7 +4,7 @@ use serde_json::json;
 
 use crate::application::port::UserOperations;
 use crate::application::user_service::is_key_expired;
-use crate::domain::user::{ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User};
+use crate::domain::user::{ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User, UserId};
 use crate::infra::config::SessionConfig;
 
 use super::client::HttpClient;
@@ -58,7 +58,7 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         let resp = self
             .auth(self.client().get(self.url(&format!("/api/v1/users/{id}"))))
             .send()
@@ -94,7 +94,7 @@ impl UserOperations for RemoteUserOperations {
             .ok_or_else(|| anyhow::anyhow!("user not found"))
     }
 
-    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let resp = self
             .auth(
                 self.client()
@@ -106,7 +106,7 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_user(&self, id: i64) -> Result<()> {
+    async fn delete_user(&self, id: UserId) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -121,7 +121,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn create_api_key(
         &self,
-        user_id: i64,
+        user_id: UserId,
         name: &str,
         device_name: Option<&str>,
     ) -> Result<ApiKeyWithSecret> {
@@ -136,7 +136,7 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+    async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         let resp = self
             .auth(
                 self.client()
@@ -147,7 +147,7 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_api_key(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -183,7 +183,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn create_session_token(
         &self,
-        user_id: i64,
+        user_id: UserId,
         device_name: Option<&str>,
         session_config: &SessionConfig,
     ) -> Result<ApiKeyWithSecret> {
@@ -204,7 +204,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn list_active_sessions(
         &self,
-        user_id: i64,
+        user_id: UserId,
         session_config: &SessionConfig,
     ) -> Result<Vec<ApiKey>> {
         let keys = self.list_api_keys(user_id).await?;
@@ -216,7 +216,7 @@ impl UserOperations for RemoteUserOperations {
         Ok(filtered)
     }
 
-    async fn revoke_session(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -227,7 +227,7 @@ impl UserOperations for RemoteUserOperations {
         check_success(resp).await
     }
 
-    async fn revoke_all_sessions(&self, user_id: i64) -> Result<()> {
+    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<()> {
         let keys = self.list_api_keys(user_id).await?;
         for key in keys {
             self.revoke_session(key.id(), user_id).await?;

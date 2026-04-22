@@ -697,7 +697,7 @@ pub enum UserAction {
     /// Update a user
     Update {
         /// User ID
-        id: i64,
+        id: crate::domain::user::UserId,
         #[arg(long)]
         username: Option<String>,
         #[arg(long)]
@@ -706,7 +706,7 @@ pub enum UserAction {
     /// Delete a user
     Delete {
         /// User ID
-        id: i64,
+        id: crate::domain::user::UserId,
     },
 }
 
@@ -717,19 +717,19 @@ pub enum MemberAction {
     /// Add a member to the project
     Add {
         #[arg(long)]
-        user_id: i64,
+        user_id: crate::domain::user::UserId,
         #[arg(long)]
         role: Option<CliRole>,
     },
     /// Remove a member from the project
     Remove {
         #[arg(long)]
-        user_id: i64,
+        user_id: crate::domain::user::UserId,
     },
     /// Update a member's role
     SetRole {
         #[arg(long)]
-        user_id: i64,
+        user_id: crate::domain::user::UserId,
         #[arg(long)]
         role: CliRole,
     },
@@ -2121,7 +2121,7 @@ mod tests {
                         action: MemberAction::Add { user_id, role },
                     },
             } => {
-                assert_eq!(user_id, 3);
+                assert_eq!(user_id, crate::domain::user::UserId(3));
                 assert!(matches!(role, Some(CliRole::Member)));
             }
             _ => panic!("expected Project Members Add"),
@@ -2138,7 +2138,7 @@ mod tests {
                         action: MemberAction::Remove { user_id },
                     },
             } => {
-                assert_eq!(user_id, 4);
+                assert_eq!(user_id, crate::domain::user::UserId(4));
             }
             _ => panic!("expected Project Members Remove"),
         }
@@ -2163,7 +2163,7 @@ mod tests {
                         action: MemberAction::SetRole { user_id, role },
                     },
             } => {
-                assert_eq!(user_id, 5);
+                assert_eq!(user_id, crate::domain::user::UserId(5));
                 assert!(matches!(role, CliRole::Viewer));
             }
             _ => panic!("expected Project Members SetRole"),

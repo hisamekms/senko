@@ -10,6 +10,49 @@ use uuid::Uuid;
 use super::error::DomainError;
 use super::project::ProjectId;
 
+/// Newtype wrapper around the user identifier.
+///
+/// Wraps `i64` with `#[serde(transparent)]` so the JSON wire format stays a
+/// bare integer (e.g. `1`), not `{"0": 1}`. The goal is compile-time safety: a
+/// `UserId` cannot be accidentally mixed with a `ProjectId`, `TaskId`,
+/// `ContractId`, or `api_keys.id` that also happen to be `i64`.
+///
+/// Like [`crate::domain::project::ProjectId`] and
+/// [`crate::domain::contract::ContractId`] (and unlike
+/// [`crate::domain::task::TaskId`], which has a sealed `TaskDbId` for the DB
+/// PK), `UserId` is the DB primary key itself. The infrastructure layer
+/// implements `rusqlite` / `sqlx` traits directly on `UserId` (see
+/// `src/infra/mod.rs`), so no separate sealed newtype is needed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct UserId(pub i64);
+
+impl fmt::Display for UserId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for UserId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(UserId)
+    }
+}
+
+impl From<i64> for UserId {
+    fn from(n: i64) -> Self {
+        UserId(n)
+    }
+}
+
+impl From<UserId> for i64 {
+    fn from(id: UserId) -> i64 {
+        id.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
@@ -47,7 +90,7 @@ impl FromStr for Role {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct User {
-    id: i64,
+    id: UserId,
     username: String,
     #[serde(default)]
     sub: String,
@@ -58,7 +101,7 @@ pub struct User {
 
 impl User {
     pub fn new(
-        id: i64,
+        id: UserId,
         username: String,
         sub: String,
         display_name: Option<String>,
@@ -75,7 +118,7 @@ impl User {
         }
     }
 
-    pub fn id(&self) -> i64 {
+    pub fn id(&self) -> UserId {
         self.id
     }
 
@@ -128,7 +171,7 @@ pub struct UpdateUserParams {
 pub struct ProjectMember {
     id: i64,
     project_id: ProjectId,
-    user_id: i64,
+    user_id: UserId,
     role: Role,
     created_at: String,
 }
@@ -137,7 +180,7 @@ impl ProjectMember {
     pub fn new(
         id: i64,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
         created_at: String,
     ) -> Self {
@@ -158,7 +201,7 @@ impl ProjectMember {
         self.project_id
     }
 
-    pub fn user_id(&self) -> i64 {
+    pub fn user_id(&self) -> UserId {
         self.user_id
     }
 
@@ -173,12 +216,12 @@ impl ProjectMember {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddProjectMemberParams {
-    pub user_id: i64,
+    pub user_id: UserId,
     pub role: Role,
 }
 
 impl AddProjectMemberParams {
-    pub fn new(user_id: i64, role: Option<Role>) -> Self {
+    pub fn new(user_id: UserId, role: Option<Role>) -> Self {
         Self {
             user_id,
             role: role.unwrap_or(Role::Member),
@@ -191,7 +234,7 @@ impl AddProjectMemberParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKey {
     id: i64,
-    user_id: i64,
+    user_id: UserId,
     key_prefix: String,
     name: String,
     device_name: Option<String>,
@@ -202,7 +245,7 @@ pub struct ApiKey {
 impl ApiKey {
     pub fn new(
         id: i64,
-        user_id: i64,
+        user_id: UserId,
         key_prefix: String,
         name: String,
         device_name: Option<String>,
@@ -224,7 +267,7 @@ impl ApiKey {
         self.id
     }
 
-    pub fn user_id(&self) -> i64 {
+    pub fn user_id(&self) -> UserId {
         self.user_id
     }
 
@@ -252,7 +295,7 @@ impl ApiKey {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyWithSecret {
     id: i64,
-    user_id: i64,
+    user_id: UserId,
     key: String,
     key_prefix: String,
     name: String,
@@ -263,7 +306,7 @@ pub struct ApiKeyWithSecret {
 impl ApiKeyWithSecret {
     pub fn new(
         id: i64,
-        user_id: i64,
+        user_id: UserId,
         key: String,
         key_prefix: String,
         name: String,
@@ -285,7 +328,7 @@ impl ApiKeyWithSecret {
         self.id
     }
 
-    pub fn user_id(&self) -> i64 {
+    pub fn user_id(&self) -> UserId {
         self.user_id
     }
 
@@ -349,11 +392,11 @@ pub fn hash_api_key(key: &str) -> String {
 #[async_trait]
 pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
-    async fn get_user(&self, id: i64) -> Result<User>;
+    async fn get_user(&self, id: UserId) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
     async fn get_user_by_sub(&self, sub: &str) -> Result<User>;
-    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User>;
-    async fn delete_user(&self, id: i64) -> Result<()>;
+    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User>;
+    async fn delete_user(&self, id: UserId) -> Result<()>;
 }
 
 #[async_trait]
@@ -365,12 +408,12 @@ pub trait ApiKeyRepository: Send + Sync {
 
     async fn create_api_key(
         &self,
-        user_id: i64,
+        user_id: UserId,
         name: &str,
         device_name: Option<&str>,
         new_key: &NewApiKey,
     ) -> Result<ApiKeyWithSecret>;
     async fn delete_api_key(&self, key_id: i64) -> Result<()>;
-    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()>;
-    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()>;
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: UserId) -> Result<()>;
+    async fn delete_all_api_keys_for_user(&self, user_id: UserId) -> Result<()>;
 }

@@ -414,7 +414,7 @@ pub async fn resolve_project_id(
 pub async fn resolve_user_id(
     user_ops: &dyn crate::application::UserOperations,
     config: &Config,
-) -> Result<i64> {
+) -> Result<crate::domain::user::UserId> {
     match config.user.name.as_deref() {
         Some(n) => {
             let user = user_ops

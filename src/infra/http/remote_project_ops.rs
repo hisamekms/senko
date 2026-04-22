@@ -5,7 +5,7 @@ use serde_json::json;
 use crate::application::port::ProjectOperations;
 use crate::domain::error::DomainError;
 use crate::domain::project::{CreateProjectParams, Project, ProjectId};
-use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role};
+use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
 use super::client::HttpClient;
 use super::{check_success, read_json_or_error};
@@ -53,7 +53,7 @@ impl ProjectOperations for RemoteProjectOperations {
     async fn create_project(
         &self,
         params: &CreateProjectParams,
-        _caller_user_id: Option<i64>,
+        _caller_user_id: Option<UserId>,
     ) -> Result<Project> {
         let resp = self
             .auth(
@@ -85,7 +85,7 @@ impl ProjectOperations for RemoteProjectOperations {
             .ok_or_else(|| DomainError::ProjectNotFound.into())
     }
 
-    async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<i64>) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<UserId>) -> Result<()> {
         let resp = self
             .auth(
                 self.client()
@@ -113,7 +113,7 @@ impl ProjectOperations for RemoteProjectOperations {
         &self,
         project_id: ProjectId,
         params: &AddProjectMemberParams,
-        _caller_user_id: Option<i64>,
+        _caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         let resp = self
             .auth(
@@ -129,8 +129,8 @@ impl ProjectOperations for RemoteProjectOperations {
     async fn remove_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
-        _caller_user_id: Option<i64>,
+        user_id: UserId,
+        _caller_user_id: Option<UserId>,
     ) -> Result<()> {
         let resp = self
             .auth(
@@ -145,7 +145,7 @@ impl ProjectOperations for RemoteProjectOperations {
     async fn get_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
     ) -> Result<ProjectMember> {
         let resp = self
             .auth(
@@ -160,9 +160,9 @@ impl ProjectOperations for RemoteProjectOperations {
     async fn update_member_role(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
-        _caller_user_id: Option<i64>,
+        _caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         let resp = self
             .auth(

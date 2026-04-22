@@ -5,6 +5,7 @@ use chrono::Utc;
 use crate::domain::TaskRepository;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{MetadataUpdate, Task, TaskId};
+use crate::domain::user::UserId;
 
 /// Port for task state transitions.
 ///
@@ -19,7 +20,7 @@ pub trait TaskTransitionPort: Send + Sync {
         project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
     async fn complete_task(
@@ -56,7 +57,7 @@ pub async fn default_start_task(
     project_id: ProjectId,
     id: TaskId,
     session_id: Option<String>,
-    user_id: Option<i64>,
+    user_id: Option<UserId>,
     metadata: Option<MetadataUpdate>,
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
@@ -108,7 +109,7 @@ macro_rules! impl_task_transition_default {
                 project_id: ProjectId,
                 id: $crate::domain::task::TaskId,
                 session_id: Option<String>,
-                user_id: Option<i64>,
+                user_id: Option<$crate::domain::user::UserId>,
                 metadata: Option<$crate::domain::task::MetadataUpdate>,
             ) -> anyhow::Result<$crate::domain::task::Task> {
                 $crate::application::port::task_transition::default_start_task(

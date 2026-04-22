@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use crate::application::port::HookDataSource;
 use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{Task, TaskId, TaskStatus};
-use crate::domain::user::User;
+use crate::domain::user::{User, UserId};
 
 use super::client::HttpClient;
 use super::read_json_or_error;
@@ -79,7 +79,7 @@ impl HookDataSource for RemoteHookDataSource {
             .ok_or_else(|| anyhow::anyhow!("project not found"))
     }
 
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         let resp = self
             .http
             .auth(

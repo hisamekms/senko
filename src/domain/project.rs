@@ -129,7 +129,7 @@ pub trait ProjectRepository: Send + Sync {
     async fn delete_project(&self, id: ProjectId) -> Result<()>;
 }
 
-use super::user::{AddProjectMemberParams, ProjectMember, Role};
+use super::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
 #[async_trait]
 pub trait ProjectMemberRepository: Send + Sync {
@@ -138,17 +138,17 @@ pub trait ProjectMemberRepository: Send + Sync {
         project_id: ProjectId,
         params: &AddProjectMemberParams,
     ) -> Result<ProjectMember>;
-    async fn remove_project_member(&self, project_id: ProjectId, user_id: i64) -> Result<()>;
+    async fn remove_project_member(&self, project_id: ProjectId, user_id: UserId) -> Result<()>;
     async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>>;
     async fn get_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
     ) -> Result<ProjectMember>;
     async fn update_member_role(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
     ) -> Result<ProjectMember>;
 }

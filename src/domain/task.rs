@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use super::contract::ContractId;
 use super::error::DomainError;
 use super::project::ProjectId;
+use super::user::UserId;
 
 /// Newtype wrapper around the per-project task identifier.
 ///
@@ -317,7 +318,7 @@ pub struct Task {
     priority: Priority,
     status: TaskStatus,
     assignee_session_id: Option<String>,
-    assignee_user_id: Option<i64>,
+    assignee_user_id: Option<UserId>,
     created_at: String,
     updated_at: String,
     started_at: Option<String>,
@@ -347,7 +348,7 @@ impl Task {
         priority: Priority,
         status: TaskStatus,
         assignee_session_id: Option<String>,
-        assignee_user_id: Option<i64>,
+        assignee_user_id: Option<UserId>,
         created_at: String,
         updated_at: String,
         started_at: Option<String>,
@@ -431,7 +432,7 @@ impl Task {
         self.assignee_session_id.as_deref()
     }
 
-    pub fn assignee_user_id(&self) -> Option<i64> {
+    pub fn assignee_user_id(&self) -> Option<UserId> {
         self.assignee_user_id
     }
 
@@ -694,7 +695,7 @@ impl Task {
     pub fn start(
         mut self,
         assignee_session_id: Option<String>,
-        assignee_user_id: Option<i64>,
+        assignee_user_id: Option<UserId>,
         started_at: String,
         metadata: Option<MetadataUpdate>,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
@@ -909,12 +910,12 @@ pub enum AssigneeUserId {
     /// The current authenticated user (resolved by the API or CLI).
     SelfUser,
     /// A specific numeric user ID.
-    Id(i64),
+    Id(UserId),
 }
 
 impl AssigneeUserId {
     /// Returns the numeric ID, or `None` if this is `SelfUser`.
-    pub fn as_id(&self) -> Option<i64> {
+    pub fn as_id(&self) -> Option<UserId> {
         match self {
             AssigneeUserId::Id(id) => Some(*id),
             AssigneeUserId::SelfUser => None,
@@ -926,7 +927,7 @@ impl Serialize for AssigneeUserId {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             AssigneeUserId::SelfUser => serializer.serialize_str("self"),
-            AssigneeUserId::Id(id) => serializer.serialize_i64(*id),
+            AssigneeUserId::Id(id) => serializer.serialize_i64(id.0),
         }
     }
 }
@@ -949,10 +950,10 @@ impl<'de> Deserialize<'de> for AssigneeUserId {
                 }
             }
             fn visit_i64<E: serde::de::Error>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(AssigneeUserId::Id(v))
+                Ok(AssigneeUserId::Id(UserId(v)))
             }
             fn visit_u64<E: serde::de::Error>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(AssigneeUserId::Id(v as i64))
+                Ok(AssigneeUserId::Id(UserId(v as i64)))
             }
         }
         deserializer.deserialize_any(Visitor)
@@ -1123,7 +1124,7 @@ pub struct ListTasksFilter {
     pub tags: Vec<String>,
     pub depends_on: Option<TaskId>,
     pub ready: bool,
-    pub assignee_user_id: Option<i64>,
+    pub assignee_user_id: Option<UserId>,
     // Unresolved "self" intent, used to carry `?assignee_user_id=self` through a
     // relay that has no auth context to resolve it; the upstream (which does)
     // converts it to `assignee_user_id`.
@@ -1601,9 +1602,9 @@ mod tests {
         let task = make_task(TaskStatus::Todo);
         assert_eq!(task.assignee_user_id(), None);
         let (task, _) = task
-            .start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(None, Some(UserId(5)), "2026-01-02T00:00:00Z".to_string(), None)
             .unwrap();
-        assert_eq!(task.assignee_user_id(), Some(5));
+        assert_eq!(task.assignee_user_id(), Some(UserId(5)));
     }
 
     // --- shallow_merge_metadata tests ---
@@ -1733,7 +1734,7 @@ mod tests {
             Priority::P2,
             TaskStatus::Todo,
             None,
-            Some(5),
+            Some(UserId(5)),
             "2026-01-01T00:00:00Z".to_string(),
             "2026-01-01T00:00:00Z".to_string(),
             None,
@@ -1751,9 +1752,9 @@ mod tests {
             vec![],
         );
         let (task, _) = task
-            .start(None, Some(5), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(None, Some(UserId(5)), "2026-01-02T00:00:00Z".to_string(), None)
             .unwrap();
-        assert_eq!(task.assignee_user_id(), Some(5));
+        assert_eq!(task.assignee_user_id(), Some(UserId(5)));
     }
 
     #[test]
@@ -1768,7 +1769,7 @@ mod tests {
             Priority::P2,
             TaskStatus::Todo,
             None,
-            Some(5),
+            Some(UserId(5)),
             "2026-01-01T00:00:00Z".to_string(),
             "2026-01-01T00:00:00Z".to_string(),
             None,
@@ -1786,7 +1787,7 @@ mod tests {
             vec![],
         );
         let err = task
-            .start(None, Some(99), "2026-01-02T00:00:00Z".to_string(), None)
+            .start(None, Some(UserId(99)), "2026-01-02T00:00:00Z".to_string(), None)
             .unwrap_err();
         assert!(err.to_string().contains("assigned to user 5"));
         assert!(err.to_string().contains("cannot be started by user 99"));
@@ -1804,7 +1805,7 @@ mod tests {
             Priority::P2,
             TaskStatus::Todo,
             None,
-            Some(5),
+            Some(UserId(5)),
             "2026-01-01T00:00:00Z".to_string(),
             "2026-01-01T00:00:00Z".to_string(),
             None,
@@ -1824,7 +1825,7 @@ mod tests {
         let (task, _) = task
             .start(None, None, "2026-01-02T00:00:00Z".to_string(), None)
             .unwrap();
-        assert_eq!(task.assignee_user_id(), Some(5));
+        assert_eq!(task.assignee_user_id(), Some(UserId(5)));
     }
 
     #[test]

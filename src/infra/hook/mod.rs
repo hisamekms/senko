@@ -65,7 +65,7 @@ pub struct EnvelopeProjectInfo {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct EnvelopeUserInfo {
-    pub id: i64,
+    pub id: crate::domain::user::UserId,
     pub name: String,
 }
 

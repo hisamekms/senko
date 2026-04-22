@@ -17,6 +17,7 @@ use crate::domain::task::{
     CreateTaskParams, Cursor, ListTasksFilter, ListTasksPage, MetadataUpdate, Priority, Task,
     TaskEvent, TaskId, TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::domain::user::UserId;
 use crate::infra::config::HookWhen;
 
 use super::client::HttpClient;
@@ -159,7 +160,7 @@ impl TaskOperations for RemoteTaskOperations {
         project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
-        _user_id: Option<i64>,
+        _user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         let prev_status = self.get_task(project_id, id).await?.status();
@@ -209,7 +210,7 @@ impl TaskOperations for RemoteTaskOperations {
         &self,
         project_id: ProjectId,
         session_id: Option<String>,
-        _user_id: Option<i64>,
+        _user_id: Option<UserId>,
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {

@@ -24,7 +24,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User,
+    Role, UpdateUserParams, User, UserId,
 };
 use crate::domain::{
     ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
@@ -373,7 +373,7 @@ impl ProjectMemberRepository for PostgresBackend {
         ))
     }
 
-    async fn remove_project_member(&self, project_id: ProjectId, user_id: i64) -> Result<()> {
+    async fn remove_project_member(&self, project_id: ProjectId, user_id: UserId) -> Result<()> {
         let pool = self.pool().await?;
         let result =
             sqlx::query("DELETE FROM project_members WHERE project_id = $1 AND user_id = $2")
@@ -404,7 +404,7 @@ impl ProjectMemberRepository for PostgresBackend {
                 Ok(ProjectMember::new(
                     r.get("id"),
                     project_id,
-                    r.get("user_id"),
+                    r.get::<UserId, _>("user_id"),
                     role,
                     r.get("created_at"),
                 ))
@@ -415,7 +415,7 @@ impl ProjectMemberRepository for PostgresBackend {
     async fn get_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
     ) -> Result<ProjectMember> {
         let pool = self.pool().await?;
         let row = sqlx::query(
@@ -440,7 +440,7 @@ impl ProjectMemberRepository for PostgresBackend {
     async fn update_member_role(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
     ) -> Result<ProjectMember> {
         let pool = self.pool().await?;
@@ -483,7 +483,7 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         let pool = self.pool().await?;
         let row = sqlx::query(
             "SELECT username, sub, display_name, email, created_at FROM users WHERE id = $1",
@@ -540,7 +540,7 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
-    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let pool = self.pool().await?;
 
         let mut sets = Vec::new();
@@ -587,7 +587,7 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
-    async fn delete_user(&self, id: i64) -> Result<()> {
+    async fn delete_user(&self, id: UserId) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM users WHERE id = $1")
             .bind(id)
@@ -621,7 +621,7 @@ impl AuthenticationPort for PostgresBackend {
         .fetch_optional(pool)
         .await?
         .context("invalid api key")?;
-        let user_id: i64 = row.get("user_id");
+        let user_id: UserId = row.get("user_id");
         let key_created_at: String = row.get("created_at");
         let key_last_used_at: Option<String> = row.get("last_used_at");
         let user = self.get_user(user_id).await?;
@@ -637,7 +637,7 @@ impl AuthenticationPort for PostgresBackend {
 impl ApiKeyRepository for PostgresBackend {
     async fn create_api_key(
         &self,
-        user_id: i64,
+        user_id: UserId,
         name: &str,
         device_name: Option<&str>,
         new_key: &NewApiKey,
@@ -680,7 +680,7 @@ impl ApiKeyRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: UserId) -> Result<()> {
         let pool = self.pool().await?;
         let result = sqlx::query("DELETE FROM api_keys WHERE id = $1 AND user_id = $2")
             .bind(key_id)
@@ -693,7 +693,7 @@ impl ApiKeyRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
+    async fn delete_all_api_keys_for_user(&self, user_id: UserId) -> Result<()> {
         let pool = self.pool().await?;
         sqlx::query("DELETE FROM api_keys WHERE user_id = $1")
             .bind(user_id)
@@ -753,7 +753,7 @@ impl UserQueryPort for PostgresBackend {
             .collect())
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+    async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         let pool = self.pool().await?;
         let rows = sqlx::query(
             "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = $1 ORDER BY id",
@@ -1358,7 +1358,7 @@ impl TaskQueryPort for PostgresBackend {
             } else {
                 conditions.push(format!("t.assignee_user_id = ${param_idx}"));
             }
-            binds.push(BindVal::Int(uid));
+            binds.push(BindVal::Int(uid.0));
             param_idx += 1;
         }
 
@@ -1436,7 +1436,7 @@ impl TaskQueryPort for PostgresBackend {
     async fn next_task(
         &self,
         project_id: ProjectId,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         include_unassigned: bool,
     ) -> Result<Option<Task>> {
         let pool = self.pool().await?;

@@ -44,7 +44,7 @@ use crate::domain::task::{
     Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
+    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams, UserId,
 };
 use crate::infra::config::Config;
 use crate::infra::http::remote_contract_ops::RemoteContractOperations;
@@ -923,7 +923,7 @@ fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) 
         && value.as_str() == Some("self")
         && let Some(user_id) = auth.0.as_ref().map(|a| a.user.id())
     {
-        body["assignee_user_id"] = serde_json::Value::Number(user_id.into());
+        body["assignee_user_id"] = serde_json::Value::Number(user_id.0.into());
     }
     // No auth (relay): leave "self" for upstream to resolve
 }
@@ -936,7 +936,7 @@ fn resolve_assignee_self(body: &mut serde_json::Value, auth: &OptionalAuthUser) 
 fn resolve_query_assignee_self(
     raw: Option<String>,
     auth: &OptionalAuthUser,
-) -> Result<(Option<i64>, bool), ApiError> {
+) -> Result<(Option<UserId>, bool), ApiError> {
     let Some(val) = raw else {
         return Ok((None, false));
     };
@@ -946,11 +946,13 @@ fn resolve_query_assignee_self(
             None => Ok((None, true)),
         };
     }
-    val.parse::<i64>().map(|n| (Some(n), false)).map_err(|_| {
-        ApiError::BadRequest(format!(
-            "assignee_user_id must be a numeric id or 'self' (got {val:?})"
-        ))
-    })
+    val.parse::<i64>()
+        .map(|n| (Some(UserId(n)), false))
+        .map_err(|_| {
+            ApiError::BadRequest(format!(
+                "assignee_user_id must be a numeric id or 'self' (got {val:?})"
+            ))
+        })
 }
 
 // POST /api/v1/projects/{project_id}/tasks
@@ -1037,7 +1039,7 @@ async fn edit_task(
                     let uid = v.as_i64().ok_or_else(|| {
                         ApiError::BadRequest("assignee_user_id must be \"self\" or integer".into())
                     })?;
-                    Some(Some(AssigneeUserId::Id(uid)))
+                    Some(Some(AssigneeUserId::Id(UserId(uid))))
                 }
                 None => None,
             }
@@ -1687,7 +1689,7 @@ async fn create_user(
 async fn get_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(user_id): Path<i64>,
+    Path(user_id): Path<UserId>,
 ) -> Result<Json<UserResponse>, ApiError> {
     require_master(&auth, state.auth_enabled())?;
     let user = state
@@ -1708,7 +1710,7 @@ struct UpdateUserBody {
 async fn update_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(user_id): Path<i64>,
+    Path(user_id): Path<UserId>,
     Json(body): Json<UpdateUserBody>,
 ) -> Result<Json<UserResponse>, ApiError> {
     require_master(&auth, state.auth_enabled())?;
@@ -1728,7 +1730,7 @@ async fn update_user(
 async fn delete_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(user_id): Path<i64>,
+    Path(user_id): Path<UserId>,
 ) -> Result<StatusCode, ApiError> {
     require_master(&auth, state.auth_enabled())?;
     state
@@ -1743,7 +1745,7 @@ async fn delete_user(
 
 #[derive(Deserialize)]
 struct AddMemberBody {
-    user_id: i64,
+    user_id: UserId,
     role: Option<Role>,
 }
 
@@ -1798,7 +1800,7 @@ async fn add_member(
 async fn get_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, user_id)): Path<(ProjectId, i64)>,
+    Path((project_id, user_id)): Path<(ProjectId, UserId)>,
 ) -> Result<Json<ProjectMemberResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let member = state
@@ -1817,7 +1819,7 @@ async fn get_member(
 async fn update_member_role(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, user_id)): Path<(ProjectId, i64)>,
+    Path((project_id, user_id)): Path<(ProjectId, UserId)>,
     Json(body): Json<UpdateRoleBody>,
 ) -> Result<Json<ProjectMemberResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
@@ -1838,7 +1840,7 @@ async fn update_member_role(
 async fn remove_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((project_id, user_id)): Path<(ProjectId, i64)>,
+    Path((project_id, user_id)): Path<(ProjectId, UserId)>,
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
@@ -1912,7 +1914,7 @@ async fn delete_metadata_field_handler(
 async fn list_api_keys(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(user_id): Path<i64>,
+    Path(user_id): Path<UserId>,
 ) -> Result<Json<Vec<ApiKeyResponse>>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let keys = state
@@ -1927,7 +1929,7 @@ async fn list_api_keys(
 async fn create_api_key(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path(user_id): Path<i64>,
+    Path(user_id): Path<UserId>,
     body: Option<Json<CreateApiKeyParams>>,
 ) -> Result<(StatusCode, Json<ApiKeyWithSecretResponse>), ApiError> {
     let caller = require_auth_user(&auth, state.auth_enabled())?;
@@ -1958,7 +1960,7 @@ async fn create_api_key(
 async fn delete_api_key(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-    Path((user_id, key_id)): Path<(i64, i64)>,
+    Path((user_id, key_id)): Path<(UserId, i64)>,
 ) -> Result<StatusCode, ApiError> {
     let caller = require_auth_user(&auth, state.auth_enabled())?;
     if let Some(caller) = caller

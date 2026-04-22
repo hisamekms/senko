@@ -7,7 +7,7 @@ use crate::application::auth::{Permission, require_project_role};
 use crate::application::port::{ProjectOperations, TaskBackend};
 use crate::domain::project::{CreateProjectParams, Project, ProjectId};
 use crate::domain::task::ListTasksFilter;
-use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role};
+use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
 pub struct ProjectService {
     backend: Arc<dyn TaskBackend>,
@@ -28,7 +28,7 @@ impl ProjectOperations for ProjectService {
     async fn create_project(
         &self,
         params: &CreateProjectParams,
-        caller_user_id: Option<i64>,
+        caller_user_id: Option<UserId>,
     ) -> Result<Project> {
         params.validate()?;
         let project = self.backend.create_project(params).await?;
@@ -49,7 +49,7 @@ impl ProjectOperations for ProjectService {
         self.backend.get_project_by_name(name).await
     }
 
-    async fn delete_project(&self, id: ProjectId, caller_user_id: Option<i64>) -> Result<()> {
+    async fn delete_project(&self, id: ProjectId, caller_user_id: Option<UserId>) -> Result<()> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, id, Permission::Admin).await?;
         }
@@ -73,7 +73,7 @@ impl ProjectOperations for ProjectService {
         &self,
         project_id: ProjectId,
         params: &AddProjectMemberParams,
-        caller_user_id: Option<i64>,
+        caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
@@ -84,8 +84,8 @@ impl ProjectOperations for ProjectService {
     async fn remove_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
-        caller_user_id: Option<i64>,
+        user_id: UserId,
+        caller_user_id: Option<UserId>,
     ) -> Result<()> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
@@ -98,7 +98,7 @@ impl ProjectOperations for ProjectService {
     async fn get_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
     ) -> Result<ProjectMember> {
         self.backend.get_project_member(project_id, user_id).await
     }
@@ -106,9 +106,9 @@ impl ProjectOperations for ProjectService {
     async fn update_member_role(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
-        caller_user_id: Option<i64>,
+        caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         if let Some(uid) = caller_user_id {
             require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;

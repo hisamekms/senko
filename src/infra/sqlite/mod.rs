@@ -9,6 +9,7 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
 };
+use crate::domain::DEFAULT_USER_ID;
 use crate::domain::project::{CreateProjectParams, DEFAULT_PROJECT_ID, Project, ProjectId};
 use crate::domain::task::{
     self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
@@ -17,7 +18,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User,
+    Role, UpdateUserParams, User, UserId,
 };
 use crate::infra::TaskDbId;
 use crate::infra::xdg::XdgDirs;
@@ -654,11 +655,11 @@ fn create_user(conn: &Connection, params: &CreateUserParams) -> Result<User> {
             params.email
         ],
     )?;
-    let id = conn.last_insert_rowid();
+    let id = UserId(conn.last_insert_rowid());
     get_user(conn, id)
 }
 
-fn get_user(conn: &Connection, id: i64) -> Result<User> {
+fn get_user(conn: &Connection, id: UserId) -> Result<User> {
     let (username, sub, display_name, email, created_at): (
         String,
         String,
@@ -693,7 +694,7 @@ fn get_user(conn: &Connection, id: i64) -> Result<User> {
 
 fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
     let (id, sub, display_name, email, created_at): (
-        i64,
+        UserId,
         String,
         Option<String>,
         Option<String>,
@@ -726,7 +727,7 @@ fn get_user_by_username(conn: &Connection, username: &str) -> Result<User> {
 
 fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
     let (id, username, display_name, email, created_at): (
-        i64,
+        UserId,
         String,
         Option<String>,
         Option<String>,
@@ -776,7 +777,7 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
     Ok(users)
 }
 
-fn update_user(conn: &Connection, id: i64, params: &UpdateUserParams) -> Result<User> {
+fn update_user(conn: &Connection, id: UserId, params: &UpdateUserParams) -> Result<User> {
     // Verify user exists first
     get_user(conn, id)?;
 
@@ -796,7 +797,7 @@ fn update_user(conn: &Connection, id: i64, params: &UpdateUserParams) -> Result<
     get_user(conn, id)
 }
 
-fn delete_user(conn: &Connection, id: i64) -> Result<()> {
+fn delete_user(conn: &Connection, id: UserId) -> Result<()> {
     let affected = conn.execute("DELETE FROM users WHERE id = ?1", rusqlite::params![id])?;
     if affected == 0 {
         return Err(DomainError::UserNotFound.into());
@@ -808,7 +809,7 @@ fn delete_user(conn: &Connection, id: i64) -> Result<()> {
 
 fn create_api_key(
     conn: &Connection,
-    user_id: i64,
+    user_id: UserId,
     name: &str,
     device_name: Option<&str>,
     new_key: &NewApiKey,
@@ -846,7 +847,7 @@ fn get_user_by_api_key(
         params![key_hash],
     )?;
 
-    let (user_id, key_created_at, key_last_used_at): (i64, String, Option<String>) = conn
+    let (user_id, key_created_at, key_last_used_at): (UserId, String, Option<String>) = conn
         .query_row(
             "SELECT user_id, created_at, last_used_at FROM api_keys WHERE key_hash = ?1",
             params![key_hash],
@@ -863,7 +864,7 @@ fn get_user_by_api_key(
     })
 }
 
-fn list_api_keys(conn: &Connection, user_id: i64) -> Result<Vec<ApiKey>> {
+fn list_api_keys(conn: &Connection, user_id: UserId) -> Result<Vec<ApiKey>> {
     let mut stmt = conn.prepare(
         "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = ?1 ORDER BY id",
     )?;
@@ -891,7 +892,7 @@ fn delete_api_key(conn: &Connection, key_id: i64) -> Result<()> {
     Ok(())
 }
 
-fn delete_api_key_for_user(conn: &Connection, key_id: i64, user_id: i64) -> Result<()> {
+fn delete_api_key_for_user(conn: &Connection, key_id: i64, user_id: UserId) -> Result<()> {
     let affected = conn.execute(
         "DELETE FROM api_keys WHERE id = ?1 AND user_id = ?2",
         params![key_id, user_id],
@@ -902,7 +903,7 @@ fn delete_api_key_for_user(conn: &Connection, key_id: i64, user_id: i64) -> Resu
     Ok(())
 }
 
-fn delete_all_api_keys_for_user(conn: &Connection, user_id: i64) -> Result<()> {
+fn delete_all_api_keys_for_user(conn: &Connection, user_id: UserId) -> Result<()> {
     conn.execute("DELETE FROM api_keys WHERE user_id = ?1", params![user_id])?;
     Ok(())
 }
@@ -933,7 +934,7 @@ fn add_project_member(
     ))
 }
 
-fn remove_project_member(conn: &Connection, project_id: ProjectId, user_id: i64) -> Result<()> {
+fn remove_project_member(conn: &Connection, project_id: ProjectId, user_id: UserId) -> Result<()> {
     let affected = conn.execute(
         "DELETE FROM project_members WHERE project_id = ?1 AND user_id = ?2",
         rusqlite::params![project_id, user_id],
@@ -953,7 +954,7 @@ fn list_project_members(conn: &Connection, project_id: ProjectId) -> Result<Vec<
             let role_str: String = row.get(2)?;
             Ok((row.get(0)?, row.get(1)?, role_str, row.get(3)?))
         })?
-        .collect::<std::result::Result<Vec<(i64, i64, String, String)>, _>>()?;
+        .collect::<std::result::Result<Vec<(i64, UserId, String, String)>, _>>()?;
 
     members
         .into_iter()
@@ -971,7 +972,7 @@ fn list_project_members(conn: &Connection, project_id: ProjectId) -> Result<Vec<
 fn get_project_member(
     conn: &Connection,
     project_id: ProjectId,
-    user_id: i64,
+    user_id: UserId,
 ) -> Result<ProjectMember> {
     let (id, role_str, created_at): (i64, String, String) = conn
         .query_row(
@@ -990,7 +991,7 @@ fn get_project_member(
 fn update_member_role(
     conn: &Connection,
     project_id: ProjectId,
-    user_id: i64,
+    user_id: UserId,
     role: Role,
 ) -> Result<ProjectMember> {
     let affected = conn.execute(
@@ -1113,7 +1114,7 @@ type TaskRow = (
     Option<String>,
     Option<String>,
     Option<String>,
-    Option<i64>,
+    Option<UserId>,
     Option<ContractId>,
 );
 
@@ -1708,7 +1709,7 @@ fn list_tasks(
 fn next_task(
     conn: &Connection,
     project_id: ProjectId,
-    user_id: Option<i64>,
+    user_id: Option<UserId>,
     include_unassigned: bool,
 ) -> Result<Option<Task>> {
     let assignee_clause = match user_id {
@@ -1872,7 +1873,7 @@ fn update_project_name(conn: &Connection, id: ProjectId, name: &str) -> Result<(
     Ok(())
 }
 
-fn update_user_username(conn: &Connection, id: i64, username: &str) -> Result<()> {
+fn update_user_username(conn: &Connection, id: UserId, username: &str) -> Result<()> {
     conn.execute(
         "UPDATE users SET username = ?1 WHERE id = ?2",
         params![username, id],
@@ -2411,7 +2412,7 @@ impl SqliteBackend {
                 ))?;
         }
         if let Some(ref name) = config.user.name {
-            update_user_username(&conn, 1, name)
+            update_user_username(&conn, DEFAULT_USER_ID, name)
                 .with_context(|| format!(
                     "failed to sync user name '{name}' to default user (id=1): username may already be used by another user"
                 ))?;
@@ -2467,7 +2468,7 @@ impl ProjectMemberRepository for SqliteBackend {
         ))
     }
 
-    async fn remove_project_member(&self, project_id: ProjectId, user_id: i64) -> Result<()> {
+    async fn remove_project_member(&self, project_id: ProjectId, user_id: UserId) -> Result<()> {
         blocking!(self, |conn: &Connection| remove_project_member(
             conn, project_id, user_id
         ))
@@ -2482,7 +2483,7 @@ impl ProjectMemberRepository for SqliteBackend {
     async fn get_project_member(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
     ) -> Result<ProjectMember> {
         blocking!(self, |conn: &Connection| get_project_member(
             conn, project_id, user_id
@@ -2492,7 +2493,7 @@ impl ProjectMemberRepository for SqliteBackend {
     async fn update_member_role(
         &self,
         project_id: ProjectId,
-        user_id: i64,
+        user_id: UserId,
         role: Role,
     ) -> Result<ProjectMember> {
         blocking!(self, |conn: &Connection| update_member_role(
@@ -2508,7 +2509,7 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| create_user(conn, &params))
     }
 
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         blocking!(self, |conn: &Connection| get_user(conn, id))
     }
 
@@ -2524,12 +2525,12 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_user_by_sub(conn, &sub))
     }
 
-    async fn update_user(&self, id: i64, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| update_user(conn, id, &params))
     }
 
-    async fn delete_user(&self, id: i64) -> Result<()> {
+    async fn delete_user(&self, id: UserId) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_user(conn, id))
     }
 }
@@ -2551,7 +2552,7 @@ impl AuthenticationPort for SqliteBackend {
 impl ApiKeyRepository for SqliteBackend {
     async fn create_api_key(
         &self,
-        user_id: i64,
+        user_id: UserId,
         name: &str,
         device_name: Option<&str>,
         new_key: &NewApiKey,
@@ -2572,13 +2573,13 @@ impl ApiKeyRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| delete_api_key(conn, key_id))
     }
 
-    async fn delete_api_key_for_user(&self, key_id: i64, user_id: i64) -> Result<()> {
+    async fn delete_api_key_for_user(&self, key_id: i64, user_id: UserId) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_api_key_for_user(
             conn, key_id, user_id
         ))
     }
 
-    async fn delete_all_api_keys_for_user(&self, user_id: i64) -> Result<()> {
+    async fn delete_all_api_keys_for_user(&self, user_id: UserId) -> Result<()> {
         blocking!(self, |conn: &Connection| delete_all_api_keys_for_user(
             conn, user_id
         ))
@@ -2598,7 +2599,7 @@ impl UserQueryPort for SqliteBackend {
         blocking!(self, |conn: &Connection| list_users(conn))
     }
 
-    async fn list_api_keys(&self, user_id: i64) -> Result<Vec<ApiKey>> {
+    async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         blocking!(self, |conn: &Connection| list_api_keys(conn, user_id))
     }
 }
@@ -2681,7 +2682,7 @@ impl TaskQueryPort for SqliteBackend {
     async fn next_task(
         &self,
         project_id: ProjectId,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         include_unassigned: bool,
     ) -> Result<Option<Task>> {
         blocking!(self, |conn: &Connection| next_task(
@@ -3922,7 +3923,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 ..default_create_params("user1-task")
             },
         )
@@ -3939,7 +3940,7 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, ProjectId(1), Some(1), false)
+        let result = next_task(&conn, ProjectId(1), Some(UserId(1)), false)
             .unwrap()
             .unwrap();
         assert_eq!(result.title(), "user1-task");
@@ -3953,7 +3954,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 priority: Some(Priority::P2),
                 ..default_create_params("assigned")
             },
@@ -3973,7 +3974,7 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, ProjectId(1), Some(1), true)
+        let result = next_task(&conn, ProjectId(1), Some(UserId(1)), true)
             .unwrap()
             .unwrap();
         assert_eq!(result.title(), "unassigned");
@@ -3986,7 +3987,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 priority: Some(Priority::P2),
                 ..default_create_params("assigned")
             },
@@ -4005,7 +4006,7 @@ mod tests {
         transition_to(&conn, TaskDbId(t1.id().into()), TaskStatus::Todo);
         transition_to(&conn, TaskDbId(t2.id().into()), TaskStatus::Todo);
 
-        let result = next_task(&conn, ProjectId(1), Some(1), false)
+        let result = next_task(&conn, ProjectId(1), Some(UserId(1)), false)
             .unwrap()
             .unwrap();
         assert_eq!(result.title(), "assigned");
@@ -4018,7 +4019,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 priority: Some(Priority::P2),
                 ..default_create_params("assigned")
             },
@@ -4050,12 +4051,12 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 ..default_create_params("with-assignee")
             },
         )
         .unwrap();
-        assert_eq!(task.assignee_user_id(), Some(1));
+        assert_eq!(task.assignee_user_id(), Some(UserId(1)));
     }
 
     #[test]
@@ -4075,7 +4076,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                assignee_user_id: Some(AssigneeUserId::Id(1)),
+                assignee_user_id: Some(AssigneeUserId::Id(UserId(1))),
                 ..default_create_params("user1-task")
             },
         )
@@ -4101,7 +4102,7 @@ mod tests {
 
         // Exact match (no unassigned)
         let filter = ListTasksFilter {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(UserId(1)),
             include_unassigned: false,
             ..Default::default()
         };
@@ -4111,7 +4112,7 @@ mod tests {
 
         // With unassigned included
         let filter = ListTasksFilter {
-            assignee_user_id: Some(1),
+            assignee_user_id: Some(UserId(1)),
             include_unassigned: true,
             ..Default::default()
         };
@@ -4799,14 +4800,14 @@ mod tests {
     #[tokio::test]
     async fn test_sync_config_defaults_user_name() {
         let backend = SqliteBackend::new_in_memory().unwrap();
-        let user = backend.get_user(1).await.unwrap();
+        let user = backend.get_user(UserId(1)).await.unwrap();
         assert_eq!(user.username(), "default");
 
         let mut config = Config::default();
         config.user.name = Some("alice".to_string());
         backend.sync_config_defaults(&config).unwrap();
 
-        let user = backend.get_user(1).await.unwrap();
+        let user = backend.get_user(UserId(1)).await.unwrap();
         assert_eq!(user.username(), "alice");
     }
 
@@ -4818,7 +4819,7 @@ mod tests {
 
         let project = backend.get_project(ProjectId(1)).await.unwrap();
         assert_eq!(project.name(), "default");
-        let user = backend.get_user(1).await.unwrap();
+        let user = backend.get_user(UserId(1)).await.unwrap();
         assert_eq!(user.username(), "default");
     }
 
@@ -5370,7 +5371,7 @@ mod tests {
         // Update non-existent user
         let err = update_user(
             &conn,
-            9999,
+            UserId(9999),
             &UpdateUserParams {
                 username: Some("ghost".to_string()),
                 display_name: None,

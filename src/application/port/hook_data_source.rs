@@ -6,7 +6,7 @@ use async_trait::async_trait;
 
 use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{Task, TaskId};
-use crate::domain::user::User;
+use crate::domain::user::{User, UserId};
 
 /// Narrow trait covering only the data that the hook system needs.
 ///
@@ -19,7 +19,7 @@ pub trait HookDataSource: Send + Sync {
     async fn ready_count(&self, project_id: ProjectId) -> Result<i64>;
     async fn get_project(&self, id: ProjectId) -> Result<Project>;
     async fn get_project_by_name(&self, name: &str) -> Result<Project>;
-    async fn get_user(&self, id: i64) -> Result<User>;
+    async fn get_user(&self, id: UserId) -> Result<User>;
     async fn get_user_by_username(&self, username: &str) -> Result<User>;
     async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task>;
     async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>>;
@@ -44,7 +44,7 @@ impl<T: super::TaskBackend + ?Sized> HookDataSource for T {
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         crate::domain::ProjectRepository::get_project_by_name(self, name).await
     }
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         crate::domain::UserRepository::get_user(self, id).await
     }
     async fn get_user_by_username(&self, username: &str) -> Result<User> {
@@ -81,7 +81,7 @@ impl HookDataSource for BackendHookData {
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         crate::domain::ProjectRepository::get_project_by_name(&*self.0, name).await
     }
-    async fn get_user(&self, id: i64) -> Result<User> {
+    async fn get_user(&self, id: UserId) -> Result<User> {
         crate::domain::UserRepository::get_user(&*self.0, id).await
     }
     async fn get_user_by_username(&self, username: &str) -> Result<User> {

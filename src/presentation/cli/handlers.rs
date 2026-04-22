@@ -33,7 +33,7 @@ use crate::domain::task::{
     AssigneeUserId, CreateTaskParams, Cursor, ListTasksFilter, MetadataUpdate, Priority, TaskId,
     TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
+use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams, UserId};
 use crate::infra::config::{CliOverrides, Config};
 use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
 
@@ -93,7 +93,7 @@ fn ensure_cli_token(config: &mut Config) {
     }
 }
 
-async fn resolve_current_user_id(root: &Path, config: &Config) -> Result<Option<i64>> {
+async fn resolve_current_user_id(root: &Path, config: &Config) -> Result<Option<UserId>> {
     if config.user.name.is_none() {
         return Ok(None);
     }
@@ -112,14 +112,14 @@ fn parse_assignee_user_id(value: &str) -> Result<AssigneeUserId> {
     } else {
         value
             .parse::<i64>()
-            .map(AssigneeUserId::Id)
+            .map(|n| AssigneeUserId::Id(UserId(n)))
             .context("--assignee-user-id は 'self' または数値IDです")
     }
 }
 
 /// Resolve [`AssigneeUserId::SelfUser`] to a numeric ID.
 /// Only needed in local mode; in remote mode the API resolves "self".
-async fn resolve_assignee(value: AssigneeUserId, root: &Path, config: &Config) -> Result<i64> {
+async fn resolve_assignee(value: AssigneeUserId, root: &Path, config: &Config) -> Result<UserId> {
     match value {
         AssigneeUserId::Id(id) => Ok(id),
         AssigneeUserId::SelfUser => resolve_current_user_id(root, config)

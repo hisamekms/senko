@@ -8,6 +8,7 @@ use crate::domain::task::{
     CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task, TaskId, TaskStatus,
     UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::domain::user::UserId;
 
 /// Result of completing a task, including newly unblocked tasks.
 #[derive(Debug, Clone)]
@@ -43,14 +44,14 @@ pub trait TaskOperations: Send + Sync {
         project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
     async fn next_task(
         &self,
         project_id: ProjectId,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;

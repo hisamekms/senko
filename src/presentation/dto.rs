@@ -5,7 +5,7 @@ use crate::domain::contract::{Contract, ContractId, ContractNote};
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::{Project, ProjectId};
 use crate::domain::task::{DodItem, Task, TaskId};
-use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User};
+use crate::domain::user::{ApiKey, ApiKeyWithSecret, ProjectMember, User, UserId};
 use crate::infra::config::Config;
 
 // --- Project ---
@@ -84,7 +84,7 @@ pub struct TaskResponse {
     priority: String,
     status: String,
     assignee_session_id: Option<String>,
-    assignee_user_id: Option<i64>,
+    assignee_user_id: Option<UserId>,
     created_at: String,
     updated_at: String,
     started_at: Option<String>,
@@ -224,7 +224,7 @@ pub struct TaskViewModel {
     pub description: Option<String>,
     pub plan: Option<String>,
     pub assignee_session_id: Option<String>,
-    pub assignee_user_id: Option<i64>,
+    pub assignee_user_id: Option<UserId>,
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     pub definition_of_done: Vec<DodItemViewModel>,
@@ -349,7 +349,7 @@ impl From<PreviewResult> for PreviewTransitionResponse {
 
 #[derive(Serialize)]
 pub struct UserResponse {
-    id: i64,
+    id: UserId,
     username: String,
     sub: String,
     display_name: Option<String>,
@@ -374,7 +374,7 @@ impl From<User> for UserResponse {
 
 #[derive(Serialize)]
 pub struct MemberUserInfo {
-    id: i64,
+    id: UserId,
     name: String,
     display_name: Option<String>,
 }
@@ -393,7 +393,7 @@ impl From<&User> for MemberUserInfo {
 pub struct ProjectMemberResponse {
     id: i64,
     project_id: ProjectId,
-    user_id: i64,
+    user_id: UserId,
     role: String,
     created_at: String,
     user: Option<MemberUserInfo>,
@@ -417,7 +417,7 @@ impl ProjectMemberResponse {
 #[derive(Serialize)]
 pub struct ApiKeyResponse {
     id: i64,
-    user_id: i64,
+    user_id: UserId,
     key_prefix: String,
     name: String,
     device_name: Option<String>,
@@ -444,7 +444,7 @@ impl From<ApiKey> for ApiKeyResponse {
 #[derive(Serialize)]
 pub struct ApiKeyWithSecretResponse {
     id: i64,
-    user_id: i64,
+    user_id: UserId,
     key: String,
     key_prefix: String,
     name: String,

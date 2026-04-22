@@ -13,6 +13,7 @@ use crate::domain::task::{
     self, CompletionPolicy, CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task,
     TaskEvent, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
+use crate::domain::user::UserId;
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
 use super::HookTrigger;
@@ -162,7 +163,7 @@ impl TaskOperations for LocalTaskOperations {
         project_id: ProjectId,
         id: TaskId,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
         if let Some(ref sid) = session_id {
@@ -223,7 +224,7 @@ impl TaskOperations for LocalTaskOperations {
         &self,
         project_id: ProjectId,
         session_id: Option<String>,
-        user_id: Option<i64>,
+        user_id: Option<UserId>,
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
