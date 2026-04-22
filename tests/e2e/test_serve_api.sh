@@ -69,7 +69,7 @@ assert_eq "2" "$(echo "$TASK2" | jq '.definition_of_done | length')" "task2 has 
 echo ""
 echo "=== List tasks ==="
 LIST=$(api_get "$PBASE/tasks")
-assert_eq "2" "$(echo "$LIST" | jq 'length')" "list returns 2 tasks"
+assert_eq "2" "$(echo "$LIST" | jq '.items | length')" "list returns 2 tasks"
 
 echo ""
 echo "=== Edit task ==="
@@ -100,7 +100,7 @@ assert_json_field "$COMPLETED" '.task.status' "completed" "complete transitions 
 echo ""
 echo "=== List filtered by status ==="
 LIST_TODO=$(api_get "$PBASE/tasks?status=todo")
-assert_eq "1" "$(echo "$LIST_TODO" | jq 'length')" "1 todo task"
+assert_eq "1" "$(echo "$LIST_TODO" | jq '.items | length')" "1 todo task"
 
 echo ""
 echo "=== Stats after operations ==="

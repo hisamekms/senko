@@ -116,8 +116,8 @@ BOB_READY_ID="$(run_lf --output json task add --title "Bob ready" --assignee-use
 run_lf task publish "$MINE_ID" >/dev/null
 run_lf task publish "$BOB_READY_ID" >/dev/null
 LIST_OUT="$(run_lf --output json task list --ready)"
-MINE_COUNT="$(echo "$LIST_OUT" | jq --arg id "$MINE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-BOB_COUNT="$(echo "$LIST_OUT" | jq --arg id "$BOB_READY_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+MINE_COUNT="$(echo "$LIST_OUT" | jq --arg id "$MINE_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+BOB_COUNT="$(echo "$LIST_OUT" | jq --arg id "$BOB_READY_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "1" "$MINE_COUNT" "list --ready includes self-assigned task"
 assert_eq "0" "$BOB_COUNT" "list --ready excludes other-user task"
 
@@ -125,9 +125,9 @@ echo "[15] list --ready --include-unassigned also shows unassigned"
 NONE_ID="$(run_lf --output json task add --title "Unassigned ready" | jq -r '.id')"
 run_lf task publish "$NONE_ID" >/dev/null
 LIST_OUT2="$(run_lf --output json task list --ready --include-unassigned)"
-MINE_COUNT2="$(echo "$LIST_OUT2" | jq --arg id "$MINE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-NONE_COUNT="$(echo "$LIST_OUT2" | jq --arg id "$NONE_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-BOB_COUNT2="$(echo "$LIST_OUT2" | jq --arg id "$BOB_READY_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+MINE_COUNT2="$(echo "$LIST_OUT2" | jq --arg id "$MINE_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+NONE_COUNT="$(echo "$LIST_OUT2" | jq --arg id "$NONE_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+BOB_COUNT2="$(echo "$LIST_OUT2" | jq --arg id "$BOB_READY_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "1" "$MINE_COUNT2" "list --ready --include-unassigned includes self-assigned"
 assert_eq "1" "$NONE_COUNT" "list --ready --include-unassigned includes unassigned"
 assert_eq "0" "$BOB_COUNT2" "list --ready --include-unassigned excludes other-user"

@@ -15,9 +15,11 @@ use pulldown_cmark::{Options, Parser};
 use crate::application::{ListTasksFilter, TaskOperations};
 use crate::bootstrap;
 use crate::domain::project::ProjectId;
-use crate::domain::task::TaskId;
+use crate::domain::task::{Cursor, TaskId};
 use crate::infra::config::Config;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
+
+const WEB_DEFAULT_LIMIT: u32 = 50;
 
 #[derive(Clone)]
 struct AppState {
@@ -31,6 +33,10 @@ struct ListQuery {
     status: Vec<String>,
     #[serde(default)]
     tag: Vec<String>,
+    #[serde(default)]
+    after: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
 }
 
 pub async fn serve(
@@ -103,27 +109,32 @@ async fn index_handler(
         .filter(|t| !t.is_empty())
         .cloned()
         .collect();
+    let after = match query.after.as_deref() {
+        Some(raw) => Some(Cursor::decode(raw).map_err(|_| StatusCode::BAD_REQUEST)?),
+        None => None,
+    };
+    let limit = query.limit.or(Some(WEB_DEFAULT_LIMIT));
     let filter = ListTasksFilter {
         statuses,
         tags,
+        after,
+        limit,
         ..Default::default()
     };
     let project_id = state.project_id;
-    let tasks: Vec<TaskViewModel> = state
+    let page = state
         .task_service
         .list_tasks(project_id, &filter)
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .into_iter()
-        .map(TaskViewModel::from)
-        .collect();
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let tasks: Vec<TaskViewModel> = page.items.into_iter().map(TaskViewModel::from).collect();
     let all_tags = state
         .task_service
         .list_all_tags(project_id)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let body = render_task_list(&tasks, &query, &all_tags);
+    let body = render_task_list(&tasks, &query, &all_tags, page.next_cursor.as_deref());
     Ok(Html(layout("Tasks", &body)))
 }
 
@@ -171,6 +182,7 @@ async fn graph_handler(
         .list_tasks(project_id, &filter)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .items
         .into_iter()
         .map(TaskViewModel::from)
         .collect();
@@ -518,7 +530,12 @@ fn render_filter_form(action: &str, query: &ListQuery, all_tags: &[String]) -> S
     )
 }
 
-fn render_task_list(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[String]) -> String {
+fn render_task_list(
+    tasks: &[TaskViewModel],
+    query: &ListQuery,
+    all_tags: &[String],
+    next_cursor: Option<&str>,
+) -> String {
     let filter = render_filter_form("/", query, all_tags);
 
     if tasks.is_empty() {
@@ -555,6 +572,17 @@ fn render_task_list(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Stri
         })
         .collect();
 
+    let pagination = match next_cursor {
+        Some(cursor) => {
+            let href = build_next_page_href(query, cursor);
+            format!(
+                r#"<div class="pagination"><a href="{}">Next page &rarr;</a></div>"#,
+                escape_html(&href)
+            )
+        }
+        None => String::new(),
+    };
+
     format!(
         r#"{filter}
 <table>
@@ -562,8 +590,31 @@ fn render_task_list(tasks: &[TaskViewModel], query: &ListQuery, all_tags: &[Stri
 <tbody>
 {rows}
 </tbody>
-</table>"#
+</table>
+{pagination}"#
     )
+}
+
+fn build_next_page_href(query: &ListQuery, cursor: &str) -> String {
+    use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+    let mut params: Vec<String> = Vec::new();
+    for s in &query.status {
+        params.push(format!(
+            "status={}",
+            utf8_percent_encode(s, NON_ALPHANUMERIC)
+        ));
+    }
+    for t in &query.tag {
+        params.push(format!("tag={}", utf8_percent_encode(t, NON_ALPHANUMERIC)));
+    }
+    if let Some(l) = query.limit {
+        params.push(format!("limit={l}"));
+    }
+    params.push(format!(
+        "after={}",
+        utf8_percent_encode(cursor, NON_ALPHANUMERIC)
+    ));
+    format!("/?{}", params.join("&"))
 }
 
 fn render_task_detail(task: &TaskViewModel) -> String {

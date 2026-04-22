@@ -269,6 +269,15 @@ impl From<Task> for TaskViewModel {
     }
 }
 
+// --- List Tasks (paged) ---
+
+#[derive(Serialize)]
+pub struct ListTasksPageResponse {
+    pub items: Vec<TaskResponse>,
+    /// Opaque cursor for fetching the next page; `null` when there are no more results.
+    pub next_cursor: Option<String>,
+}
+
 // --- Complete Task ---
 
 #[derive(Serialize)]

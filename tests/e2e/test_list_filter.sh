@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# e2e test: list subcommand filter options (--status, --tag, --depends-on, --ready, --contract, --id-min/--id-max, --limit/--offset)
+# e2e test: list subcommand filter options (--status, --tag, --depends-on, --ready, --contract, --id-min/--id-max, --limit/--after)
+#
+# Response shape: { items: [...], next_cursor: <string|null> }
 
 set -euo pipefail
 
@@ -30,10 +32,10 @@ run_lf task complete "$C_ID" >/dev/null
 # --- Case 1: --status todo ---
 echo "[1] --status todo filter"
 LIST_TODO="$(run_lf --output json task list --status todo)"
-TODO_COUNT="$(echo "$LIST_TODO" | jq 'length')"
-TODO_HAS_A="$(echo "$LIST_TODO" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-TODO_HAS_B="$(echo "$LIST_TODO" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-TODO_HAS_C="$(echo "$LIST_TODO" | jq --arg id "$C_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+TODO_COUNT="$(echo "$LIST_TODO" | jq '.items | length')"
+TODO_HAS_A="$(echo "$LIST_TODO" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+TODO_HAS_B="$(echo "$LIST_TODO" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+TODO_HAS_C="$(echo "$LIST_TODO" | jq --arg id "$C_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 
 assert_eq "2" "$TODO_COUNT" "status=todo returns 2 tasks"
 assert_eq "1" "$TODO_HAS_A" "status=todo includes Alpha"
@@ -43,10 +45,10 @@ assert_eq "0" "$TODO_HAS_C" "status=todo excludes Gamma"
 # --- Case 2: --tag backend ---
 echo "[2] --tag backend filter"
 LIST_BACKEND="$(run_lf --output json task list --tag backend)"
-BACKEND_COUNT="$(echo "$LIST_BACKEND" | jq 'length')"
-BACKEND_HAS_A="$(echo "$LIST_BACKEND" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-BACKEND_HAS_B="$(echo "$LIST_BACKEND" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-BACKEND_HAS_C="$(echo "$LIST_BACKEND" | jq --arg id "$C_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+BACKEND_COUNT="$(echo "$LIST_BACKEND" | jq '.items | length')"
+BACKEND_HAS_A="$(echo "$LIST_BACKEND" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+BACKEND_HAS_B="$(echo "$LIST_BACKEND" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+BACKEND_HAS_C="$(echo "$LIST_BACKEND" | jq --arg id "$C_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 
 assert_eq "2" "$BACKEND_COUNT" "tag=backend returns 2 tasks"
 assert_eq "1" "$BACKEND_HAS_A" "tag=backend includes Alpha"
@@ -56,10 +58,10 @@ assert_eq "1" "$BACKEND_HAS_C" "tag=backend includes Gamma"
 # --- Case 3: --depends-on <Task A ID> ---
 echo "[3] --depends-on filter"
 LIST_DEPS="$(run_lf --output json task list --depends-on "$A_ID")"
-DEPS_COUNT="$(echo "$LIST_DEPS" | jq 'length')"
-DEPS_HAS_A="$(echo "$LIST_DEPS" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-DEPS_HAS_B="$(echo "$LIST_DEPS" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-DEPS_HAS_C="$(echo "$LIST_DEPS" | jq --arg id "$C_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+DEPS_COUNT="$(echo "$LIST_DEPS" | jq '.items | length')"
+DEPS_HAS_A="$(echo "$LIST_DEPS" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+DEPS_HAS_B="$(echo "$LIST_DEPS" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+DEPS_HAS_C="$(echo "$LIST_DEPS" | jq --arg id "$C_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 
 assert_eq "1" "$DEPS_COUNT" "depends-on A returns 1 task"
 assert_eq "0" "$DEPS_HAS_A" "depends-on A excludes Alpha"
@@ -69,8 +71,8 @@ assert_eq "0" "$DEPS_HAS_C" "depends-on A excludes Gamma"
 # --- Case 4: --ready ---
 echo "[4] --ready filter"
 LIST_READY="$(run_lf --output json task list --ready)"
-READY_HAS_A="$(echo "$LIST_READY" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-READY_HAS_B="$(echo "$LIST_READY" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+READY_HAS_A="$(echo "$LIST_READY" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+READY_HAS_B="$(echo "$LIST_READY" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 
 assert_eq "1" "$READY_HAS_A" "ready includes Alpha (no deps, todo)"
 assert_eq "0" "$READY_HAS_B" "ready excludes Beta (unmet dep on Alpha)"
@@ -82,8 +84,8 @@ D_ID="$(run_lf --output json task add --title "Delta" | jq -r '.id')"
 run_lf task edit "$D_ID" --contract "$CONTRACT_ID" >/dev/null
 
 LIST_CONTRACT="$(run_lf --output json task list --contract "$CONTRACT_ID")"
-CONTRACT_COUNT="$(echo "$LIST_CONTRACT" | jq 'length')"
-CONTRACT_HAS_D="$(echo "$LIST_CONTRACT" | jq --arg id "$D_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+CONTRACT_COUNT="$(echo "$LIST_CONTRACT" | jq '.items | length')"
+CONTRACT_HAS_D="$(echo "$LIST_CONTRACT" | jq --arg id "$D_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 
 assert_eq "1" "$CONTRACT_COUNT" "--contract returns only linked task"
 assert_eq "1" "$CONTRACT_HAS_D" "--contract includes Delta"
@@ -91,48 +93,71 @@ assert_eq "1" "$CONTRACT_HAS_D" "--contract includes Delta"
 # --- Case 6: --id-min / --id-max ---
 echo "[6] --id-min / --id-max filters"
 
-# Bound by the full set of IDs created above (A, B, C, D)
-LIST_ALL_IDS="$(run_lf --output json task list | jq -r '[.[].id] | sort | @csv')"
-MIN_ID="$(run_lf --output json task list | jq '[.[].id] | min')"
-MAX_ID="$(run_lf --output json task list | jq '[.[].id] | max')"
-
 LIST_ID_MIN="$(run_lf --output json task list --id-min "$B_ID")"
-ID_MIN_COUNT="$(echo "$LIST_ID_MIN" | jq 'length')"
-ID_MIN_HAS_A="$(echo "$LIST_ID_MIN" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-ID_MIN_HAS_B="$(echo "$LIST_ID_MIN" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+ID_MIN_HAS_A="$(echo "$LIST_ID_MIN" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+ID_MIN_HAS_B="$(echo "$LIST_ID_MIN" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "0" "$ID_MIN_HAS_A" "--id-min excludes ids below threshold"
 assert_eq "1" "$ID_MIN_HAS_B" "--id-min includes boundary id"
 
 LIST_ID_MAX="$(run_lf --output json task list --id-max "$B_ID")"
-ID_MAX_HAS_A="$(echo "$LIST_ID_MAX" | jq --arg id "$A_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-ID_MAX_HAS_B="$(echo "$LIST_ID_MAX" | jq --arg id "$B_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
-ID_MAX_HAS_C="$(echo "$LIST_ID_MAX" | jq --arg id "$C_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+ID_MAX_HAS_A="$(echo "$LIST_ID_MAX" | jq --arg id "$A_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+ID_MAX_HAS_B="$(echo "$LIST_ID_MAX" | jq --arg id "$B_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
+ID_MAX_HAS_C="$(echo "$LIST_ID_MAX" | jq --arg id "$C_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "1" "$ID_MAX_HAS_A" "--id-max includes ids below threshold"
 assert_eq "1" "$ID_MAX_HAS_B" "--id-max includes boundary id"
 assert_eq "0" "$ID_MAX_HAS_C" "--id-max excludes ids above threshold"
 
 LIST_RANGE="$(run_lf --output json task list --id-min "$B_ID" --id-max "$B_ID")"
-RANGE_COUNT="$(echo "$LIST_RANGE" | jq 'length')"
+RANGE_COUNT="$(echo "$LIST_RANGE" | jq '.items | length')"
 assert_eq "1" "$RANGE_COUNT" "--id-min == --id-max returns exactly 1 task"
 
-# --- Case 7: --limit / --offset ---
-echo "[7] --limit / --offset pagination"
+# --- Case 7: --limit / --after cursor pagination ---
+echo "[7] --limit / --after cursor pagination"
 
-LIST_LIMIT2="$(run_lf --output json task list --limit 2)"
-LIMIT_COUNT="$(echo "$LIST_LIMIT2" | jq 'length')"
-assert_eq "2" "$LIMIT_COUNT" "--limit 2 returns exactly 2 tasks"
-
+# Total: A, B, C, D = 4 tasks (baseline for pagination)
 LIST_ALL="$(run_lf --output json task list --limit 200)"
-TOTAL="$(echo "$LIST_ALL" | jq 'length')"
-LIST_OFFSET="$(run_lf --output json task list --limit 200 --offset 2)"
-OFFSET_COUNT="$(echo "$LIST_OFFSET" | jq 'length')"
-EXPECTED_OFFSET=$((TOTAL - 2))
-assert_eq "$EXPECTED_OFFSET" "$OFFSET_COUNT" "--offset 2 skips first 2 tasks"
+TOTAL="$(echo "$LIST_ALL" | jq '.items | length')"
+ALL_CURSOR="$(echo "$LIST_ALL" | jq -r '.next_cursor')"
+assert_eq "null" "$ALL_CURSOR" "fetching all items yields next_cursor=null"
 
-# Default limit = 50 (we have only ~4 tasks, so all returned)
+# First page: --limit 2 → 2 items + non-null cursor
+PAGE1="$(run_lf --output json task list --limit 2)"
+PAGE1_COUNT="$(echo "$PAGE1" | jq '.items | length')"
+PAGE1_CURSOR="$(echo "$PAGE1" | jq -r '.next_cursor')"
+assert_eq "2" "$PAGE1_COUNT" "--limit 2 returns exactly 2 items"
+if [[ "$PAGE1_CURSOR" == "null" ]]; then
+  echo "FAIL: first page cursor should not be null"
+  exit 1
+fi
+echo "PASS: first page has next_cursor"
+
+# Second page: --after <cursor> --limit 2
+PAGE2="$(run_lf --output json task list --limit 2 --after "$PAGE1_CURSOR")"
+PAGE2_COUNT="$(echo "$PAGE2" | jq '.items | length')"
+# Remaining after first page should be TOTAL - 2 (capped at 2 by limit)
+EXPECTED_PAGE2=$((TOTAL - 2))
+if (( EXPECTED_PAGE2 > 2 )); then EXPECTED_PAGE2=2; fi
+assert_eq "$EXPECTED_PAGE2" "$PAGE2_COUNT" "--after returns the expected next batch"
+
+# No page1/page2 id overlap
+PAGE1_IDS="$(echo "$PAGE1" | jq -r '.items[].id' | sort -n | tr '\n' ',')"
+PAGE2_IDS="$(echo "$PAGE2" | jq -r '.items[].id' | sort -n | tr '\n' ',')"
+OVERLAP="$(comm -12 <(echo "$PAGE1" | jq -r '.items[].id' | sort -n) <(echo "$PAGE2" | jq -r '.items[].id' | sort -n) | wc -l | tr -d ' ')"
+assert_eq "0" "$OVERLAP" "page1 and page2 share no ids (page1=$PAGE1_IDS page2=$PAGE2_IDS)"
+
+# Exact-boundary case: fetch exactly TOTAL items in one page → next_cursor must be null
+BOUNDARY="$(run_lf --output json task list --limit "$TOTAL")"
+BOUNDARY_CURSOR="$(echo "$BOUNDARY" | jq -r '.next_cursor')"
+BOUNDARY_COUNT="$(echo "$BOUNDARY" | jq '.items | length')"
+assert_eq "$TOTAL" "$BOUNDARY_COUNT" "--limit == TOTAL returns all items"
+assert_eq "null" "$BOUNDARY_CURSOR" "--limit == TOTAL yields next_cursor=null (no dangling more signal)"
+
+# Default limit (50) with only ~4 tasks returns everything + null cursor
 LIST_DEFAULT="$(run_lf --output json task list)"
-DEFAULT_COUNT="$(echo "$LIST_DEFAULT" | jq 'length')"
+DEFAULT_COUNT="$(echo "$LIST_DEFAULT" | jq '.items | length')"
+DEFAULT_CURSOR="$(echo "$LIST_DEFAULT" | jq -r '.next_cursor')"
 assert_eq "$TOTAL" "$DEFAULT_COUNT" "default limit (50) returns all tasks when total < 50"
+assert_eq "null" "$DEFAULT_CURSOR" "default limit with total < 50 yields next_cursor=null"
 
 # --- Case 8: --limit validation ---
 echo "[8] --limit validation"
@@ -148,6 +173,37 @@ if run_lf task list --limit 201 >/dev/null 2>&1; then
   exit 1
 else
   echo "PASS: --limit 201 rejected"
+fi
+
+# --- Case 9: invalid cursor ---
+echo "[9] invalid --after cursor rejected"
+if run_lf task list --after "not-a-valid-cursor!!!" >/dev/null 2>&1; then
+  echo "FAIL: invalid --after cursor should have errored"
+  exit 1
+else
+  echo "PASS: invalid --after cursor rejected"
+fi
+
+# --- Case 10: text output appends '... more: --after <cursor>' when more pages exist ---
+echo "[10] --output text appends '... more:' when next_cursor is Some"
+TEXT_OUT="$(run_lf --output text task list --limit 2)"
+if echo "$TEXT_OUT" | grep -q "^... more: --after "; then
+  echo "PASS: text output contains '... more: --after <cursor>'"
+else
+  echo "FAIL: text output did not contain '... more: --after <cursor>'"
+  echo "---output---"
+  echo "$TEXT_OUT"
+  echo "------------"
+  exit 1
+fi
+
+# When all items fit in one page, the '... more:' line must be absent
+TEXT_OUT_FULL="$(run_lf --output text task list)"
+if echo "$TEXT_OUT_FULL" | grep -q "^... more:"; then
+  echo "FAIL: text output has '... more:' line when no more pages"
+  exit 1
+else
+  echo "PASS: no '... more:' line when there's no next page"
 fi
 
 test_summary

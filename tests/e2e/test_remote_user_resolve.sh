@@ -109,7 +109,7 @@ run_as_user() {
 echo "=== Section 1: task list --ready must not require master ==="
 LIST_OUT=$(run_as_user task list --ready 2>&1 || true)
 assert_not_contains "$LIST_OUT" "master privilege required" "list --ready: no master-privilege error"
-LIST_IDS=$(echo "$LIST_OUT" | jq -r '.[].id' 2>/dev/null || echo "")
+LIST_IDS=$(echo "$LIST_OUT" | jq -r '.items[].id' 2>/dev/null || echo "")
 if echo "$LIST_IDS" | grep -qx "$SEED_TASK_ID"; then
   echo "  PASS: list --ready returns seed task"
   PASS_COUNT=$((PASS_COUNT + 1))

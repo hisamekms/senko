@@ -18,8 +18,9 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, Project, ProjectId};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
+    self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
+    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -1253,7 +1254,7 @@ impl TaskQueryPort for PostgresBackend {
         &self,
         project_id: ProjectId,
         filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    ) -> Result<ListTasksPage> {
         let pool = self.pool().await?;
 
         let mut conditions: Vec<String> = Vec::new();
@@ -1268,6 +1269,12 @@ impl TaskQueryPort for PostgresBackend {
         conditions.push(format!("t.project_id = ${param_idx}"));
         binds.push(BindVal::Int(project_id.into()));
         param_idx += 1;
+
+        if let Some(after) = filter.after {
+            conditions.push(format!("t.id > ${param_idx}"));
+            binds.push(BindVal::Int(after.into()));
+            param_idx += 1;
+        }
 
         if !filter.statuses.is_empty() {
             let placeholders: Vec<String> = filter
@@ -1376,14 +1383,10 @@ impl TaskQueryPort for PostgresBackend {
         };
 
         let mut sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
+        // peek-ahead: fetch limit+1 rows to detect whether more exist
         if let Some(l) = filter.limit {
             sql.push_str(&format!(" LIMIT ${param_idx}"));
-            binds.push(BindVal::Int(l as i64));
-            param_idx += 1;
-        }
-        if let Some(o) = filter.offset {
-            sql.push_str(&format!(" OFFSET ${param_idx}"));
-            binds.push(BindVal::Int(o as i64));
+            binds.push(BindVal::Int(l as i64 + 1));
             #[allow(unused_assignments)]
             {
                 param_idx += 1;
@@ -1399,16 +1402,34 @@ impl TaskQueryPort for PostgresBackend {
         }
 
         let rows = query.fetch_all(pool).await?;
-        let ids: Vec<TaskDbId> = rows
+        let mut ids: Vec<TaskDbId> = rows
             .iter()
             .map(|r| TaskDbId(r.get::<i64, _>("id")))
             .collect();
 
-        let mut tasks = Vec::with_capacity(ids.len());
+        let has_more = if let Some(l) = filter.limit {
+            if ids.len() as u32 > l {
+                ids.truncate(l as usize);
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
+        let mut items = Vec::with_capacity(ids.len());
         for id in ids {
-            tasks.push(get_task_by_id(pool, id).await?);
+            items.push(get_task_by_id(pool, id).await?);
         }
-        Ok(tasks)
+
+        let next_cursor = if has_more {
+            items.last().map(|t| Cursor::encode(t.id()))
+        } else {
+            None
+        };
+
+        Ok(ListTasksPage { items, next_cursor })
     }
 
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
@@ -1494,7 +1515,7 @@ impl TaskQueryPort for PostgresBackend {
             ready: true,
             ..Default::default()
         };
-        self.list_tasks(project_id, &filter).await
+        Ok(self.list_tasks(project_id, &filter).await?.items)
     }
 
     /// Matches by public `task_number` (not internal DB id) — see
@@ -2354,7 +2375,7 @@ mod tests {
             statuses: vec![TaskStatus::Todo],
             ..Default::default()
         };
-        let tasks = backend.list_tasks(1, &filter).await.unwrap();
+        let tasks = backend.list_tasks(1, &filter).await.unwrap().items;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title(), "Todo task");
     }

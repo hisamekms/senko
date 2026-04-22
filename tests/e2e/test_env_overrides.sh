@@ -42,7 +42,7 @@ ALT_DB="$ALT_PROJECT/.senko/data.db"
 # Initialize a DB via senko in the alt project
 "$SENKO" --project-root "$ALT_PROJECT" --db-path "$ALT_DB" task add --title "Alt project task" >/dev/null
 JSON_OUT="$(SENKO_PROJECT_ROOT=$ALT_PROJECT SENKO_DB_PATH=$ALT_DB "$SENKO" task list)"
-TASK_TITLE=$(echo "$JSON_OUT" | jq -r '.[0].title')
+TASK_TITLE=$(echo "$JSON_OUT" | jq -r '.items[0].title')
 assert_eq "Alt project task" "$TASK_TITLE" "SENKO_PROJECT_ROOT selects alt project"
 rm -rf "$ALT_PROJECT"
 

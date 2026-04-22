@@ -61,14 +61,14 @@ LIST_OUT="$(run_lf --output json task list)"
 echo "$LIST_OUT" | jq . >/dev/null 2>&1
 assert_eq "0" "$?" "list output is valid JSON"
 
-LIST_TYPE="$(echo "$LIST_OUT" | jq 'type')"
-assert_eq '"array"' "$LIST_TYPE" "list: output is array"
+LIST_TYPE="$(echo "$LIST_OUT" | jq '.items | type')"
+assert_eq '"array"' "$LIST_TYPE" "list: items is an array"
 
-LIST_LEN="$(echo "$LIST_OUT" | jq 'length')"
-assert_eq "true" "$(echo "$LIST_OUT" | jq 'length >= 2')" "list: contains at least 2 tasks"
+assert_eq "true" "$(echo "$LIST_OUT" | jq '.items | length >= 2')" "list: contains at least 2 tasks"
+assert_eq "true" "$(echo "$LIST_OUT" | jq 'has("next_cursor")')" "list: response has next_cursor field"
 
 # Verify our task is in the list
-FOUND="$(echo "$LIST_OUT" | jq --argjson id "$TASK_ID" '[.[] | select(.id == $id)] | length')"
+FOUND="$(echo "$LIST_OUT" | jq --argjson id "$TASK_ID" '[.items[] | select(.id == $id)] | length')"
 assert_eq "1" "$FOUND" "list: contains created task"
 
 # [4] next — JSON output

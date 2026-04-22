@@ -42,7 +42,7 @@ assert_json_field "$GOT" '.title' "HTTP Task 1" "get: correct title"
 
 echo "[3] List tasks via HTTP backend"
 LIST=$(run_http task list)
-assert_eq "1" "$(echo "$LIST" | jq 'length')" "list: 1 task"
+assert_eq "1" "$(echo "$LIST" | jq '.items | length')" "list: 1 task"
 
 echo "[4] Edit task via HTTP backend"
 run_http task edit "$TASK1_ID" --title "HTTP Task 1 Updated" --add-tag backend >/dev/null
@@ -123,7 +123,7 @@ assert_json_field "$CONFIG" '.workflow.merge_via' "direct" "config: merge_via"
 
 echo "[17] List with filters via HTTP backend"
 LIST_COMPLETED=$(run_http task list --status completed)
-COMPLETED_COUNT=$(echo "$LIST_COMPLETED" | jq 'length')
+COMPLETED_COUNT=$(echo "$LIST_COMPLETED" | jq '.items | length')
 assert_eq "3" "$COMPLETED_COUNT" "list filter: 3 completed tasks"
 
 test_summary

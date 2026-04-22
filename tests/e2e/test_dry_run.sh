@@ -22,7 +22,7 @@ assert_contains "$DR_ADD" "rust" "dry-run add shows tags"
 # 2. dry-run add does not actually create a task
 echo "[2] dry-run add does not create task"
 LIST_OUTPUT="$(run_lf --output json task list)"
-TASK_COUNT="$(echo "$LIST_OUTPUT" | jq 'length')"
+TASK_COUNT="$(echo "$LIST_OUTPUT" | jq '.items | length')"
 assert_eq "0" "$TASK_COUNT" "no tasks after dry-run add"
 
 # 3. dry-run add (text output)

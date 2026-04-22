@@ -117,7 +117,7 @@ assert_eq "204" "$DEL_STATUS" "delete: returns 204"
 
 echo "[1.5] Verify deleted task is gone"
 LIST_AFTER_DEL=$(run_relay task list)
-REMAINING=$(echo "$LIST_AFTER_DEL" | jq "[.[] | select(.id == $TASK1_ID)] | length")
+REMAINING=$(echo "$LIST_AFTER_DEL" | jq "[.items[] | select(.id == $TASK1_ID)] | length")
 assert_eq "0" "$REMAINING" "delete: task no longer in list"
 
 # ========================================

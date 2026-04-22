@@ -44,7 +44,7 @@ fi
 echo "[7] list output includes pr_url"
 run_lf task edit "$TASK_ID" --pr-url "https://github.com/org/repo/pull/1" > /dev/null
 LIST_OUT="$(run_lf task list)"
-LIST_PR="$(echo "$LIST_OUT" | jq -r '.[0].pr_url')"
+LIST_PR="$(echo "$LIST_OUT" | jq -r '.items[0].pr_url')"
 assert_eq "https://github.com/org/repo/pull/1" "$LIST_PR" "list includes pr_url"
 
 echo "[8] dry-run shows pr_url operation"

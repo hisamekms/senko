@@ -24,7 +24,9 @@ assert_exit_code 1 run_lf --output json task deps list 99999
 
 echo "[2] Empty DB: list and next"
 LIST_OUTPUT="$(run_lf --output json task list)"
-assert_eq "[]" "$LIST_OUTPUT" "list on empty DB returns []"
+# New response shape: { items: [], next_cursor: null|absent }
+LIST_ITEMS_LEN="$(echo "$LIST_OUTPUT" | jq '.items | length')"
+assert_eq "0" "$LIST_ITEMS_LEN" "list on empty DB returns items=[]"
 
 NEXT_ERR="$(run_lf --output json task next 2>&1 || true)"
 assert_contains "$NEXT_ERR" "no eligible task" "next on empty DB shows error"

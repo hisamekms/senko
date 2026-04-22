@@ -40,6 +40,7 @@ aws-config = { version = "1", optional = true, features = ["behavior-version-lat
 sqlx = { version = "0.8", optional = true, default-features = false, features = ["runtime-tokio", "postgres", "tls-rustls"] }
 percent-encoding = "2"
 oauth2 = "5"
+base64 = "0.22"
 keyring = { version = "3", features = ["linux-native", "apple-native"] }
 open = "5"
 

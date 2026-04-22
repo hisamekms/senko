@@ -10,8 +10,8 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskEvent,
-    TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task,
+    TaskEvent, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
 
@@ -52,7 +52,8 @@ impl LocalTaskOperations {
         let all_tasks = self
             .backend
             .list_tasks(project_id, &ListTasksFilter::default())
-            .await?;
+            .await?
+            .items;
         let mut result = Vec::new();
 
         for t in &all_tasks {
@@ -608,7 +609,7 @@ impl TaskOperations for LocalTaskOperations {
         &self,
         project_id: ProjectId,
         filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    ) -> Result<ListTasksPage> {
         if filter.metadata.is_empty() {
             return self.backend.list_tasks(project_id, filter).await;
         }
@@ -622,7 +623,8 @@ impl TaskOperations for LocalTaskOperations {
         let tasks = self
             .backend
             .list_tasks(project_id, &ListTasksFilter::default())
-            .await?;
+            .await?
+            .items;
         let tags: Vec<String> = tasks
             .iter()
             .flat_map(|t| t.tags().iter().cloned())

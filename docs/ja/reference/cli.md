@@ -52,16 +52,30 @@ senko task add --from-json-file task.json
 ### `task list`
 
 ```bash
-senko task list                          # 全件 (既定 limit 50)
+senko task list                          # 既定 limit 50
 senko task list --status todo            # 状態で絞り込み (繰り返し可)
 senko task list --ready                  # todo かつ全依存 completed
 senko task list --tag backend            # タグで絞り込み (繰り返し可)
 senko task list --contract 42            # Contract で絞り込み
 senko task list --metadata "team=backend"
 senko task list --id-min 100 --id-max 199
-senko task list --limit 20 --offset 40   # limit: 1..=200 既定 50 / offset: 既定 0
+senko task list --limit 20               # limit: 1..=200 既定 50
+senko task list --limit 20 --after <cursor>   # cursor で次ページを取得
 senko task list --ready --include-unassigned
 ```
+
+**レスポンス形状 (JSON)**
+
+```json
+{
+  "items": [ { "id": 1, "title": "...", ... }, ... ],
+  "next_cursor": "eyJpZCI6MjB9"
+}
+```
+
+`next_cursor` が `null` のときは続きがない。`--after <cursor>` に渡すと次ページが取れる。cursor は不透明トークンなので手で decode しないこと。
+
+`--output text` では、`next_cursor` が set の場合にリストの末尾へ `... more: --after <cursor>` が追記される。
 
 ### `task get <id>`
 

@@ -68,6 +68,9 @@ pub enum DomainError {
     #[error("invalid metadata field name: {reason}")]
     InvalidMetadataFieldName { reason: String },
 
+    #[error("invalid cursor")]
+    InvalidCursor,
+
     #[error("{message}")]
     ValidationError { field: String, message: String },
 

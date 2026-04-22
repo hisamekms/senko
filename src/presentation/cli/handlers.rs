@@ -30,7 +30,7 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, TaskId,
+    AssigneeUserId, CreateTaskParams, Cursor, ListTasksFilter, MetadataUpdate, Priority, TaskId,
     TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams};
@@ -294,7 +294,7 @@ pub async fn cmd_list(
     id_min: Option<TaskId>,
     id_max: Option<TaskId>,
     limit: Option<u32>,
-    offset: Option<u32>,
+    after: Option<String>,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -339,6 +339,13 @@ pub async fn cmd_list(
     }
     let effective_limit = limit.or(Some(50));
 
+    let after_id = match after.as_deref() {
+        Some(raw) => {
+            Some(Cursor::decode(raw).map_err(|_| anyhow::anyhow!("invalid --after cursor"))?)
+        }
+        None => None,
+    };
+
     let filter = ListTasksFilter {
         statuses,
         tags: tag,
@@ -352,17 +359,17 @@ pub async fn cmd_list(
         id_min,
         id_max,
         limit: effective_limit,
-        offset,
+        after: after_id,
     };
 
-    let tasks = task_ops.list_tasks(project_id, &filter).await?;
+    let page = task_ops.list_tasks(project_id, &filter).await?;
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&tasks)?);
+            println!("{}", serde_json::to_string_pretty(&page)?);
         }
         OutputFormat::Text => {
-            for task in &tasks {
+            for task in &page.items {
                 println!(
                     "[{}] #{} {} ({})",
                     task.status(),
@@ -370,6 +377,9 @@ pub async fn cmd_list(
                     task.title(),
                     task.priority()
                 );
+            }
+            if let Some(cursor) = &page.next_cursor {
+                println!("... more: --after {cursor}");
             }
         }
     }

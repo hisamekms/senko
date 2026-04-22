@@ -18,9 +18,10 @@ mod auth;
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
-    CompleteTaskResponse, ConfigResponse, ContractNoteResponse, ContractResponse, MeResponse,
-    MetadataFieldResponse, PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse,
-    SessionResponse, TaskResponse, TokenResponse, UserResponse,
+    CompleteTaskResponse, ConfigResponse, ContractNoteResponse, ContractResponse,
+    ListTasksPageResponse, MeResponse, MetadataFieldResponse, PreviewTransitionResponse,
+    ProjectMemberResponse, ProjectResponse, SessionResponse, TaskResponse, TokenResponse,
+    UserResponse,
 };
 use crate::application::auth::Permission;
 use crate::application::port::TaskBackend;
@@ -39,8 +40,8 @@ use crate::domain::error::DomainError;
 use crate::domain::metadata_field::CreateMetadataFieldParams;
 use crate::domain::project::{CreateProjectParams, ProjectId};
 use crate::domain::task::{
-    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority,
-    Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, Cursor, ListTasksFilter, MetadataUpdate,
+    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams,
@@ -245,6 +246,7 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::MetadataTooDeep { .. }
             | DomainError::InvalidMetadataFieldType { .. }
             | DomainError::InvalidMetadataFieldName { .. }
+            | DomainError::InvalidCursor
             | DomainError::ValidationError { .. } => ApiError::BadRequest(msg),
 
             DomainError::InvalidStatusTransition { .. }
@@ -354,7 +356,7 @@ struct ListTasksQuery {
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
-    offset: Option<u32>,
+    after: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -849,7 +851,7 @@ async fn list_tasks(
     auth: OptionalAuthUser,
     Path(project_id): Path<ProjectId>,
     Query(query): Query<ListTasksQuery>,
-) -> Result<Json<Vec<TaskResponse>>, ApiError> {
+) -> Result<Json<ListTasksPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
     let statuses: Vec<TaskStatus> = query
         .status
@@ -877,6 +879,12 @@ async fn list_tasks(
         ));
     }
     let effective_limit = query.limit.or(Some(50));
+    let after = match query.after.as_deref() {
+        Some(raw) => {
+            Some(Cursor::decode(raw).map_err(|_| ApiError::BadRequest("invalid cursor".into()))?)
+        }
+        None => None,
+    };
 
     let (assignee_user_id, assignee_self) =
         resolve_query_assignee_self(query.assignee_user_id, &auth)?;
@@ -894,14 +902,17 @@ async fn list_tasks(
         id_min: query.id_min,
         id_max: query.id_max,
         limit: effective_limit,
-        offset: query.offset,
+        after,
     };
-    let tasks = state
+    let page = state
         .task_service
         .list_tasks(project_id, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(tasks.into_iter().map(TaskResponse::from).collect()))
+    Ok(Json(ListTasksPageResponse {
+        items: page.items.into_iter().map(TaskResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 /// Resolve `"self"` in `assignee_user_id` to the authenticated user's numeric ID.

@@ -14,8 +14,8 @@ use crate::application::port::{HookExecutor, TaskOperations};
 use crate::domain::error::DomainError;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, MetadataUpdate, Priority, Task, TaskEvent, TaskId,
-    TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, Cursor, ListTasksFilter, ListTasksPage, MetadataUpdate, Priority, Task,
+    TaskEvent, TaskId, TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::infra::config::HookWhen;
 
@@ -485,7 +485,7 @@ impl TaskOperations for RemoteTaskOperations {
         &self,
         project_id: ProjectId,
         filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    ) -> Result<ListTasksPage> {
         let mut url = self.project_url(project_id, "/tasks");
         let mut params: Vec<String> = Vec::new();
 
@@ -536,8 +536,11 @@ impl TaskOperations for RemoteTaskOperations {
         if let Some(n) = filter.limit {
             params.push(format!("limit={n}"));
         }
-        if let Some(n) = filter.offset {
-            params.push(format!("offset={n}"));
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
         }
 
         if !params.is_empty() {
@@ -551,7 +554,8 @@ impl TaskOperations for RemoteTaskOperations {
     async fn list_all_tags(&self, project_id: ProjectId) -> Result<Vec<String>> {
         let tasks = self
             .list_tasks(project_id, &ListTasksFilter::default())
-            .await?;
+            .await?
+            .items;
         let mut tags: Vec<String> = tasks
             .iter()
             .flat_map(|t| t.tags().iter().cloned())
@@ -729,14 +733,16 @@ impl TaskOperations for RemoteTaskOperations {
     }
 
     async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
-        self.list_tasks(
-            project_id,
-            &ListTasksFilter {
-                ready: true,
-                ..Default::default()
-            },
-        )
-        .await
+        Ok(self
+            .list_tasks(
+                project_id,
+                &ListTasksFilter {
+                    ready: true,
+                    ..Default::default()
+                },
+            )
+            .await?
+            .items)
     }
 
     async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {

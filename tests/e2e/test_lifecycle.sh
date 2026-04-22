@@ -29,7 +29,7 @@ assert_json_field "$GET_OUTPUT" '.id' "$TASK_ID" "get returns correct id"
 # 3. List tasks
 echo "[3] Task list"
 LIST_OUTPUT="$(run_lf --output json task list)"
-LIST_CONTAINS_ID="$(echo "$LIST_OUTPUT" | jq -r --arg id "$TASK_ID" '[.[] | select(.id == ($id | tonumber))] | length')"
+LIST_CONTAINS_ID="$(echo "$LIST_OUTPUT" | jq -r --arg id "$TASK_ID" '[.items[] | select(.id == ($id | tonumber))] | length')"
 assert_eq "1" "$LIST_CONTAINS_ID" "list contains created task"
 
 # 4. Ready (draft → todo)

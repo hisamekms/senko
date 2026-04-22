@@ -253,9 +253,9 @@ pub enum TaskAction {
         /// Maximum number of results (default 50, range 1..=200)
         #[arg(long)]
         limit: Option<u32>,
-        /// Skip N results (default 0)
+        /// Opaque cursor from a previous response's `next_cursor` to fetch the next page
         #[arg(long)]
-        offset: Option<u32>,
+        after: Option<String>,
     },
     /// Get task details
     Get {
@@ -985,7 +985,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 id_min,
                 id_max,
                 limit,
-                offset,
+                after,
             } => {
                 handlers::cmd_list(
                     &cli,
@@ -999,7 +999,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     *id_min,
                     *id_max,
                     *limit,
-                    *offset,
+                    after.clone(),
                 )
                 .await
             }

@@ -11,8 +11,9 @@ use crate::domain::metadata_field::{
 };
 use crate::domain::project::{CreateProjectParams, DEFAULT_PROJECT_ID, Project, ProjectId};
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams, shallow_merge_metadata,
+    self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
+    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
@@ -1549,12 +1550,18 @@ fn list_tasks(
     conn: &Connection,
     project_id: ProjectId,
     filter: &ListTasksFilter,
-) -> Result<Vec<Task>> {
+) -> Result<ListTasksPage> {
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     conditions.push("t.project_id = ?".to_string());
     param_values.push(Box::new(project_id));
+
+    if let Some(after) = filter.after {
+        conditions.push("t.id > ?".to_string());
+        let after_i64: i64 = after.into();
+        param_values.push(Box::new(after_i64));
+    }
 
     if !filter.statuses.is_empty() {
         let placeholders: Vec<&str> = filter.statuses.iter().map(|_| "?").collect();
@@ -1657,36 +1664,43 @@ fn list_tasks(
     };
 
     let mut sql = format!("SELECT t.id FROM tasks t{} ORDER BY t.id", where_clause);
-    match (filter.limit, filter.offset) {
-        (Some(l), Some(o)) => {
-            sql.push_str(" LIMIT ? OFFSET ?");
-            param_values.push(Box::new(l as i64));
-            param_values.push(Box::new(o as i64));
-        }
-        (Some(l), None) => {
-            sql.push_str(" LIMIT ?");
-            param_values.push(Box::new(l as i64));
-        }
-        (None, Some(o)) => {
-            // SQLite requires LIMIT when using OFFSET; -1 means "no limit".
-            sql.push_str(" LIMIT -1 OFFSET ?");
-            param_values.push(Box::new(o as i64));
-        }
-        (None, None) => {}
+    // peek-ahead: fetch limit+1 rows to detect whether more exist
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
     }
     let param_refs: Vec<&dyn rusqlite::types::ToSql> =
         param_values.iter().map(|v| v.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let ids: Vec<TaskDbId> = stmt
+    let mut ids: Vec<TaskDbId> = stmt
         .query_map(param_refs.as_slice(), |row| row.get::<_, TaskDbId>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
-    let mut tasks = Vec::with_capacity(ids.len());
+    // Determine whether there is a next page and trim the peeked row.
+    let has_more = if let Some(l) = filter.limit {
+        if ids.len() as u32 > l {
+            ids.truncate(l as usize);
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    let mut items = Vec::with_capacity(ids.len());
     for id in ids {
-        tasks.push(get_task(conn, id)?);
+        items.push(get_task(conn, id)?);
     }
-    Ok(tasks)
+
+    let next_cursor = if has_more {
+        items.last().map(|t| Cursor::encode(t.id()))
+    } else {
+        None
+    };
+
+    Ok(ListTasksPage { items, next_cursor })
 }
 
 /// SQL-optimized implementation of [`crate::domain::task::select_next`].
@@ -1769,7 +1783,7 @@ fn list_ready_tasks(conn: &Connection, project_id: ProjectId) -> Result<Vec<Task
         ready: true,
         ..Default::default()
     };
-    list_tasks(conn, project_id, &filter)
+    Ok(list_tasks(conn, project_id, &filter)?.items)
 }
 
 /// SQL-optimized equivalent of `Task::is_ready`: true iff the task is in the
@@ -2657,7 +2671,7 @@ impl TaskQueryPort for SqliteBackend {
         &self,
         project_id: ProjectId,
         filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>> {
+    ) -> Result<ListTasksPage> {
         let filter = filter.clone();
         blocking!(self, |conn: &Connection| list_tasks(
             conn, project_id, &filter
@@ -3204,7 +3218,9 @@ mod tests {
         create_task(&conn, ProjectId(1), &default_create_params("a")).unwrap();
         create_task(&conn, ProjectId(1), &default_create_params("b")).unwrap();
 
-        let tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
         assert_eq!(tasks.len(), 2);
     }
 
@@ -3225,7 +3241,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(drafts.len(), 1);
         assert_eq!(drafts[0].title(), "todo");
 
@@ -3237,7 +3254,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(todos.len(), 1);
         assert_eq!(todos[0].title(), "draft");
     }
@@ -3268,7 +3286,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "tagged");
     }
@@ -3316,7 +3335,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].title(), "ready");
@@ -3351,7 +3371,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(matched.len(), 1);
         assert_eq!(matched[0].title(), "linked");
 
@@ -3363,7 +3384,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert!(nomatch.is_empty());
     }
 
@@ -3382,7 +3404,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(ge_b.len(), 2);
 
         let le_b = list_tasks(
@@ -3393,7 +3416,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(le_b.len(), 2);
 
         let just_b = list_tasks(
@@ -3405,7 +3429,8 @@ mod tests {
                 ..Default::default()
             },
         )
-        .unwrap();
+        .unwrap()
+        .items;
         assert_eq!(just_b.len(), 1);
         assert_eq!(just_b[0].id(), b.id());
 
@@ -3414,7 +3439,7 @@ mod tests {
     }
 
     #[test]
-    fn list_tasks_pagination_limit_offset() {
+    fn list_tasks_pagination_cursor() {
         let (_tmp, conn) = setup();
         for i in 0..5 {
             create_task(
@@ -3426,9 +3451,11 @@ mod tests {
         }
 
         let all = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
-        assert_eq!(all.len(), 5);
+        assert_eq!(all.items.len(), 5);
+        assert!(all.next_cursor.is_none());
 
-        let limited = list_tasks(
+        // First page: limit 2 → 2 items + next_cursor pointing to the 2nd task.
+        let page1 = list_tasks(
             &conn,
             ProjectId(1),
             &ListTasksFilter {
@@ -3437,34 +3464,98 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(limited.len(), 2);
-        assert_eq!(limited[0].id(), all[0].id());
+        assert_eq!(page1.items.len(), 2);
+        assert_eq!(page1.items[0].id(), all.items[0].id());
+        let cursor1 = page1.next_cursor.expect("next_cursor for first page");
 
-        let offset_only = list_tasks(
-            &conn,
-            ProjectId(1),
-            &ListTasksFilter {
-                offset: Some(2),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-        assert_eq!(offset_only.len(), 3);
-        assert_eq!(offset_only[0].id(), all[2].id());
-
-        let both = list_tasks(
+        // Second page: decode cursor → take next 2 items, cursor still points to more.
+        let after1 = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_tasks(
             &conn,
             ProjectId(1),
             &ListTasksFilter {
                 limit: Some(2),
-                offset: Some(2),
+                after: Some(after1),
                 ..Default::default()
             },
         )
         .unwrap();
-        assert_eq!(both.len(), 2);
-        assert_eq!(both[0].id(), all[2].id());
-        assert_eq!(both[1].id(), all[3].id());
+        assert_eq!(page2.items.len(), 2);
+        assert_eq!(page2.items[0].id(), all.items[2].id());
+        assert_eq!(page2.items[1].id(), all.items[3].id());
+        assert!(page2.next_cursor.is_some());
+
+        // Third page: exactly 1 remaining, next_cursor is None (end).
+        let after2 = Cursor::decode(&page2.next_cursor.unwrap()).unwrap();
+        let page3 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                after: Some(after2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page3.items.len(), 1);
+        assert_eq!(page3.items[0].id(), all.items[4].id());
+        assert!(page3.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_tasks_cursor_exact_boundary() {
+        // When total count is an exact multiple of limit, the last page
+        // must report next_cursor == None (no dangling "more" signal).
+        let (_tmp, conn) = setup();
+        for i in 0..4 {
+            create_task(
+                &conn,
+                ProjectId(1),
+                &default_create_params(&format!("t{i}")),
+            )
+            .unwrap();
+        }
+
+        let page1 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let cursor1 = page1.next_cursor.expect("first page has more");
+
+        let after1 = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                after: Some(after1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn cursor_encode_decode_roundtrip() {
+        let id = TaskId(42);
+        let encoded = Cursor::encode(id);
+        let decoded = Cursor::decode(&encoded).unwrap();
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn cursor_decode_invalid() {
+        assert!(Cursor::decode("not!valid").is_err());
+        assert!(Cursor::decode("").is_err());
+        // valid base64 but invalid JSON
+        assert!(Cursor::decode("aGVsbG8").is_err());
     }
 
     #[test]
@@ -4014,7 +4105,7 @@ mod tests {
             include_unassigned: false,
             ..Default::default()
         };
-        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap().items;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title(), "user1-task");
 
@@ -4024,7 +4115,7 @@ mod tests {
             include_unassigned: true,
             ..Default::default()
         };
-        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap();
+        let tasks = list_tasks(&conn, ProjectId(1), &filter).unwrap().items;
         assert_eq!(tasks.len(), 2);
         let titles: Vec<&str> = tasks.iter().map(|t| t.title()).collect();
         assert!(titles.contains(&"user1-task"));
@@ -4764,7 +4855,9 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
         let domain_result = crate::domain::task::select_next(all_tasks, &HashMap::new()).unwrap();
 
         assert_eq!(sql_result.id(), domain_result.id());
@@ -4795,7 +4888,9 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
@@ -4831,7 +4926,9 @@ mod tests {
 
         let sql_ready = list_ready_tasks(&conn, ProjectId(1)).unwrap();
 
-        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks
@@ -4870,7 +4967,9 @@ mod tests {
 
         let sql_count = ready_count(&conn, ProjectId(1)).unwrap();
 
-        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default()).unwrap();
+        let all_tasks = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
         let dep_statuses: HashMap<TaskId, TaskStatus> =
             all_tasks.iter().map(|t| (t.id(), t.status())).collect();
         let todo_tasks: Vec<Task> = all_tasks

@@ -38,7 +38,7 @@ echo "=== Section 1: SENKO_CLI_REMOTE_TOKEN forwarded to upstream ==="
 
 echo "[1] list with SENKO_CLI_REMOTE_TOKEN succeeds"
 LIST=$(run_with_token task list)
-assert_eq "0" "$(echo "$LIST" | jq 'length')" "list: empty initially"
+assert_eq "0" "$(echo "$LIST" | jq '.items | length')" "list: empty initially"
 
 echo "[2] add with SENKO_CLI_REMOTE_TOKEN succeeds"
 TASK=$(run_with_token task add --title "Token Relay Task")

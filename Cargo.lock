@@ -3026,6 +3026,7 @@ dependencies = [
  "aws-sdk-secretsmanager",
  "axum",
  "axum-extra",
+ "base64",
  "chrono",
  "clap",
  "jsonwebtoken",

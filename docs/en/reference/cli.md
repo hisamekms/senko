@@ -52,16 +52,30 @@ senko task add --from-json-file task.json
 ### `task list`
 
 ```bash
-senko task list                          # everything (default limit 50)
+senko task list                          # default limit 50
 senko task list --status todo            # filter by status (repeatable)
 senko task list --ready                  # todo with all deps completed
 senko task list --tag backend            # filter by tag (repeatable)
 senko task list --contract 42            # filter by Contract
 senko task list --metadata "team=backend"
 senko task list --id-min 100 --id-max 199
-senko task list --limit 20 --offset 40   # limit: 1..=200 (default 50) / offset: default 0
+senko task list --limit 20               # limit: 1..=200 (default 50)
+senko task list --limit 20 --after <cursor>   # fetch next page via opaque cursor
 senko task list --ready --include-unassigned
 ```
+
+**Response shape (JSON)**
+
+```json
+{
+  "items": [ { "id": 1, "title": "...", ... }, ... ],
+  "next_cursor": "eyJpZCI6MjB9"
+}
+```
+
+`next_cursor` is `null` when there are no more results. Pass it back as `--after <cursor>` to fetch the next page. Cursors are opaque — do not decode them by hand.
+
+In `--output text`, the `... more: --after <cursor>` line is appended at the end of the task list whenever `next_cursor` is set.
 
 ### `task get <id>`
 

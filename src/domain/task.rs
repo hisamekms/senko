@@ -1134,7 +1134,45 @@ pub struct ListTasksFilter {
     pub id_min: Option<TaskId>,
     pub id_max: Option<TaskId>,
     pub limit: Option<u32>,
-    pub offset: Option<u32>,
+    pub after: Option<TaskId>,
+}
+
+/// A page of tasks with an optional cursor to fetch the next page.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ListTasksPage {
+    pub items: Vec<Task>,
+    pub next_cursor: Option<String>,
+}
+
+/// Opaque cursor for task list pagination.
+///
+/// Wire format: base64 URL-safe (no padding) of JSON `{"id": <i64>}`.
+/// Callers should treat the string as opaque.
+pub struct Cursor;
+
+impl Cursor {
+    /// Encode a task id as an opaque cursor string.
+    pub fn encode(id: TaskId) -> String {
+        use base64::Engine as _;
+        let payload = serde_json::json!({ "id": id.0 });
+        let json = serde_json::to_vec(&payload).expect("cursor payload is serializable");
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
+    }
+
+    /// Decode an opaque cursor string back to a task id.
+    pub fn decode(raw: &str) -> Result<TaskId, DomainError> {
+        use base64::Engine as _;
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(raw)
+            .map_err(|_| DomainError::InvalidCursor)?;
+        let v: serde_json::Value =
+            serde_json::from_slice(&bytes).map_err(|_| DomainError::InvalidCursor)?;
+        let id = v
+            .get("id")
+            .and_then(|x| x.as_i64())
+            .ok_or(DomainError::InvalidCursor)?;
+        Ok(TaskId(id))
+    }
 }
 
 #[derive(Clone)]

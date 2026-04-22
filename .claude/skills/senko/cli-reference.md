@@ -8,13 +8,15 @@ Task-related operations are grouped under `senko task <verb>`, mirroring `senko 
 # Add a task (created in draft status)
 senko task add --title "Title" --priority p1 --description "Description"
 
-# List tasks (with filters)
+# List tasks (with filters) — response is { items, next_cursor }
 senko --output text task list
 senko task list --status todo
 senko task list --status in_progress
 senko task list --status todo --status in_progress  # combine multiple filters
 senko task list --ready                 # todo tasks with all deps completed
 senko task list --tag backend
+senko task list --limit 20              # limit: 1..=200 (default 50)
+senko task list --limit 20 --after <cursor>  # fetch next page using cursor from previous response
 
 # Get task details (JSON only, no text output)
 senko task get <id>

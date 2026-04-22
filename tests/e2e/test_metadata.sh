@@ -68,7 +68,7 @@ fi
 # [9] list includes metadata
 echo "[9] list includes metadata"
 LIST_OUT="$(run_lf task list)"
-HAS_META="$(echo "$LIST_OUT" | jq '.[0].metadata.key' -r)"
+HAS_META="$(echo "$LIST_OUT" | jq '.items[0].metadata.key' -r)"
 assert_eq "value" "$HAS_META" "list: first task has metadata.key"
 
 # [10] --from-json with metadata

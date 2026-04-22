@@ -208,7 +208,7 @@ assert_json_field "$GOT" '.title' "Trusted Header Task" "get task title"
 echo ""
 echo "=== List tasks ==="
 LIST=$(api_get "$PBASE/tasks")
-assert_eq "1" "$(echo "$LIST" | jq 'length')" "list returns 1 task"
+assert_eq "1" "$(echo "$LIST" | jq '.items | length')" "list returns 1 task"
 
 echo ""
 echo "=== Edit task ==="

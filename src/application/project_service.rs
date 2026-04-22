@@ -57,7 +57,8 @@ impl ProjectOperations for ProjectService {
         let tasks = self
             .backend
             .list_tasks(id, &ListTasksFilter::default())
-            .await?;
+            .await?
+            .items;
         project.validate_deletable(tasks.len() as i64)?;
         self.backend.delete_project(id).await
     }

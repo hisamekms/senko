@@ -5,8 +5,8 @@ use async_trait::async_trait;
 
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, MetadataUpdate, Task, TaskId, TaskStatus, UnblockedTask,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task, TaskId, TaskStatus,
+    UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
 
 /// Result of completing a task, including newly unblocked tasks.
@@ -84,7 +84,7 @@ pub trait TaskOperations: Send + Sync {
         &self,
         project_id: ProjectId,
         filter: &ListTasksFilter,
-    ) -> Result<Vec<Task>>;
+    ) -> Result<ListTasksPage>;
     async fn list_all_tags(&self, project_id: ProjectId) -> Result<Vec<String>>;
     async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>>;
 
