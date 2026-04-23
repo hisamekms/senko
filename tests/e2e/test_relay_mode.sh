@@ -173,7 +173,7 @@ assert_contains "$(echo "$DEP_ADDED" | jq -r '.dependencies[]')" "$PARENT_ID" "d
 
 echo "[3.2] List dependencies"
 DEPS_LIST=$(run_relay task deps list "$CHILD_ID")
-assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "deps list: 1 dependency"
+assert_eq "1" "$(echo "$DEPS_LIST" | jq '.items | length')" "deps list: 1 dependency"
 
 echo "[3.3] Remove dependency"
 DEP_REMOVED=$(run_relay task deps remove "$CHILD_ID" --on "$PARENT_ID")
@@ -223,7 +223,7 @@ assert_json_field "$MF_ADD2" '.name' "points" "metadata-field add: second field"
 
 echo "[5.3] List metadata fields"
 MF_LIST=$(run_relay project metadata-field list)
-assert_eq "2" "$(echo "$MF_LIST" | jq 'length')" "metadata-field list: 2 fields"
+assert_eq "2" "$(echo "$MF_LIST" | jq '.items | length')" "metadata-field list: 2 fields"
 
 echo "[5.4] Remove metadata field"
 MF_REMOVE=$(run_relay project metadata-field remove --name sprint)
@@ -231,7 +231,7 @@ assert_json_field "$MF_REMOVE" '.deleted' "sprint" "metadata-field remove: delet
 
 echo "[5.5] List after removal"
 MF_LIST2=$(run_relay project metadata-field list)
-assert_eq "1" "$(echo "$MF_LIST2" | jq 'length')" "metadata-field list: 1 field after removal"
+assert_eq "1" "$(echo "$MF_LIST2" | jq '.items | length')" "metadata-field list: 1 field after removal"
 
 # Clean up remaining metadata field so it does not block task completion in later sections
 run_relay project metadata-field remove --name points >/dev/null

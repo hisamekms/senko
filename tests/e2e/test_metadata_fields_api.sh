@@ -49,7 +49,7 @@ assert_json_field "$F2" '.required_on_complete' "true" "required_on_complete is 
 echo ""
 echo "=== List metadata fields ==="
 LIST=$(api_get "$PBASE/metadata-fields")
-assert_eq "2" "$(echo "$LIST" | jq 'length')" "list returns 2 fields"
+assert_eq "2" "$(echo "$LIST" | jq '.items | length')" "list returns 2 fields"
 
 echo ""
 echo "=== Delete metadata field by name ==="
@@ -59,8 +59,8 @@ assert_eq "204" "$DEL_STATUS" "delete returns 204"
 echo ""
 echo "=== List after delete ==="
 LIST2=$(api_get "$PBASE/metadata-fields")
-assert_eq "1" "$(echo "$LIST2" | jq 'length')" "list returns 1 field after delete"
-assert_json_field "$(echo "$LIST2" | jq '.[0]')" '.name' "story-points" "remaining field is story-points"
+assert_eq "1" "$(echo "$LIST2" | jq '.items | length')" "list returns 1 field after delete"
+assert_json_field "$(echo "$LIST2" | jq '.items[0]')" '.name' "story-points" "remaining field is story-points"
 
 echo ""
 echo "=== Create duplicate name (conflict) ==="

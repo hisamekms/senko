@@ -119,14 +119,14 @@ STATUS=$(status_with_token "$TEST_TOKEN" "$AUTH_BASE/sessions")
 assert_eq "200" "$STATUS" "GET /auth/sessions with valid token returns 200"
 
 echo ""
-echo "=== GET /auth/sessions returns array ==="
+echo "=== GET /auth/sessions returns paged items ==="
 SESSIONS=$(api_get "$AUTH_BASE/sessions")
-IS_ARRAY=$(echo "$SESSIONS" | jq 'if type == "array" then "yes" else "no" end' -r)
-assert_eq "yes" "$IS_ARRAY" "GET /auth/sessions returns an array"
+HAS_ITEMS=$(echo "$SESSIONS" | jq 'if (.items | type) == "array" then "yes" else "no" end' -r)
+assert_eq "yes" "$HAS_ITEMS" "GET /auth/sessions returns {items: [...]}"
 
 echo ""
 echo "=== GET /auth/sessions contains sessions ==="
-SESSION_COUNT=$(echo "$SESSIONS" | jq 'length')
+SESSION_COUNT=$(echo "$SESSIONS" | jq '.items | length')
 # We created the initial API key + 2 tokens via POST /auth/token, so should have at least 1
 assert_eq "true" "$([ "$SESSION_COUNT" -ge 1 ] && echo true || echo false)" "GET /auth/sessions has at least 1 session"
 
@@ -134,6 +134,27 @@ echo ""
 echo "=== GET /auth/sessions without auth returns 401 ==="
 STATUS=$(status_no_auth "$AUTH_BASE/sessions")
 assert_eq "401" "$STATUS" "GET /auth/sessions without auth returns 401"
+
+echo ""
+echo "=== GET /auth/sessions cursor pagination round-trip ==="
+# Create 2 additional sessions so we have >=3 rows to page through.
+api_json -X POST "$AUTH_BASE/token" -d '{}' >/dev/null
+api_json -X POST "$AUTH_BASE/token" -d '{}' >/dev/null
+PAGE1=$(api_get "$AUTH_BASE/sessions?limit=1")
+assert_eq "1" "$(echo "$PAGE1" | jq '.items | length')" "paged sessions: page1 has 1 item"
+CURSOR=$(echo "$PAGE1" | jq -r '.next_cursor')
+if [[ "$CURSOR" == "null" ]]; then
+  echo "FAIL: expected next_cursor on first page of /auth/sessions" >&2
+  exit 1
+fi
+ENC_CURSOR=$(printf '%s' "$CURSOR" | jq -sRr @uri)
+PAGE2=$(api_get "$AUTH_BASE/sessions?limit=1&after=$ENC_CURSOR")
+assert_eq "1" "$(echo "$PAGE2" | jq '.items | length')" "paged sessions: page2 has 1 item"
+
+echo ""
+echo "=== GET /auth/sessions with invalid cursor returns 400 ==="
+STATUS=$(status_with_token "$TEST_TOKEN" "$AUTH_BASE/sessions?after=not-a-cursor")
+assert_eq "400" "$STATUS" "invalid cursor returns 400"
 
 # =============================================
 # 5. DELETE /auth/sessions/{id} (revoke specific)
@@ -146,7 +167,7 @@ NEW_TOKEN_RESP=$(api_json -X POST "$AUTH_BASE/token" -d '{}')
 NEW_TOKEN_ID=$(echo "$NEW_TOKEN_RESP" | jq -r '.id')
 
 # Count sessions before revoke
-BEFORE_COUNT=$(api_get "$AUTH_BASE/sessions" | jq 'length')
+BEFORE_COUNT=$(api_get "$AUTH_BASE/sessions" | jq '.items | length')
 
 # Revoke the new token
 STATUS=$(status_with_token "$TEST_TOKEN" -X DELETE "$AUTH_BASE/sessions/$NEW_TOKEN_ID")
@@ -154,7 +175,7 @@ assert_eq "204" "$STATUS" "DELETE /auth/sessions/$NEW_TOKEN_ID returns 204"
 
 echo ""
 echo "=== Revoked session is removed from list ==="
-AFTER_COUNT=$(api_get "$AUTH_BASE/sessions" | jq 'length')
+AFTER_COUNT=$(api_get "$AUTH_BASE/sessions" | jq '.items | length')
 assert_eq "true" "$([ "$AFTER_COUNT" -lt "$BEFORE_COUNT" ] && echo true || echo false)" "Session count decreased after revoke"
 
 echo ""

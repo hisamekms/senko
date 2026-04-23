@@ -23,17 +23,23 @@ use crate::bootstrap::{
     resolve_user_id,
 };
 use crate::domain::contract::{
-    ContractId, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    ContractId, CreateContractParams, ListContractNotesFilter, ListContractsFilter,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::metadata_field::{
-    CreateMetadataFieldParams, MetadataFieldType, validate_field_name,
+    CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataFieldType, validate_field_name,
 };
-use crate::domain::project::CreateProjectParams;
+use crate::domain::pagination::Cursor;
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
+};
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, Cursor, ListTasksFilter, MetadataUpdate, Priority, TaskId,
-    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter, MetadataUpdate,
+    Priority, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
-use crate::domain::user::{AddProjectMemberParams, CreateUserParams, UpdateUserParams, UserId};
+use crate::domain::user::{
+    AddProjectMemberParams, CreateUserParams, ListUsersFilter, UpdateUserParams, UserId,
+};
 use crate::infra::config::{CliOverrides, Config};
 use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
 
@@ -1683,13 +1689,30 @@ pub async fn cmd_deps(cli: &Cli, command: &TaskDepsCommand) -> Result<()> {
                 }
             }
         }
-        TaskDepsCommand::List { task_id } => {
+        TaskDepsCommand::List {
+            task_id,
+            limit,
+            after,
+        } => {
             // Read-only: ignore --dry-run
-            let deps = task_ops.list_dependencies(project_id, *task_id).await?;
+            let after = match after.as_deref() {
+                Some(raw) => Some(
+                    Cursor::decode::<TaskId>(raw)
+                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                ),
+                None => None,
+            };
+            let filter = ListTaskDepsFilter {
+                limit: *limit,
+                after,
+            };
+            let page = task_ops
+                .list_dependencies(project_id, *task_id, &filter)
+                .await?;
             match cli.output {
-                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&deps)?),
+                OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&page)?),
                 OutputFormat::Text => {
-                    for task in &deps {
+                    for task in &page.items {
                         println!(
                             "[{}] #{} {} ({})",
                             task.status(),
@@ -1697,6 +1720,9 @@ pub async fn cmd_deps(cli: &Cli, command: &TaskDepsCommand) -> Result<()> {
                             task.title(),
                             task.priority()
                         );
+                    }
+                    if let Some(c) = &page.next_cursor {
+                        println!("... more: --after {c}");
                     }
                 }
             }
@@ -1726,16 +1752,30 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
     };
 
     match action {
-        ProjectAction::List => {
-            let projects = project_ops.list_projects().await?;
+        ProjectAction::List { limit, after } => {
+            let after = match after.as_deref() {
+                Some(raw) => Some(
+                    Cursor::decode::<ProjectId>(raw)
+                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                ),
+                None => None,
+            };
+            let filter = ListProjectsFilter {
+                limit: *limit,
+                after,
+            };
+            let page = project_ops.list_projects(&filter).await?;
             match cli.output {
                 OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&projects)?);
+                    println!("{}", serde_json::to_string_pretty(&page)?);
                 }
                 OutputFormat::Text => {
-                    for project in &projects {
+                    for project in &page.items {
                         let desc = project.description().unwrap_or("");
                         println!("#{} {} {}", project.id(), project.name(), desc);
+                    }
+                    if let Some(c) = &page.next_cursor {
+                        println!("... more: --after {c}");
                     }
                 }
             }
@@ -1801,14 +1841,27 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                         }
                     }
                 }
-                MetadataFieldAction::List => {
-                    let fields = metadata_ops.list_metadata_fields(project_id).await?;
+                MetadataFieldAction::List { limit, after } => {
+                    let after = match after.as_deref() {
+                        Some(raw) => Some(
+                            Cursor::decode::<i64>(raw)
+                                .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                        ),
+                        None => None,
+                    };
+                    let filter = ListMetadataFieldsFilter {
+                        limit: *limit,
+                        after,
+                    };
+                    let page = metadata_ops
+                        .list_metadata_fields(project_id, &filter)
+                        .await?;
                     match cli.output {
                         OutputFormat::Json => {
-                            println!("{}", serde_json::to_string_pretty(&fields)?);
+                            println!("{}", serde_json::to_string_pretty(&page)?);
                         }
                         OutputFormat::Text => {
-                            for f in &fields {
+                            for f in &page.items {
                                 let desc = f.description().unwrap_or("");
                                 let req = if f.required_on_complete() {
                                     " [required]"
@@ -1823,6 +1876,9 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                                     req,
                                     desc
                                 );
+                            }
+                            if let Some(c) = &page.next_cursor {
+                                println!("... more: --after {c}");
                             }
                         }
                     }
@@ -1860,16 +1916,30 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     };
 
     match action {
-        UserAction::List => {
-            let users = user_service.list_users().await?;
+        UserAction::List { limit, after } => {
+            let after = match after.as_deref() {
+                Some(raw) => Some(
+                    Cursor::decode::<i64>(raw)
+                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                ),
+                None => None,
+            };
+            let filter = ListUsersFilter {
+                limit: *limit,
+                after,
+            };
+            let page = user_service.list_users(&filter).await?;
             match cli.output {
                 OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&users)?);
+                    println!("{}", serde_json::to_string_pretty(&page)?);
                 }
                 OutputFormat::Text => {
-                    for user in &users {
+                    for user in &page.items {
                         let display = user.display_name().unwrap_or("");
                         println!("#{} {} {}", user.id(), user.username(), display);
+                    }
+                    if let Some(c) = &page.next_cursor {
+                        println!("... more: --after {c}");
                     }
                 }
             }
@@ -1943,15 +2013,31 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match action {
-        MemberAction::List => {
-            let members = project_ops.list_project_members(project_id).await?;
+        MemberAction::List { limit, after } => {
+            let after = match after.as_deref() {
+                Some(raw) => Some(
+                    Cursor::decode::<i64>(raw)
+                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                ),
+                None => None,
+            };
+            let filter = ListProjectMembersFilter {
+                limit: *limit,
+                after,
+            };
+            let page = project_ops
+                .list_project_members(project_id, &filter)
+                .await?;
             match cli.output {
                 OutputFormat::Json => {
-                    println!("{}", serde_json::to_string_pretty(&members)?);
+                    println!("{}", serde_json::to_string_pretty(&page)?);
                 }
                 OutputFormat::Text => {
-                    for member in &members {
+                    for member in &page.items {
                         println!("user #{} — role: {}", member.user_id(), member.role());
+                    }
+                    if let Some(c) = &page.next_cursor {
+                        println!("... more: --after {c}");
                     }
                 }
             }
@@ -2368,11 +2454,30 @@ pub async fn cmd_auth_logout(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
-pub async fn cmd_auth_sessions(cli: &Cli) -> Result<()> {
+pub async fn cmd_auth_sessions(cli: &Cli, limit: Option<u32>, after: Option<&str>) -> Result<()> {
     let (api_url, token) = require_api_url_and_token(cli)?;
     let client = http_client();
+
+    let mut url = format!("{}/auth/sessions", api_url_base(&api_url));
+    let mut params: Vec<String> = Vec::new();
+    if let Some(l) = limit {
+        params.push(format!("limit={l}"));
+    }
+    if let Some(raw_after) = after {
+        // Validate cursor client-side so a bad input fails fast (the API will
+        // also reject, but CLI users get a nicer error).
+        Cursor::decode::<i64>(raw_after).map_err(|_| anyhow::anyhow!("invalid --after cursor"))?;
+        params.push(format!(
+            "after={}",
+            percent_encoding::utf8_percent_encode(raw_after, percent_encoding::NON_ALPHANUMERIC,)
+        ));
+    }
+    if !params.is_empty() {
+        url = format!("{url}?{}", params.join("&"));
+    }
+
     let resp = client
-        .get(format!("{}/auth/sessions", api_url_base(&api_url)))
+        .get(url)
         .bearer_auth(&token)
         .send()
         .await
@@ -2385,23 +2490,28 @@ pub async fn cmd_auth_sessions(cli: &Cli) -> Result<()> {
         let body = resp.text().await.unwrap_or_default();
         bail!("GET /auth/sessions failed ({status}): {body}");
     }
-    let sessions: Vec<CliSessionInfo> = resp
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct SessionsPage {
+        items: Vec<CliSessionInfo>,
+        next_cursor: Option<String>,
+    }
+    let page: SessionsPage = resp
         .json()
         .await
         .context("failed to parse /auth/sessions response")?;
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string(&sessions).unwrap_or_default());
+            println!("{}", serde_json::to_string(&page).unwrap_or_default());
         }
         OutputFormat::Text => {
-            if sessions.is_empty() {
+            if page.items.is_empty() {
                 eprintln!("No active sessions.");
             } else {
                 eprintln!(
                     "{:<6} {:<14} {:<16} {:<22} LAST USED",
                     "ID", "KEY PREFIX", "DEVICE", "CREATED"
                 );
-                for s in &sessions {
+                for s in &page.items {
                     eprintln!(
                         "{:<6} {:<14} {:<16} {:<22} {}",
                         s.id,
@@ -2411,6 +2521,9 @@ pub async fn cmd_auth_sessions(cli: &Cli) -> Result<()> {
                         s.last_used_at.as_deref().unwrap_or("-"),
                     );
                 }
+            }
+            if let Some(c) = &page.next_cursor {
+                eprintln!("... more: --after {c}");
             }
         }
     }
@@ -2580,27 +2693,35 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 }
             }
         }
-        ContractAction::List { tag } => {
-            let contracts = contract_ops.list_contracts(project_id).await?;
-            let filtered: Vec<_> = if tag.is_empty() {
-                contracts
-            } else {
-                contracts
-                    .into_iter()
-                    .filter(|c| tag.iter().all(|t| c.tags().iter().any(|ct| ct == t)))
-                    .collect()
+        ContractAction::List { tag, limit, after } => {
+            let after = match after.as_deref() {
+                Some(raw) => Some(
+                    Cursor::decode::<ContractId>(raw)
+                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                ),
+                None => None,
             };
+            let filter = ListContractsFilter {
+                tags: tag.clone(),
+                limit: *limit,
+                after,
+            };
+            let page = contract_ops.list_contracts(project_id, &filter).await?;
             match cli.output {
                 OutputFormat::Json => {
-                    let responses: Vec<ContractResponse> =
-                        filtered.into_iter().map(ContractResponse::from).collect();
-                    println!("{}", serde_json::to_string_pretty(&responses)?);
+                    let items: Vec<ContractResponse> =
+                        page.items.into_iter().map(ContractResponse::from).collect();
+                    let wrapped = serde_json::json!({
+                        "items": items,
+                        "next_cursor": page.next_cursor,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&wrapped)?);
                 }
                 OutputFormat::Text => {
-                    if filtered.is_empty() {
+                    if page.items.is_empty() {
                         println!("No contracts.");
                     } else {
-                        for c in &filtered {
+                        for c in &page.items {
                             let tags = if c.tags().is_empty() {
                                 String::new()
                             } else {
@@ -2609,6 +2730,9 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                             let status = if c.is_completed() { "done" } else { "open" };
                             println!("#{} ({status}) {}{}", c.id(), c.title(), tags);
                         }
+                    }
+                    if let Some(c) = &page.next_cursor {
+                        println!("... more: --after {c}");
                     }
                 }
             }
@@ -2875,25 +2999,49 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                     }
                 }
             }
-            ContractNoteCommand::List { contract_id } => {
-                let notes = contract_ops.list_notes(project_id, *contract_id).await?;
+            ContractNoteCommand::List {
+                contract_id,
+                limit,
+                after,
+            } => {
+                let after = match after.as_deref() {
+                    Some(raw) => Some(
+                        Cursor::decode::<i64>(raw)
+                            .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
+                    ),
+                    None => None,
+                };
+                let filter = ListContractNotesFilter {
+                    limit: *limit,
+                    after,
+                };
+                let page = contract_ops
+                    .list_notes(project_id, *contract_id, &filter)
+                    .await?;
                 match cli.output {
                     OutputFormat::Json => {
-                        let responses: Vec<ContractNoteResponse> =
-                            notes.iter().map(ContractNoteResponse::from).collect();
-                        println!("{}", serde_json::to_string_pretty(&responses)?);
+                        let items: Vec<ContractNoteResponse> =
+                            page.items.iter().map(ContractNoteResponse::from).collect();
+                        let wrapped = serde_json::json!({
+                            "items": items,
+                            "next_cursor": page.next_cursor,
+                        });
+                        println!("{}", serde_json::to_string_pretty(&wrapped)?);
                     }
                     OutputFormat::Text => {
-                        if notes.is_empty() {
+                        if page.items.is_empty() {
                             println!("No notes.");
                         } else {
-                            for n in &notes {
+                            for n in &page.items {
                                 let src = match n.source_task_id() {
                                     Some(id) => format!(" (source: task #{id})"),
                                     None => String::new(),
                                 };
                                 println!("[{}]{src} {}", n.created_at(), n.content());
                             }
+                        }
+                        if let Some(c) = &page.next_cursor {
+                            println!("... more: --after {c}");
                         }
                     }
                 }

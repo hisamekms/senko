@@ -10,21 +10,25 @@ use crate::application::port::{
 };
 use crate::domain::contract::{
     Contract, ContractId, ContractNote, ContractRepository, CreateContractParams,
-    UpdateContractArrayParams, UpdateContractParams,
+    ListContractNotesFilter, ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
-    CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
+    CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataField, MetadataFieldType,
+    UpdateMetadataFieldParams,
 };
-use crate::domain::project::{CreateProjectParams, Project, ProjectId};
+use crate::domain::pagination::{Cursor, ListPage, build_page};
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+};
 use crate::domain::task::{
-    self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
-    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
+    MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
     shallow_merge_metadata,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User, UserId, Username,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter,
+    ListUsersFilter, NewApiKey, ProjectMember, Role, UpdateUserParams, User, UserId, Username,
 };
 use crate::domain::{
     ApiKeyRepository, MetadataFieldRepository, ProjectMemberRepository, ProjectRepository,
@@ -387,15 +391,34 @@ impl ProjectMemberRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<ListPage<ProjectMember>> {
         let pool = self.pool().await?;
-        let rows = sqlx::query(
-            "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = $1 ORDER BY id",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
-        rows.into_iter()
+        let mut sql = String::from(
+            "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = $1",
+        );
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql).bind(project_id);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
+        let members: Vec<ProjectMember> = rows
+            .into_iter()
             .map(|r| {
                 let role_str: String = r.get("role");
                 let role: Role = role_str
@@ -409,7 +432,10 @@ impl ProjectMemberRepository for PostgresBackend {
                     r.get("created_at"),
                 ))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(build_page(members, filter.limit, |m| {
+            Cursor::encode(m.id())
+        }))
     }
 
     async fn get_project_member(
@@ -709,13 +735,28 @@ impl ApiKeyRepository for PostgresBackend {
 
 #[async_trait]
 impl ProjectQueryPort for PostgresBackend {
-    async fn list_projects(&self) -> Result<Vec<Project>> {
+    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
         let pool = self.pool().await?;
-        let rows =
-            sqlx::query("SELECT id, name, description, created_at FROM projects ORDER BY id")
-                .fetch_all(pool)
-                .await?;
-        Ok(rows
+        let mut sql =
+            String::from("SELECT id, name, description, created_at FROM projects WHERE TRUE");
+        let mut idx = 1;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
+        let projects: Vec<Project> = rows
             .into_iter()
             .map(|r| {
                 Project::new(
@@ -725,20 +766,38 @@ impl ProjectQueryPort for PostgresBackend {
                     r.get("created_at"),
                 )
             })
-            .collect())
+            .collect();
+        Ok(build_page(projects, filter.limit, |p| {
+            Cursor::encode(p.id())
+        }))
     }
 }
 
 #[async_trait]
 impl UserQueryPort for PostgresBackend {
-    async fn list_users(&self) -> Result<Vec<User>> {
+    async fn list_users(&self, filter: &ListUsersFilter) -> Result<ListPage<User>> {
         let pool = self.pool().await?;
-        let rows = sqlx::query(
-            "SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id",
-        )
-        .fetch_all(pool)
-        .await?;
-        Ok(rows
+        let mut sql = String::from(
+            "SELECT id, username, sub, display_name, email, created_at FROM users WHERE TRUE",
+        );
+        let mut idx = 1;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
+        let users: Vec<User> = rows
             .into_iter()
             .map(|r| {
                 User::new(
@@ -750,7 +809,8 @@ impl UserQueryPort for PostgresBackend {
                     r.get("created_at"),
                 )
             })
-            .collect())
+            .collect();
+        Ok(build_page(users, filter.limit, |u| Cursor::encode(u.id())))
     }
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
@@ -775,6 +835,49 @@ impl UserQueryPort for PostgresBackend {
                 )
             })
             .collect())
+    }
+
+    async fn list_api_keys_page(
+        &self,
+        user_id: UserId,
+        filter: &ListSessionsFilter,
+    ) -> Result<ListPage<ApiKey>> {
+        let pool = self.pool().await?;
+        let mut sql = String::from(
+            "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = $1",
+        );
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql).bind(user_id);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
+        let keys: Vec<ApiKey> = rows
+            .into_iter()
+            .map(|r| {
+                ApiKey::new(
+                    r.get("id"),
+                    r.get("user_id"),
+                    r.get("key_prefix"),
+                    r.get("name"),
+                    r.get("device_name"),
+                    r.get("created_at"),
+                    r.get("last_used_at"),
+                )
+            })
+            .collect();
+        Ok(build_page(keys, filter.limit, |k| Cursor::encode(k.id())))
     }
 }
 
@@ -1148,23 +1251,44 @@ impl TaskRepository for PostgresBackend {
         Ok(())
     }
 
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<ListPage<Task>> {
         let pool = self.pool().await?;
         let internal_id = resolve_task_number(pool, project_id, task_id).await?;
         get_task_by_id(pool, internal_id).await?;
 
-        let rows =
-            sqlx::query("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1")
-                .bind(internal_id)
-                .fetch_all(pool)
-                .await?;
+        let mut sql =
+            String::from("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = $1");
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND depends_on_task_id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY depends_on_task_id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+
+        let mut query = sqlx::query(&sql).bind(internal_id);
+        if let Some(after) = filter.after {
+            let after_i64: i64 = after.into();
+            query = query.bind(after_i64);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
 
         let mut tasks = Vec::with_capacity(rows.len());
         for row in rows {
             let dep_id = TaskDbId(row.get::<i64, _>("depends_on_task_id"));
             tasks.push(get_task_by_id(pool, dep_id).await?);
         }
-        Ok(tasks)
+        Ok(build_page(tasks, filter.limit, |t| Cursor::encode(t.id())))
     }
 
     async fn save(&self, task: &Task) -> Result<()> {
@@ -1402,34 +1526,17 @@ impl TaskQueryPort for PostgresBackend {
         }
 
         let rows = query.fetch_all(pool).await?;
-        let mut ids: Vec<TaskDbId> = rows
+        let ids: Vec<TaskDbId> = rows
             .iter()
             .map(|r| TaskDbId(r.get::<i64, _>("id")))
             .collect();
-
-        let has_more = if let Some(l) = filter.limit {
-            if ids.len() as u32 > l {
-                ids.truncate(l as usize);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
 
         let mut items = Vec::with_capacity(ids.len());
         for id in ids {
             items.push(get_task_by_id(pool, id).await?);
         }
 
-        let next_cursor = if has_more {
-            items.last().map(|t| Cursor::encode(t.id()))
-        } else {
-            None
-        };
-
-        Ok(ListTasksPage { items, next_cursor })
+        Ok(build_page(items, filter.limit, |t| Cursor::encode(t.id())))
     }
 
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
@@ -1659,17 +1766,36 @@ impl MetadataFieldRepository for PostgresBackend {
         ))
     }
 
-    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
+    async fn list_metadata_fields(
+        &self,
+        project_id: ProjectId,
+        filter: &ListMetadataFieldsFilter,
+    ) -> Result<ListPage<MetadataField>> {
         let pool = self.pool().await?;
-        let rows = sqlx::query(
+        let mut sql = String::from(
             "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
-             FROM metadata_fields WHERE project_id = $1 ORDER BY id",
-        )
-        .bind(project_id)
-        .fetch_all(pool)
-        .await?;
+             FROM metadata_fields WHERE project_id = $1",
+        );
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql).bind(project_id);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
 
-        rows.iter()
+        let items: Vec<MetadataField> = rows
+            .iter()
             .map(|row| {
                 let field_type_str: String = row.get("field_type");
                 let field_type: MetadataFieldType = field_type_str.parse()?;
@@ -1683,7 +1809,8 @@ impl MetadataFieldRepository for PostgresBackend {
                     row.get("created_at"),
                 ))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        Ok(build_page(items, filter.limit, |f| Cursor::encode(f.id())))
     }
 
     async fn update_metadata_field(
@@ -1851,22 +1978,106 @@ impl ContractRepository for PostgresBackend {
         get_contract_by_id(pool, id).await
     }
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<ListPage<Contract>> {
         let pool = self.pool().await?;
-        let ids: Vec<ContractId> =
-            sqlx::query("SELECT id FROM contracts WHERE project_id = $1 ORDER BY id")
-                .bind(project_id)
-                .fetch_all(pool)
-                .await?
-                .into_iter()
-                .map(|r| r.get("id"))
-                .collect();
-
-        let mut result = Vec::with_capacity(ids.len());
-        for id in ids {
-            result.push(get_contract_by_id(pool, id).await?);
+        let mut sql = String::from("SELECT c.id FROM contracts c WHERE c.project_id = $1");
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND c.id > ${idx}"));
+            idx += 1;
         }
-        Ok(result)
+        for _ in &filter.tags {
+            sql.push_str(&format!(
+                " AND EXISTS (SELECT 1 FROM contract_tags ct WHERE ct.contract_id = c.id AND ct.tag = ${idx})"
+            ));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY c.id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql).bind(project_id);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        for tag in &filter.tags {
+            query = query.bind(tag);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let ids: Vec<ContractId> = query
+            .fetch_all(pool)
+            .await?
+            .into_iter()
+            .map(|r| r.get("id"))
+            .collect();
+
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            items.push(get_contract_by_id(pool, id).await?);
+        }
+        Ok(build_page(items, filter.limit, |c| Cursor::encode(c.id())))
+    }
+
+    async fn list_contract_notes(
+        &self,
+        contract_id: ContractId,
+        filter: &ListContractNotesFilter,
+    ) -> Result<ListPage<ContractNote>> {
+        let pool = self.pool().await?;
+        let mut sql = String::from(
+            "SELECT id, content, source_task_id, created_at FROM contract_notes WHERE contract_id = $1",
+        );
+        let mut idx = 2;
+        if filter.after.is_some() {
+            sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        sql.push_str(" ORDER BY id");
+        if filter.limit.is_some() {
+            sql.push_str(&format!(" LIMIT ${idx}"));
+        }
+        let mut query = sqlx::query(&sql).bind(contract_id);
+        if let Some(after) = filter.after {
+            query = query.bind(after);
+        }
+        if let Some(l) = filter.limit {
+            query = query.bind(l as i64 + 1);
+        }
+        let rows = query.fetch_all(pool).await?;
+        let ids: Vec<i64> = rows.iter().map(|r| r.get::<i64, _>("id")).collect();
+        let notes: Vec<ContractNote> = rows
+            .into_iter()
+            .map(|r| {
+                let source: Option<i64> = r.get("source_task_id");
+                ContractNote::new(
+                    r.get("content"),
+                    source.map(TaskId::from),
+                    r.get("created_at"),
+                )
+            })
+            .collect();
+        let page = match filter.limit {
+            Some(l) if notes.len() as u32 > l => {
+                let mut notes = notes;
+                notes.truncate(l as usize);
+                let cursor_id = ids[l as usize - 1];
+                ListPage {
+                    items: notes,
+                    next_cursor: Some(Cursor::encode(cursor_id)),
+                }
+            }
+            _ => ListPage {
+                items: notes,
+                next_cursor: None,
+            },
+        };
+        Ok(page)
     }
 
     async fn update_contract(

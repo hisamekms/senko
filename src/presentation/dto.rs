@@ -278,6 +278,56 @@ pub struct ListTasksPageResponse {
     pub next_cursor: Option<String>,
 }
 
+// --- List pagination responses (task #337) ---
+
+#[derive(Serialize)]
+pub struct ListContractsPageResponse {
+    pub items: Vec<ContractResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListContractNotesPageResponse {
+    pub items: Vec<ContractNoteResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListProjectsPageResponse {
+    pub items: Vec<ProjectResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListMembersPageResponse {
+    pub items: Vec<ProjectMemberResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListUsersPageResponse {
+    pub items: Vec<UserResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListMetadataFieldsPageResponse {
+    pub items: Vec<MetadataFieldResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListDepsPageResponse {
+    pub items: Vec<TaskResponse>,
+    pub next_cursor: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ListSessionsPageResponse {
+    pub items: Vec<SessionResponse>,
+    pub next_cursor: Option<String>,
+}
+
 // --- Complete Task ---
 
 #[derive(Serialize)]

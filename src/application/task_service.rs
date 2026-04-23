@@ -7,11 +7,12 @@ use chrono::Utc;
 
 use crate::application::port::TaskBackend;
 use crate::domain::error::DomainError;
-use crate::domain::metadata_field::{MetadataField, MetadataFieldType};
+use crate::domain::metadata_field::{ListMetadataFieldsFilter, MetadataField, MetadataFieldType};
+use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    self, CompletionPolicy, CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task,
-    TaskEvent, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    self, CompletionPolicy, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
+    MetadataUpdate, Task, TaskEvent, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::UserId;
 use crate::domain::validator::{has_cycle_async, validate_metadata, validate_metadata_on_complete};
@@ -349,7 +350,11 @@ impl TaskOperations for LocalTaskOperations {
         }
 
         // Metadata field validation
-        let metadata_fields = self.backend.list_metadata_fields(project_id).await?;
+        let metadata_fields = self
+            .backend
+            .list_metadata_fields(project_id, &ListMetadataFieldsFilter::default())
+            .await?
+            .items;
         validate_metadata_on_complete(task.metadata(), &metadata_fields, id)?;
 
         // Capture ready tasks before completion for unblocked detection
@@ -537,7 +542,11 @@ impl TaskOperations for LocalTaskOperations {
             }
 
             // Check metadata field requirements
-            let metadata_fields = self.backend.list_metadata_fields(project_id).await?;
+            let metadata_fields = self
+                .backend
+                .list_metadata_fields(project_id, &ListMetadataFieldsFilter::default())
+                .await?
+                .items;
             if let Err(e) =
                 validate_metadata_on_complete(task.metadata(), &metadata_fields, task_id)
             {
@@ -614,7 +623,11 @@ impl TaskOperations for LocalTaskOperations {
         if filter.metadata.is_empty() {
             return self.backend.list_tasks(project_id, filter).await;
         }
-        let fields = self.backend.list_metadata_fields(project_id).await?;
+        let fields = self
+            .backend
+            .list_metadata_fields(project_id, &ListMetadataFieldsFilter::default())
+            .await?
+            .items;
         let mut resolved_filter = filter.clone();
         resolved_filter.metadata = resolve_metadata_filter_types(&filter.metadata, &fields);
         self.backend.list_tasks(project_id, &resolved_filter).await
@@ -720,9 +733,9 @@ impl TaskOperations for LocalTaskOperations {
             let backend = backend.clone();
             async move {
                 backend
-                    .list_dependencies(project_id, id)
+                    .list_dependencies(project_id, id, &ListTaskDepsFilter::default())
                     .await
-                    .map(|tasks| tasks.iter().map(|t| t.id()).collect())
+                    .map(|page| page.items.iter().map(|t| t.id()).collect())
                     .unwrap_or_default()
             }
         })
@@ -770,9 +783,9 @@ impl TaskOperations for LocalTaskOperations {
                 let backend = backend.clone();
                 async move {
                     backend
-                        .list_dependencies(project_id, id)
+                        .list_dependencies(project_id, id, &ListTaskDepsFilter::default())
                         .await
-                        .map(|tasks| tasks.iter().map(|t| t.id()).collect())
+                        .map(|page| page.items.iter().map(|t| t.id()).collect())
                         .unwrap_or_default()
                 }
             })
@@ -788,8 +801,15 @@ impl TaskOperations for LocalTaskOperations {
         self.backend.get_task(project_id, task_id).await
     }
 
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
-        self.backend.list_dependencies(project_id, task_id).await
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<ListPage<Task>> {
+        self.backend
+            .list_dependencies(project_id, task_id, filter)
+            .await
     }
 
     async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {

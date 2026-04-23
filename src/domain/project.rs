@@ -121,6 +121,21 @@ impl CreateProjectParams {
     }
 }
 
+/// Filter / paging inputs for `list_projects`.
+#[derive(Clone, Default)]
+pub struct ListProjectsFilter {
+    pub limit: Option<u32>,
+    pub after: Option<ProjectId>,
+}
+
+/// Filter / paging inputs for `list_project_members`.
+#[derive(Clone, Default)]
+pub struct ListProjectMembersFilter {
+    pub limit: Option<u32>,
+    /// Cursor payload: the `project_members.id` of the last member returned.
+    pub after: Option<i64>,
+}
+
 #[async_trait]
 pub trait ProjectRepository: Send + Sync {
     async fn create_project(&self, params: &CreateProjectParams) -> Result<Project>;
@@ -139,7 +154,11 @@ pub trait ProjectMemberRepository: Send + Sync {
         params: &AddProjectMemberParams,
     ) -> Result<ProjectMember>;
     async fn remove_project_member(&self, project_id: ProjectId, user_id: UserId) -> Result<()>;
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>>;
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<super::pagination::ListPage<ProjectMember>>;
     async fn get_project_member(
         &self,
         project_id: ProjectId,

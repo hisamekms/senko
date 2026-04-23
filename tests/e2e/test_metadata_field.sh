@@ -14,7 +14,7 @@ echo "--- Test: Metadata Field Management ---"
 # [1] List empty (initially no fields)
 echo "[1] List empty"
 LIST_OUTPUT="$(run_lf project metadata-field list)"
-FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq 'length')"
+FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq '.items | length')"
 assert_eq "0" "$FIELD_COUNT" "initially no metadata fields"
 
 # [2] Add a string field
@@ -42,7 +42,7 @@ assert_json_field "$ADD_OUTPUT" '.field_type' "boolean" "field type is boolean"
 # [5] List shows all three fields
 echo "[5] List all fields"
 LIST_OUTPUT="$(run_lf project metadata-field list)"
-FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq 'length')"
+FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq '.items | length')"
 assert_eq "3" "$FIELD_COUNT" "three metadata fields"
 
 # [6] Remove by name
@@ -53,9 +53,9 @@ assert_json_field "$REMOVE_OUTPUT" '.deleted' "sprint" "deleted field name"
 # [7] List shows only remaining fields
 echo "[7] List after removal"
 LIST_OUTPUT="$(run_lf project metadata-field list)"
-FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq 'length')"
+FIELD_COUNT="$(echo "$LIST_OUTPUT" | jq '.items | length')"
 assert_eq "2" "$FIELD_COUNT" "two metadata fields after removal"
-NAMES="$(echo "$LIST_OUTPUT" | jq -r '[.[].name] | sort | join(",")')"
+NAMES="$(echo "$LIST_OUTPUT" | jq -r '[.items[].name] | sort | join(",")')"
 assert_eq "done,points" "$NAMES" "remaining fields are done and points"
 
 # [8] Remove non-existent field (error)
@@ -92,5 +92,20 @@ echo "[14] Text output for remove"
 TEXT_REMOVE="$(run_lf --output text project metadata-field remove --name status)"
 assert_contains "$TEXT_REMOVE" "Removed metadata field" "text remove confirmation"
 assert_contains "$TEXT_REMOVE" "status" "text remove shows name"
+
+# [15] Cursor pagination round-trip
+echo "[15] Cursor pagination round-trip"
+# After all the prior steps we have: points + done = 2 fields.
+PAGE1="$(run_lf --output json project metadata-field list --limit 1)"
+assert_eq "1" "$(echo "$PAGE1" | jq '.items | length')" "page1 has 1 field"
+CURSOR="$(echo "$PAGE1" | jq -r '.next_cursor')"
+if [[ "$CURSOR" == "null" ]]; then
+  echo "FAIL: expected next_cursor on first page" >&2
+  exit 1
+fi
+PAGE2="$(run_lf --output json project metadata-field list --limit 1 --after "$CURSOR")"
+assert_eq "1" "$(echo "$PAGE2" | jq '.items | length')" "page2 has 1 field"
+assert_eq "null" "$(echo "$PAGE2" | jq -r '.next_cursor')" "page2 has no more"
+assert_exit_code 1 run_lf --output json project metadata-field list --after bogus-cursor
 
 test_summary

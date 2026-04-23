@@ -149,8 +149,8 @@ assert_contains "$(echo "$DEP_ADDED" | jq -r '.dependencies[]')" "$TASK3_ID" "de
 echo ""
 echo "=== List dependencies ==="
 DEPS=$(api_get "$PBASE/tasks/$TASK4_ID/deps")
-assert_eq "1" "$(echo "$DEPS" | jq 'length')" "1 dependency"
-assert_json_field "$(echo "$DEPS" | jq '.[0]')" '.id' "$TASK3_ID" "dep is task3"
+assert_eq "1" "$(echo "$DEPS" | jq '.items | length')" "1 dependency"
+assert_json_field "$(echo "$DEPS" | jq '.items[0]')" '.id' "$TASK3_ID" "dep is task3"
 
 echo ""
 echo "=== Remove dependency ==="
@@ -287,7 +287,7 @@ DEP_C_ID=$(echo "$DEP_C" | jq -r '.id')
 # Add initial dep: C depends on A
 api_json -X POST "$PBASE/tasks/$DEP_C_ID/deps" -d "{\"dep_id\":$DEP_A_ID}" >/dev/null
 DEPS_BEFORE=$(api_get "$PBASE/tasks/$DEP_C_ID/deps")
-assert_eq "1" "$(echo "$DEPS_BEFORE" | jq 'length')" "set_deps initial: 1 dependency"
+assert_eq "1" "$(echo "$DEPS_BEFORE" | jq '.items | length')" "set_deps initial: 1 dependency"
 
 # Replace all deps: C now depends on B only
 SET_RESULT=$(api_json -X PUT "$PBASE/tasks/$DEP_C_ID/deps" -d "{\"dep_ids\":[$DEP_B_ID]}")
@@ -296,8 +296,8 @@ assert_contains "$(echo "$SET_RESULT" | jq -r '.dependencies[]')" "$DEP_B_ID" "s
 
 # Verify via list endpoint
 DEPS_AFTER=$(api_get "$PBASE/tasks/$DEP_C_ID/deps")
-assert_eq "1" "$(echo "$DEPS_AFTER" | jq 'length')" "set_deps verify: 1 dependency"
-assert_json_field "$(echo "$DEPS_AFTER" | jq '.[0]')" '.id' "$DEP_B_ID" "set_deps verify: dep is B"
+assert_eq "1" "$(echo "$DEPS_AFTER" | jq '.items | length')" "set_deps verify: 1 dependency"
+assert_json_field "$(echo "$DEPS_AFTER" | jq '.items[0]')" '.id' "$DEP_B_ID" "set_deps verify: dep is B"
 
 # Clear all deps
 CLEAR_RESULT=$(api_json -X PUT "$PBASE/tasks/$DEP_C_ID/deps" -d '{"dep_ids":[]}')

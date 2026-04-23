@@ -111,7 +111,7 @@ Clients can use it to check server compatibility.
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/v1/projects/{project_id}/tasks` | List (query: `status`, `tag`, `ready`, `contract`, `id_min`, `id_max`, `limit`, `offset`, `metadata`, …) |
+| GET | `/api/v1/projects/{project_id}/tasks` | List (query: `status`, `tag`, `ready`, `contract`, `id_min`, `id_max`, `limit`, `after`, `metadata`, …) — returns `{items, next_cursor}` |
 | POST | `/api/v1/projects/{project_id}/tasks` | Create |
 | GET | `/api/v1/projects/{project_id}/tasks/{id}` | Get |
 | PUT | `/api/v1/projects/{project_id}/tasks/{id}` | Partial update |
@@ -152,6 +152,26 @@ Clients can use it to check server compatibility.
 | GET | `/api/v1/projects/{project_id}/metadata-fields` | List |
 | POST | `/api/v1/projects/{project_id}/metadata-fields` | Add |
 | DELETE | `/api/v1/projects/{project_id}/metadata-fields/{name}` | Delete |
+
+### List Pagination
+
+Every `GET` endpoint above that returns a collection — `GET /auth/sessions`, `GET /api/v1/users`, `GET /api/v1/projects`, `GET /api/v1/projects/{project_id}/members`, `GET /api/v1/projects/{project_id}/metadata-fields`, `GET /api/v1/projects/{project_id}/contracts`, `GET /api/v1/projects/{project_id}/contracts/{id}/notes`, `GET /api/v1/projects/{project_id}/tasks`, `GET /api/v1/projects/{project_id}/tasks/{id}/deps` — returns the same shape:
+
+```json
+{
+  "items": [ ... ],
+  "next_cursor": "eyJpZCI6MjB9"
+}
+```
+
+Query parameters:
+
+- `limit` — page size (1..=200, default 50).
+- `after` — opaque cursor. Pass back the previous response's `next_cursor` verbatim.
+
+`next_cursor` is `null` when there are no more results. An invalid `after` cursor returns HTTP `400 Bad Request`. `auth sessions` additionally filters expired keys in-memory, so a page may contain fewer than `limit` items; clients should keep paging until `next_cursor` is `null`.
+
+`GET /api/v1/users/{user_id}/api-keys` still returns a plain `Vec<ApiKey>` (no pagination yet — see task #337 scope notes).
 
 ## Request / Response Shape
 

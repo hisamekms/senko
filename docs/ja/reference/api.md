@@ -153,6 +153,26 @@ X-Senko-Version: 1.0.0
 | POST | `/api/v1/projects/{project_id}/metadata-fields` | 追加 |
 | DELETE | `/api/v1/projects/{project_id}/metadata-fields/{name}` | 削除 |
 
+### list 系ページネーション
+
+上記のうち collection を返す GET エンドポイント — `GET /auth/sessions`, `GET /api/v1/users`, `GET /api/v1/projects`, `GET /api/v1/projects/{project_id}/members`, `GET /api/v1/projects/{project_id}/metadata-fields`, `GET /api/v1/projects/{project_id}/contracts`, `GET /api/v1/projects/{project_id}/contracts/{id}/notes`, `GET /api/v1/projects/{project_id}/tasks`, `GET /api/v1/projects/{project_id}/tasks/{id}/deps` — はすべて同じレスポンス形状を返します:
+
+```json
+{
+  "items": [ ... ],
+  "next_cursor": "eyJpZCI6MjB9"
+}
+```
+
+クエリパラメータ:
+
+- `limit` — 1 ページあたりの件数 (1..=200, 既定 50)。
+- `after` — 不透明 cursor。前回レスポンスの `next_cursor` をそのまま渡す。
+
+`next_cursor` が `null` になったら終端。不正な `after` cursor は HTTP `400 Bad Request` を返します。`auth sessions` は期限切れキーを in-memory でさらにフィルタするため、1 ページ当たりの items が `limit` より少なくなる場合があります。`next_cursor` が `null` になるまでページングを続けてください。
+
+`GET /api/v1/users/{user_id}/api-keys` は現状そのままの `Vec<ApiKey>` を返します (未ページネーション、task #337 スコープ外)。
+
 ## リクエスト/レスポンスの形
 
 Task / Contract のフィールド形式は `senko task get` / `senko contract get` の JSON 出力と同一です。詳細は [データモデル](data-model.md) と [CLI リファレンス](cli.md) を参照。

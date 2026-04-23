@@ -12,10 +12,11 @@ use crate::application::hook_trigger::SelectResult;
 use crate::application::port::task_operations::{CompleteResult, PreviewResult};
 use crate::application::port::{HookExecutor, TaskOperations};
 use crate::domain::error::DomainError;
+use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    CreateTaskParams, Cursor, ListTasksFilter, ListTasksPage, MetadataUpdate, Priority, Task,
-    TaskEvent, TaskId, TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, ListTaskDepsFilter, ListTasksFilter, ListTasksPage, MetadataUpdate, Priority,
+    Task, TaskEvent, TaskId, TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::UserId;
 use crate::infra::config::HookWhen;
@@ -722,14 +723,27 @@ impl TaskOperations for RemoteTaskOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
-        let resp = self
-            .auth(
-                self.client()
-                    .get(self.project_url(project_id, &format!("/tasks/{task_id}/deps"))),
-            )
-            .send()
-            .await?;
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<ListPage<Task>> {
+        let mut url = self.project_url(project_id, &format!("/tasks/{task_id}/deps"));
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 

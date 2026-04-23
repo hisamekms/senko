@@ -3,10 +3,11 @@ use std::collections::HashMap;
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{
-    CreateTaskParams, ListTasksFilter, ListTasksPage, MetadataUpdate, Task, TaskId, TaskStatus,
-    UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
+    CreateTaskParams, ListTaskDepsFilter, ListTasksFilter, ListTasksPage, MetadataUpdate, Task,
+    TaskId, TaskStatus, UnblockedTask, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::UserId;
 
@@ -137,7 +138,12 @@ pub trait TaskOperations: Send + Sync {
         task_id: TaskId,
         dep_ids: &[TaskId],
     ) -> Result<Task>;
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>>;
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<ListPage<Task>>;
     async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>>;
     async fn ready_count(&self, project_id: ProjectId) -> Result<i64>;
 }

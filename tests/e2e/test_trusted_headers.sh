@@ -108,7 +108,7 @@ assert_eq "401" "$STATUS" "GET /api/v1/users without subject header returns 401"
 echo ""
 echo "=== Auto-provisioned user has correct fields ==="
 USERS=$(api_get "$BASE/users")
-ALICE=$(echo "$USERS" | jq '.[] | select(.sub == "alice")')
+ALICE=$(echo "$USERS" | jq '.items[] | select(.sub == "alice")')
 assert_json_field "$ALICE" '.sub' "alice" "auto-provisioned sub"
 assert_json_field "$ALICE" '.username' "Alice Smith" "auto-provisioned username from name_header"
 assert_json_field "$ALICE" '.display_name' "Alice Smith" "auto-provisioned display_name"
@@ -131,7 +131,7 @@ STATUS=$(curl -s -o /dev/null -w '%{http_code}' \
 assert_eq "200" "$STATUS" "bob auto-provisioned via /auth/me"
 
 USERS=$(api_get "$BASE/users")
-BOB=$(echo "$USERS" | jq '.[] | select(.sub == "bob")')
+BOB=$(echo "$USERS" | jq '.items[] | select(.sub == "bob")')
 assert_json_field "$BOB" '.sub' "bob" "bob sub"
 assert_json_field "$BOB" '.username' "Bob Jones" "bob username from name_header"
 assert_json_field "$BOB" '.display_name' "Bob Jones" "bob display_name"
@@ -146,7 +146,7 @@ echo "=== Existing user is not duplicated ==="
 # Make another request as alice
 api_get "$BASE/users" >/dev/null
 USERS=$(api_get "$BASE/users")
-ALICE_COUNT=$(echo "$USERS" | jq '[.[] | select(.sub == "alice")] | length')
+ALICE_COUNT=$(echo "$USERS" | jq '[.items[] | select(.sub == "alice")] | length')
 assert_eq "1" "$ALICE_COUNT" "alice is not duplicated"
 
 # =============================================

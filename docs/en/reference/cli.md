@@ -149,8 +149,10 @@ senko task dod uncheck <task_id> <index>
 senko task deps add <task_id> --on <dep_id>
 senko task deps remove <task_id> --on <dep_id>
 senko task deps set <task_id> --on <id1> <id2> ...
-senko task deps list <task_id>
+senko task deps list <task_id> [--limit 20] [--after <cursor>]
 ```
+
+`task deps list` returns `{items, next_cursor}` — same shape and cursor semantics as `task list`.
 
 ## `senko contract`
 
@@ -159,7 +161,7 @@ senko contract add --title "..." [--description ...] [--definition-of-done ...] 
                    [--tag ...] [--metadata '{...}']
 senko contract add --from-json / --from-json-file <path>
 
-senko contract list [--tag ...]
+senko contract list [--tag ...] [--limit 20] [--after <cursor>]
 senko contract get <id>
 
 senko contract edit <id> --title ... --description ...
@@ -174,13 +176,15 @@ senko contract dod check <contract_id> <index>
 senko contract dod uncheck <contract_id> <index>
 
 senko contract note add <contract_id> --content "..." [--source-task <task_id>]
-senko contract note list <contract_id>
+senko contract note list <contract_id> [--limit 20] [--after <cursor>]
 ```
+
+`contract list` and `contract note list` return `{items, next_cursor}` — same cursor semantics as `task list`.
 
 ## `senko project`
 
 ```bash
-senko project list
+senko project list [--limit 20] [--after <cursor>]
 senko project create --name <name> [--description ...]
 senko project delete <id>
 ```
@@ -190,14 +194,14 @@ senko project delete <id>
 ```bash
 senko project metadata-field add --name <name> --type string|number|boolean \
                                  [--required-on-complete] [--description ...]
-senko project metadata-field list
+senko project metadata-field list [--limit 20] [--after <cursor>]
 senko project metadata-field remove --name <name>
 ```
 
 ### `project members`
 
 ```bash
-senko project members list
+senko project members list [--limit 20] [--after <cursor>]
 senko project members add --user-id <id> [--role owner|member|viewer]
 senko project members remove --user-id <id>
 senko project members set-role --user-id <id> --role owner|member|viewer
@@ -206,7 +210,7 @@ senko project members set-role --user-id <id> --role owner|member|viewer
 ## `senko user`
 
 ```bash
-senko user list
+senko user list [--limit 20] [--after <cursor>]
 senko user create --username <name> [--sub <oidc-sub>] [--display-name ...] [--email ...]
 senko user update <id> [--username ...] [--display-name ...]
 senko user delete <id>
@@ -219,10 +223,12 @@ senko auth login [--device-name <name>]   # OIDC browser login; token goes to th
 senko auth token                           # print the stored token to stdout (for scripting)
 senko auth status                          # current login info
 senko auth logout                          # revoke current session + remove from keychain
-senko auth sessions                        # list my sessions
+senko auth sessions [--limit 20] [--after <cursor>]   # list my sessions
 senko auth revoke <id>                     # revoke a specific session
 senko auth revoke --all                    # revoke every session
 ```
+
+> **Pagination note.** All the list commands above (`project list`, `project metadata-field list`, `project members list`, `user list`, `auth sessions`) return `{items, next_cursor}` — same shape and cursor rules as `task list`. In `--output text` a trailing `... more: --after <cursor>` line is appended whenever there is another page. Expired sessions are filtered in-memory after each page is fetched, so `auth sessions` pages may contain fewer items than `--limit` — keep following `next_cursor` until it is `null`.
 
 ## `senko hooks`
 

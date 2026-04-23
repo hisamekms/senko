@@ -424,6 +424,12 @@ pub enum ContractAction {
         /// Filter by tag; repeatable
         #[arg(long)]
         tag: Vec<String>,
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
     },
     /// Get contract details
     Get {
@@ -513,6 +519,12 @@ pub enum ContractNoteCommand {
     List {
         /// Contract ID
         contract_id: ContractId,
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
     },
 }
 
@@ -531,7 +543,14 @@ pub enum AuthCommand {
     /// Logout: revoke current session and remove token from keychain
     Logout,
     /// List active sessions
-    Sessions,
+    Sessions {
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Revoke a session
     Revoke {
         /// Session ID to revoke
@@ -602,6 +621,12 @@ pub enum TaskDepsCommand {
     List {
         /// Task ID
         task_id: TaskId,
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
     },
 }
 
@@ -626,7 +651,14 @@ pub enum TaskDodCommand {
 #[derive(Debug, Subcommand)]
 pub enum ProjectAction {
     /// List all projects
-    List,
+    List {
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Create a new project
     Create {
         #[arg(long)]
@@ -670,7 +702,14 @@ pub enum MetadataFieldAction {
         description: Option<String>,
     },
     /// List all metadata fields in the project
-    List,
+    List {
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Remove a metadata field from the project
     Remove {
         /// Field name to remove
@@ -682,7 +721,14 @@ pub enum MetadataFieldAction {
 #[derive(Debug, Subcommand)]
 pub enum UserAction {
     /// List all users
-    List,
+    List {
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Create a new user
     Create {
         #[arg(long)]
@@ -713,7 +759,14 @@ pub enum UserAction {
 #[derive(Debug, Subcommand)]
 pub enum MemberAction {
     /// List project members
-    List,
+    List {
+        /// Maximum number of items per page (1..=200, default 50)
+        #[arg(long)]
+        limit: Option<u32>,
+        /// Opaque cursor from a previous response's `next_cursor`
+        #[arg(long)]
+        after: Option<String>,
+    },
     /// Add a member to the project
     Add {
         #[arg(long)]
@@ -1213,7 +1266,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             AuthCommand::Token => handlers::cmd_auth_token(&cli).await,
             AuthCommand::Status => handlers::cmd_auth_status(&cli).await,
             AuthCommand::Logout => handlers::cmd_auth_logout(&cli).await,
-            AuthCommand::Sessions => handlers::cmd_auth_sessions(&cli).await,
+            AuthCommand::Sessions { limit, after } => {
+                handlers::cmd_auth_sessions(&cli, *limit, after.as_deref()).await
+            }
             AuthCommand::Revoke { id, all } => handlers::cmd_auth_revoke(&cli, *id, *all).await,
         },
         Command::Contract { ref action } => handlers::cmd_contract(&cli, action).await,
@@ -1741,7 +1796,7 @@ mod tests {
             Command::Task {
                 action:
                     TaskAction::Deps {
-                        command: TaskDepsCommand::List { task_id },
+                        command: TaskDepsCommand::List { task_id, .. },
                     },
             } => {
                 assert_eq!(task_id, TaskId(5));
@@ -1960,7 +2015,7 @@ mod tests {
             cli.command,
             Command::Project {
                 action: ProjectAction::MetadataField {
-                    action: MetadataFieldAction::List
+                    action: MetadataFieldAction::List { .. }
                 }
             }
         ));
@@ -2096,7 +2151,7 @@ mod tests {
             cli.command,
             Command::Project {
                 action: ProjectAction::Members {
-                    action: MemberAction::List
+                    action: MemberAction::List { .. }
                 }
             }
         ));

@@ -1,11 +1,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::json;
 
 use crate::application::port::UserOperations;
 use crate::application::user_service::is_key_expired;
+use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User, UserId, Username,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter,
+    UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -44,11 +47,22 @@ impl RemoteUserOperations {
 impl UserOperations for RemoteUserOperations {
     // --- User management ---
 
-    async fn list_users(&self) -> Result<Vec<User>> {
-        let resp = self
-            .auth(self.client().get(self.url("/api/v1/users")))
-            .send()
-            .await?;
+    async fn list_users(&self, filter: &ListUsersFilter) -> Result<ListPage<User>> {
+        let mut url = self.url("/api/v1/users");
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -69,31 +83,35 @@ impl UserOperations for RemoteUserOperations {
     }
 
     async fn get_user_by_username(&self, username: &Username) -> Result<User> {
-        let users: Vec<User> = {
-            let resp = self
-                .auth(self.client().get(self.url("/api/v1/users")))
-                .send()
-                .await?;
-            read_json_or_error(resp).await?
-        };
-        users
-            .into_iter()
-            .find(|u| u.username() == username)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))
+        let mut filter = ListUsersFilter::default();
+        loop {
+            let page = self.list_users(&filter).await?;
+            for u in page.items {
+                if u.username() == username {
+                    return Ok(u);
+                }
+            }
+            match page.next_cursor {
+                Some(c) => filter.after = Some(Cursor::decode::<i64>(&c)?),
+                None => return Err(anyhow::anyhow!("user not found")),
+            }
+        }
     }
 
     async fn get_user_by_sub(&self, sub: &str) -> Result<User> {
-        let users: Vec<User> = {
-            let resp = self
-                .auth(self.client().get(self.url("/api/v1/users")))
-                .send()
-                .await?;
-            read_json_or_error(resp).await?
-        };
-        users
-            .into_iter()
-            .find(|u| u.sub() == sub)
-            .ok_or_else(|| anyhow::anyhow!("user not found"))
+        let mut filter = ListUsersFilter::default();
+        loop {
+            let page = self.list_users(&filter).await?;
+            for u in page.items {
+                if u.sub() == sub {
+                    return Ok(u);
+                }
+            }
+            match page.next_cursor {
+                Some(c) => filter.after = Some(Cursor::decode::<i64>(&c)?),
+                None => return Err(anyhow::anyhow!("user not found")),
+            }
+        }
     }
 
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
@@ -208,14 +226,36 @@ impl UserOperations for RemoteUserOperations {
         &self,
         user_id: UserId,
         session_config: &SessionConfig,
-    ) -> Result<Vec<ApiKey>> {
-        let keys = self.list_api_keys(user_id).await?;
+        filter: &ListSessionsFilter,
+    ) -> Result<ListPage<ApiKey>> {
+        // Remote path fetches the raw page from the upstream sessions endpoint,
+        // then filters expired keys in-memory to match the local UserService.
+        let mut url = self.url(&format!("/api/v1/users/{user_id}/sessions"));
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
+        let raw: ListPage<ApiKey> = read_json_or_error(resp).await?;
         let now = chrono::Utc::now();
-        let filtered = keys
+        let items = raw
+            .items
             .into_iter()
             .filter(|k| !is_key_expired(k, session_config, now))
             .collect();
-        Ok(filtered)
+        Ok(ListPage {
+            items,
+            next_cursor: raw.next_cursor,
+        })
     }
 
     async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {

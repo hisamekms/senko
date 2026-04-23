@@ -1,10 +1,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::json;
 
 use crate::application::port::ProjectOperations;
 use crate::domain::error::DomainError;
-use crate::domain::project::{CreateProjectParams, Project, ProjectId};
+use crate::domain::pagination::{Cursor, ListPage};
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+};
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
 use super::client::HttpClient;
@@ -42,11 +46,22 @@ impl RemoteProjectOperations {
 impl ProjectOperations for RemoteProjectOperations {
     // --- Project CRUD ---
 
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        let resp = self
-            .auth(self.client().get(self.url("/api/v1/projects")))
-            .send()
-            .await?;
+    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+        let mut url = self.url("/api/v1/projects");
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -78,11 +93,24 @@ impl ProjectOperations for RemoteProjectOperations {
     }
 
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
-        let projects = self.list_projects().await?;
-        projects
-            .into_iter()
-            .find(|p| p.name() == name)
-            .ok_or_else(|| DomainError::ProjectNotFound.into())
+        // Paginate to find the named project. A server-side filter would be nicer
+        // but isn't exposed yet; this keeps behaviour identical to the previous
+        // "list all + find" approach.
+        let mut filter = ListProjectsFilter::default();
+        loop {
+            let page = self.list_projects(&filter).await?;
+            for p in page.items {
+                if p.name() == name {
+                    return Ok(p);
+                }
+            }
+            match page.next_cursor {
+                Some(cursor) => {
+                    filter.after = Some(Cursor::decode::<ProjectId>(&cursor)?);
+                }
+                None => return Err(DomainError::ProjectNotFound.into()),
+            }
+        }
     }
 
     async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<UserId>) -> Result<()> {
@@ -98,14 +126,26 @@ impl ProjectOperations for RemoteProjectOperations {
 
     // --- Member management ---
 
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
-        let resp = self
-            .auth(
-                self.client()
-                    .get(self.url(&format!("/api/v1/projects/{project_id}/members"))),
-            )
-            .send()
-            .await?;
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<ListPage<ProjectMember>> {
+        let mut url = self.url(&format!("/api/v1/projects/{project_id}/members"));
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 

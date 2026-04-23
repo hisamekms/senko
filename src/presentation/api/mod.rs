@@ -19,9 +19,11 @@ use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
     CompleteTaskResponse, ConfigResponse, ContractNoteResponse, ContractResponse,
-    ListTasksPageResponse, MeResponse, MetadataFieldResponse, PreviewTransitionResponse,
-    ProjectMemberResponse, ProjectResponse, SessionResponse, TaskResponse, TokenResponse,
-    UserResponse,
+    ListContractNotesPageResponse, ListContractsPageResponse, ListDepsPageResponse,
+    ListMembersPageResponse, ListMetadataFieldsPageResponse, ListProjectsPageResponse,
+    ListSessionsPageResponse, ListTasksPageResponse, ListUsersPageResponse, MeResponse,
+    MetadataFieldResponse, PreviewTransitionResponse, ProjectMemberResponse, ProjectResponse,
+    SessionResponse, TaskResponse, TokenResponse, UserResponse,
 };
 use crate::application::auth::Permission;
 use crate::application::port::TaskBackend;
@@ -34,17 +36,22 @@ use crate::application::{
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
 use crate::domain::contract::{
-    ContractId, CreateContractParams, UpdateContractArrayParams, UpdateContractParams,
+    ContractId, CreateContractParams, ListContractNotesFilter, ListContractsFilter,
+    UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
-use crate::domain::metadata_field::CreateMetadataFieldParams;
-use crate::domain::project::{CreateProjectParams, ProjectId};
+use crate::domain::metadata_field::{CreateMetadataFieldParams, ListMetadataFieldsFilter};
+use crate::domain::pagination::Cursor;
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
+};
 use crate::domain::task::{
-    AssigneeUserId, CompletionPolicy, CreateTaskParams, Cursor, ListTasksFilter, MetadataUpdate,
-    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter,
+    MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, Role, UpdateUserParams, UserId,
+    AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, ListSessionsFilter,
+    ListUsersFilter, Role, UpdateUserParams, UserId,
 };
 use crate::infra::config::Config;
 use crate::infra::http::remote_contract_ops::RemoteContractOperations;
@@ -357,6 +364,95 @@ struct ListTasksQuery {
     limit: Option<u32>,
     #[serde(default)]
     after: Option<String>,
+}
+
+// --- Pagination query structs (task #337) ---
+
+#[derive(Deserialize)]
+struct ListContractsQuery {
+    #[serde(default)]
+    tag: Vec<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListContractNotesQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListProjectsQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListMembersQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListUsersQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListMetadataFieldsQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListDepsQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ListSessionsQuery {
+    #[serde(default)]
+    limit: Option<u32>,
+    #[serde(default)]
+    after: Option<String>,
+}
+
+/// Validate `limit` (must be 1..=200) and decode `after` as `T` for list endpoints.
+fn decode_page_inputs<T: From<i64>>(
+    limit: Option<u32>,
+    after: Option<&str>,
+) -> Result<(Option<u32>, Option<T>), ApiError> {
+    if let Some(n) = limit
+        && !(1..=200).contains(&n)
+    {
+        return Err(ApiError::BadRequest(
+            "limit must be between 1 and 200".into(),
+        ));
+    }
+    let after_decoded = match after {
+        Some(raw) => Some(
+            Cursor::decode::<T>(raw).map_err(|_| ApiError::BadRequest("invalid cursor".into()))?,
+        ),
+        None => None,
+    };
+    Ok((limit.or(Some(50)), after_decoded))
 }
 
 #[derive(Deserialize)]
@@ -784,16 +880,20 @@ fn get_local_ip() -> Option<std::net::IpAddr> {
 async fn list_projects(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-) -> Result<Json<Vec<ProjectResponse>>, ApiError> {
+    Query(query): Query<ListProjectsQuery>,
+) -> Result<Json<ListProjectsPageResponse>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
-    let projects = state
+    let (limit, after) = decode_page_inputs::<ProjectId>(query.limit, query.after.as_deref())?;
+    let filter = ListProjectsFilter { limit, after };
+    let page = state
         .project_service
-        .list_projects()
+        .list_projects(&filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(
-        projects.into_iter().map(ProjectResponse::from).collect(),
-    ))
+    Ok(Json(ListProjectsPageResponse {
+        items: page.items.into_iter().map(ProjectResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // POST /api/v1/projects
@@ -1283,14 +1383,20 @@ async fn list_deps(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id)): Path<(ProjectId, TaskId)>,
-) -> Result<Json<Vec<TaskResponse>>, ApiError> {
+    Query(query): Query<ListDepsQuery>,
+) -> Result<Json<ListDepsPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let deps = state
+    let (limit, after) = decode_page_inputs::<TaskId>(query.limit, query.after.as_deref())?;
+    let filter = ListTaskDepsFilter { limit, after };
+    let page = state
         .task_service
-        .list_dependencies(project_id, id)
+        .list_dependencies(project_id, id, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(deps.into_iter().map(TaskResponse::from).collect()))
+    Ok(Json(ListDepsPageResponse {
+        items: page.items.into_iter().map(TaskResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // POST /api/v1/projects/{project_id}/tasks/{id}/deps
@@ -1442,16 +1548,24 @@ async fn list_contracts(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<ProjectId>,
-) -> Result<Json<Vec<ContractResponse>>, ApiError> {
+    Query(query): Query<ListContractsQuery>,
+) -> Result<Json<ListContractsPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let contracts = state
+    let (limit, after) = decode_page_inputs::<ContractId>(query.limit, query.after.as_deref())?;
+    let filter = ListContractsFilter {
+        tags: query.tag,
+        limit,
+        after,
+    };
+    let page = state
         .contract_service
-        .list_contracts(project_id)
+        .list_contracts(project_id, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(
-        contracts.into_iter().map(ContractResponse::from).collect(),
-    ))
+    Ok(Json(ListContractsPageResponse {
+        items: page.items.into_iter().map(ContractResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // GET /api/v1/projects/{project_id}/contracts/{id}
@@ -1575,14 +1689,20 @@ async fn list_contract_notes(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id)): Path<(ProjectId, ContractId)>,
-) -> Result<Json<Vec<ContractNoteResponse>>, ApiError> {
+    Query(query): Query<ListContractNotesQuery>,
+) -> Result<Json<ListContractNotesPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let notes = state
+    let (limit, after) = decode_page_inputs::<i64>(query.limit, query.after.as_deref())?;
+    let filter = ListContractNotesFilter { limit, after };
+    let page = state
         .contract_service
-        .list_notes(project_id, id)
+        .list_notes(project_id, id, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(notes.iter().map(ContractNoteResponse::from).collect()))
+    Ok(Json(ListContractNotesPageResponse {
+        items: page.items.iter().map(ContractNoteResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // GET /auth/config (public, no auth required)
@@ -1660,14 +1780,20 @@ async fn get_stats(
 async fn list_users(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
-) -> Result<Json<Vec<UserResponse>>, ApiError> {
+    Query(query): Query<ListUsersQuery>,
+) -> Result<Json<ListUsersPageResponse>, ApiError> {
     require_master(&auth, state.auth_enabled())?;
-    let users = state
+    let (limit, after) = decode_page_inputs::<i64>(query.limit, query.after.as_deref())?;
+    let filter = ListUsersFilter { limit, after };
+    let page = state
         .user_service
-        .list_users()
+        .list_users(&filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(users.into_iter().map(UserResponse::from).collect()))
+    Ok(Json(ListUsersPageResponse {
+        items: page.items.into_iter().map(UserResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // POST /api/v1/users
@@ -1759,19 +1885,25 @@ async fn list_members(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<ProjectId>,
-) -> Result<Json<Vec<ProjectMemberResponse>>, ApiError> {
+    Query(query): Query<ListMembersQuery>,
+) -> Result<Json<ListMembersPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let members = state
+    let (limit, after) = decode_page_inputs::<i64>(query.limit, query.after.as_deref())?;
+    let filter = ListProjectMembersFilter { limit, after };
+    let page = state
         .project_service
-        .list_project_members(project_id)
+        .list_project_members(project_id, &filter)
         .await
         .map_err(classify_error)?;
-    let mut responses = Vec::with_capacity(members.len());
-    for member in members {
+    let mut responses = Vec::with_capacity(page.items.len());
+    for member in page.items {
         let user = state.user_service.get_user(member.user_id()).await.ok();
         responses.push(ProjectMemberResponse::from_parts(member, user.as_ref()));
     }
-    Ok(Json(responses))
+    Ok(Json(ListMembersPageResponse {
+        items: responses,
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // POST /api/v1/projects/{project_id}/members
@@ -1878,19 +2010,24 @@ async fn list_metadata_fields(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path(project_id): Path<ProjectId>,
-) -> Result<Json<Vec<MetadataFieldResponse>>, ApiError> {
+    Query(query): Query<ListMetadataFieldsQuery>,
+) -> Result<Json<ListMetadataFieldsPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let fields = state
+    let (limit, after) = decode_page_inputs::<i64>(query.limit, query.after.as_deref())?;
+    let filter = ListMetadataFieldsFilter { limit, after };
+    let page = state
         .metadata_service
-        .list_metadata_fields(project_id)
+        .list_metadata_fields(project_id, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(
-        fields
+    Ok(Json(ListMetadataFieldsPageResponse {
+        items: page
+            .items
             .into_iter()
             .map(MetadataFieldResponse::from)
             .collect(),
-    ))
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // DELETE /api/v1/projects/{project_id}/metadata-fields/{name}
@@ -2011,11 +2148,16 @@ async fn get_me(
 
             let sessions = state
                 .user_service
-                .list_active_sessions(auth.user.id(), &state.session_config)
+                .list_active_sessions(
+                    auth.user.id(),
+                    &state.session_config,
+                    &ListSessionsFilter::default(),
+                )
                 .await
                 .map_err(classify_error)?;
 
             let current_session = sessions
+                .items
                 .into_iter()
                 .find(|s| s.key_prefix() == token_prefix)
                 .ok_or_else(|| classify_error(anyhow::anyhow!("current session not found")))?;
@@ -2091,15 +2233,19 @@ fn compute_expires_at(
 async fn list_sessions(
     State(state): State<AppState>,
     auth: AuthUser,
-) -> Result<Json<Vec<SessionResponse>>, ApiError> {
-    let sessions = state
+    Query(query): Query<ListSessionsQuery>,
+) -> Result<Json<ListSessionsPageResponse>, ApiError> {
+    let (limit, after) = decode_page_inputs::<i64>(query.limit, query.after.as_deref())?;
+    let filter = ListSessionsFilter { limit, after };
+    let page = state
         .user_service
-        .list_active_sessions(auth.user.id(), &state.session_config)
+        .list_active_sessions(auth.user.id(), &state.session_config, &filter)
         .await
         .map_err(classify_error)?;
-    Ok(Json(
-        sessions.into_iter().map(SessionResponse::from).collect(),
-    ))
+    Ok(Json(ListSessionsPageResponse {
+        items: page.items.into_iter().map(SessionResponse::from).collect(),
+        next_cursor: page.next_cursor,
+    }))
 }
 
 // DELETE /auth/sessions/{id} — revoke a specific session

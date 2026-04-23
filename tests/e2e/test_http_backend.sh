@@ -96,7 +96,7 @@ DEP_ADDED=$(run_http task deps add "$TASK4_ID" --on "$TASK3_ID")
 assert_contains "$(echo "$DEP_ADDED" | jq -r '.dependencies[]')" "$TASK3_ID" "deps add: dependency added"
 
 DEPS_LIST=$(run_http task deps list "$TASK4_ID")
-assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "deps list: 1 dependency"
+assert_eq "1" "$(echo "$DEPS_LIST" | jq '.items | length')" "deps list: 1 dependency"
 
 DEP_REMOVED=$(run_http task deps remove "$TASK4_ID" --on "$TASK3_ID")
 assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "deps remove: dependency removed"

@@ -481,6 +481,24 @@ pub fn hash_api_key(key: &str) -> String {
         .collect()
 }
 
+/// Filter / paging inputs for `list_users`.
+#[derive(Clone, Default)]
+pub struct ListUsersFilter {
+    pub limit: Option<u32>,
+    /// Cursor payload: the `users.id` of the last user returned.
+    pub after: Option<i64>,
+}
+
+/// Filter / paging inputs for `list_active_sessions`.
+#[derive(Clone, Default)]
+pub struct ListSessionsFilter {
+    pub limit: Option<u32>,
+    /// Cursor payload: the `api_keys.id` of the last row returned from the DB
+    /// (not the last unexpired one — pagination walks raw rows so in-memory
+    /// expiry filtering never breaks the cursor chain).
+    pub after: Option<i64>,
+}
+
 #[async_trait]
 pub trait UserRepository: Send + Sync {
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;

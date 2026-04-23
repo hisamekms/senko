@@ -2,9 +2,10 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::domain::contract::{
-    Contract, ContractId, ContractNote, CreateContractParams, UpdateContractArrayParams,
-    UpdateContractParams,
+    Contract, ContractId, ContractNote, CreateContractParams, ListContractNotesFilter,
+    ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
+use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 use crate::domain::task::TaskId;
 
@@ -25,7 +26,11 @@ pub trait ContractOperations: Send + Sync {
 
     async fn get_contract(&self, project_id: ProjectId, id: ContractId) -> Result<Contract>;
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>>;
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<ListPage<Contract>>;
 
     async fn edit_contract(
         &self,
@@ -66,5 +71,6 @@ pub trait ContractOperations: Send + Sync {
         &self,
         project_id: ProjectId,
         contract_id: ContractId,
-    ) -> Result<Vec<ContractNote>>;
+        filter: &ListContractNotesFilter,
+    ) -> Result<ListPage<ContractNote>>;
 }

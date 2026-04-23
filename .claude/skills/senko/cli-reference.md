@@ -50,13 +50,13 @@ senko task dod uncheck <task_id> <index>    # unmark DoD item
 senko task deps add <task_id> --on <dep_id>
 senko task deps remove <task_id> --on <dep_id>
 senko task deps set <task_id> --on <dep_id1> <dep_id2>
-senko task deps list <task_id>
+senko task deps list <task_id> [--limit 20] [--after <cursor>]  # { items, next_cursor }
 
 # Contract — independent aggregate shared by sub-tasks of a split
 senko contract add --title "Title" [--description "..."] [--definition-of-done "..." ...] [--tag ...] [--metadata '{...}']
 senko contract add --from-json                       # read JSON from stdin
 senko contract add --from-json-file <path>
-senko contract list [--tag <tag>]                    # filtered list
+senko contract list [--tag <tag>] [--limit 20] [--after <cursor>]  # { items, next_cursor }
 senko contract get <id>
 senko contract edit <id> --title "New" --add-tag demo --add-definition-of-done "Verify X"
 senko contract edit <id> --description "..." | --clear-description
@@ -71,17 +71,25 @@ senko contract dod uncheck <contract_id> <index>
 
 # Contract notes (append-only, timestamped by server)
 senko contract note add <contract_id> --content "..." [--source-task <task_id>]
-senko contract note list <contract_id>
+senko contract note list <contract_id> [--limit 20] [--after <cursor>]  # { items, next_cursor }
 
 # Link a task to a contract (reuses the existing `edit` command)
 senko task edit <task_id> --contract <contract_id>        # set link
 senko task edit <task_id> --clear-contract                # remove link
 
 # Project members (moved from top-level `senko members` to `senko project members`)
-senko project members list
+senko project members list [--limit 20] [--after <cursor>]  # { items, next_cursor }
 senko project members add --user-id <id> [--role <owner|member|viewer>]
 senko project members remove --user-id <id>
 senko project members set-role --user-id <id> --role <owner|member|viewer>
+
+# All list commands share the same shape and cursor rules as `task list`:
+#   response JSON: { "items": [...], "next_cursor": "<opaque string>|null }
+#   --limit N: 1..=200 (default 50); --after <cursor>: opaque — pass next_cursor verbatim.
+#   --output text appends a trailing `... more: --after <cursor>` line when there is another page.
+#   Covers: task list, task deps list, contract list, contract note list,
+#           project list, project metadata-field list, project members list, user list, auth sessions.
+#   auth sessions filters expired keys in-memory after each page, so pages may contain fewer than --limit items.
 
 # Configuration
 senko config                           # show current configuration

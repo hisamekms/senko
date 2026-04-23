@@ -2,15 +2,17 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
 use crate::application::HookTrigger;
 use crate::application::port::{ContractOperations, HookExecutor};
 use crate::domain::contract::{
     Contract, ContractEvent, ContractId, ContractNote, CreateContractParams,
-    UpdateContractArrayParams, UpdateContractParams,
+    ListContractNotesFilter, ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
+use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::project::ProjectId;
 use crate::domain::task::MetadataUpdate;
 use crate::infra::config::HookWhen;
@@ -165,8 +167,31 @@ impl ContractOperations for RemoteContractOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
-        let url = self.project_url(project_id, "/contracts");
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<ListPage<Contract>> {
+        let mut url = self.project_url(project_id, "/contracts");
+        let mut params: Vec<String> = Vec::new();
+        for tag in &filter.tags {
+            params.push(format!(
+                "tag={}",
+                utf8_percent_encode(tag, NON_ALPHANUMERIC)
+            ));
+        }
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
         let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
@@ -274,8 +299,22 @@ impl ContractOperations for RemoteContractOperations {
         &self,
         project_id: ProjectId,
         contract_id: ContractId,
-    ) -> Result<Vec<ContractNote>> {
-        let url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
+        filter: &ListContractNotesFilter,
+    ) -> Result<ListPage<ContractNote>> {
+        let mut url = self.project_url(project_id, &format!("/contracts/{contract_id}/notes"));
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
         let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }

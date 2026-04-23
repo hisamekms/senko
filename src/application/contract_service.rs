@@ -8,9 +8,10 @@ use crate::application::HookTrigger;
 use crate::application::port::{ContractOperations, HookExecutor, TaskBackend};
 use crate::domain::contract::{
     Contract, ContractEvent, ContractId, ContractNote, CreateContractParams,
-    UpdateContractArrayParams, UpdateContractParams,
+    ListContractNotesFilter, ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
+use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 use crate::infra::config::HookWhen;
 use crate::infra::hook::FireOutcome;
@@ -66,8 +67,12 @@ impl ContractOperations for LocalContractOperations {
         self.backend.get_contract(id).await
     }
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
-        self.backend.list_contracts(project_id).await
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<ListPage<Contract>> {
+        self.backend.list_contracts(project_id, filter).await
     }
 
     async fn edit_contract(
@@ -231,9 +236,13 @@ impl ContractOperations for LocalContractOperations {
         &self,
         _project_id: ProjectId,
         contract_id: ContractId,
-    ) -> Result<Vec<ContractNote>> {
-        let contract = self.backend.get_contract(contract_id).await?;
-        Ok(contract.notes().to_vec())
+        filter: &ListContractNotesFilter,
+    ) -> Result<ListPage<ContractNote>> {
+        // Verify the contract exists so that listing notes for an unknown id
+        // fails loudly instead of returning an empty page (matching prior
+        // `list_notes` behaviour, which went through the aggregate).
+        let _ = self.backend.get_contract(contract_id).await?;
+        self.backend.list_contract_notes(contract_id, filter).await
     }
 }
 
@@ -302,8 +311,11 @@ mod tests {
         p2.title = "another".to_string();
         ops.create_contract(project_id, &p2).await.unwrap();
 
-        let list = ops.list_contracts(project_id).await.unwrap();
-        assert_eq!(list.len(), 2);
+        let list = ops
+            .list_contracts(project_id, &ListContractsFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(list.items.len(), 2);
     }
 
     #[tokio::test]
@@ -400,12 +412,15 @@ mod tests {
             .await
             .unwrap();
 
-        let notes = ops.list_notes(project_id, c.id()).await.unwrap();
-        assert_eq!(notes.len(), 2);
-        assert_eq!(notes[0].content(), "first note");
-        assert_eq!(notes[0].source_task_id(), Some(task.id()));
-        assert_eq!(notes[1].content(), "second");
-        assert_eq!(notes[1].source_task_id(), None);
+        let notes = ops
+            .list_notes(project_id, c.id(), &ListContractNotesFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(notes.items.len(), 2);
+        assert_eq!(notes.items[0].content(), "first note");
+        assert_eq!(notes.items[0].source_task_id(), Some(task.id()));
+        assert_eq!(notes.items[1].content(), "second");
+        assert_eq!(notes.items[1].source_task_id(), None);
     }
 
     #[tokio::test]

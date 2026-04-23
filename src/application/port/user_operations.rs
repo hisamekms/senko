@@ -1,8 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
+use crate::domain::pagination::ListPage;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, UpdateUserParams, User, UserId, Username,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter,
+    UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -15,7 +17,7 @@ use crate::infra::config::SessionConfig;
 pub trait UserOperations: Send + Sync {
     // --- User management ---
 
-    async fn list_users(&self) -> Result<Vec<User>>;
+    async fn list_users(&self, filter: &ListUsersFilter) -> Result<ListPage<User>>;
     async fn create_user(&self, params: &CreateUserParams) -> Result<User>;
     async fn get_user(&self, id: UserId) -> Result<User>;
     async fn get_user_by_username(&self, username: &Username) -> Result<User>;
@@ -53,7 +55,8 @@ pub trait UserOperations: Send + Sync {
         &self,
         user_id: UserId,
         session_config: &SessionConfig,
-    ) -> Result<Vec<ApiKey>>;
+        filter: &ListSessionsFilter,
+    ) -> Result<ListPage<ApiKey>>;
     async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()>;
     async fn revoke_all_sessions(&self, user_id: UserId) -> Result<()>;
 

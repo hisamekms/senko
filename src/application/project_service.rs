@@ -5,7 +5,10 @@ use async_trait::async_trait;
 
 use crate::application::auth::{Permission, require_project_role};
 use crate::application::port::{ProjectOperations, TaskBackend};
-use crate::domain::project::{CreateProjectParams, Project, ProjectId};
+use crate::domain::pagination::ListPage;
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+};
 use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
@@ -21,8 +24,8 @@ impl ProjectService {
 
 #[async_trait]
 impl ProjectOperations for ProjectService {
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        self.backend.list_projects().await
+    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+        self.backend.list_projects(filter).await
     }
 
     async fn create_project(
@@ -65,8 +68,12 @@ impl ProjectOperations for ProjectService {
 
     // --- Member management ---
 
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
-        self.backend.list_project_members(project_id).await
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<ListPage<ProjectMember>> {
+        self.backend.list_project_members(project_id, filter).await
     }
 
     async fn add_project_member(

@@ -6,8 +6,9 @@ use async_trait::async_trait;
 use crate::application::port::{MetadataFieldOperations, TaskBackend};
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
-    CreateMetadataFieldParams, MetadataField, validate_field_name,
+    CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataField, validate_field_name,
 };
+use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 
 pub struct MetadataFieldService {
@@ -31,12 +32,21 @@ impl MetadataFieldOperations for MetadataFieldService {
         self.backend.create_metadata_field(project_id, params).await
     }
 
-    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
-        self.backend.list_metadata_fields(project_id).await
+    async fn list_metadata_fields(
+        &self,
+        project_id: ProjectId,
+        filter: &ListMetadataFieldsFilter,
+    ) -> Result<ListPage<MetadataField>> {
+        self.backend.list_metadata_fields(project_id, filter).await
     }
 
     async fn delete_metadata_field_by_name(&self, project_id: ProjectId, name: &str) -> Result<()> {
-        let fields = self.backend.list_metadata_fields(project_id).await?;
+        // Internal helper: we want all fields regardless of paging for the name lookup.
+        let fields = self
+            .backend
+            .list_metadata_fields(project_id, &ListMetadataFieldsFilter::default())
+            .await?
+            .items;
         let field = fields
             .into_iter()
             .find(|f| f.name() == name)

@@ -28,7 +28,7 @@ mode = "sync"
 on_failure = "abort"
 TOML
 
-BEFORE_COUNT="$(run_lf --output json contract list | jq 'length')"
+BEFORE_COUNT="$(run_lf --output json contract list | jq '.items | length')"
 
 echo "[1] contract add aborted by sync+pre+abort hook"
 ADD_EXIT=0
@@ -42,7 +42,7 @@ else
 fi
 assert_contains "$ADD_OUTPUT" "aborted by pre-hook" "contract add: aborted-by-pre-hook message"
 
-AFTER_COUNT="$(run_lf --output json contract list | jq 'length')"
+AFTER_COUNT="$(run_lf --output json contract list | jq '.items | length')"
 assert_eq "$BEFORE_COUNT" "$AFTER_COUNT" "contract list unchanged after abort"
 
 # ---------------------------------------------------------------
@@ -90,7 +90,7 @@ mode = "sync"
 on_failure = "abort"
 TOML
 
-BEFORE_NOTES="$(run_lf --output json contract note list "$CID" | jq 'length')"
+BEFORE_NOTES="$(run_lf --output json contract note list "$CID" | jq '.items | length')"
 
 echo "[3] contract note add aborted by sync+pre+abort hook"
 NOTE_EXIT=0
@@ -104,7 +104,7 @@ else
 fi
 assert_contains "$NOTE_OUTPUT" "aborted by pre-hook" "contract note add: aborted-by-pre-hook message"
 
-AFTER_NOTES="$(run_lf --output json contract note list "$CID" | jq 'length')"
+AFTER_NOTES="$(run_lf --output json contract note list "$CID" | jq '.items | length')"
 assert_eq "$BEFORE_NOTES" "$AFTER_NOTES" "note list unchanged after abort"
 
 # ---------------------------------------------------------------

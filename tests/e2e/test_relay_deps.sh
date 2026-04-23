@@ -99,7 +99,7 @@ assert_contains "$(echo "$ADD_OUTPUT" | jq -r '.dependencies | map(tostring) | j
 
 echo "[1.2] deps list via CLI"
 LIST_OUTPUT="$(run_relay task deps list "$A_ID")"
-assert_eq "1" "$(echo "$LIST_OUTPUT" | jq 'length')" "deps list shows 1 dependency"
+assert_eq "1" "$(echo "$LIST_OUTPUT" | jq '.items | length')" "deps list shows 1 dependency"
 
 echo "[1.3] deps remove via CLI"
 REMOVE_OUTPUT="$(run_relay task deps remove "$A_ID" --on "$B_ID")"
@@ -153,7 +153,7 @@ assert_contains "$(echo "$DEP_OUT" | jq -r '.dependencies | map(tostring) | join
 
 echo "[2.2] deps list with relay token"
 DEP_LIST="$(run_relay task deps list "$T1_ID")"
-assert_eq "1" "$(echo "$DEP_LIST" | jq 'length')" "deps list with relay token"
+assert_eq "1" "$(echo "$DEP_LIST" | jq '.items | length')" "deps list with relay token"
 
 echo "[2.3] deps remove with relay token"
 DEP_RM="$(run_relay task deps remove "$T1_ID" --on "$T2_ID")"

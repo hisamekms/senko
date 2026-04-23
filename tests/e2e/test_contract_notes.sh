@@ -37,14 +37,28 @@ NOTE2="$(run_lf --output json contract note add "$CID" --content "second note" -
 assert_json_field "$NOTE2" '.content' "second note" "note2: content"
 assert_json_field "$NOTE2" '.source_task_id' "$TID" "note2: source_task_id matches task"
 
-# 3. note list returns notes in insertion order
+# 3. note list returns notes in insertion order (response is {items, next_cursor})
 echo "[3] note list returns both notes in order"
 NOTES="$(run_lf --output json contract note list "$CID")"
-assert_eq "2" "$(echo "$NOTES" | jq 'length')" "list: 2 notes"
-assert_json_field "$NOTES" '.[0].content' "first note" "list[0]: first note"
-assert_json_field "$NOTES" '.[1].content' "second note" "list[1]: second note"
-assert_json_field "$NOTES" '.[0].source_task_id' "null" "list[0]: source_task_id null"
-assert_json_field "$NOTES" '.[1].source_task_id' "$TID" "list[1]: source_task_id matches"
+assert_eq "2" "$(echo "$NOTES" | jq '.items | length')" "list: 2 notes"
+assert_json_field "$NOTES" '.items[0].content' "first note" "list[0]: first note"
+assert_json_field "$NOTES" '.items[1].content' "second note" "list[1]: second note"
+assert_json_field "$NOTES" '.items[0].source_task_id' "null" "list[0]: source_task_id null"
+assert_json_field "$NOTES" '.items[1].source_task_id' "$TID" "list[1]: source_task_id matches"
+
+# 3b. cursor pagination for notes
+echo "[3b] note list cursor pagination"
+PAGE1="$(run_lf --output json contract note list "$CID" --limit 1)"
+assert_eq "1" "$(echo "$PAGE1" | jq '.items | length')" "page1 has 1 note"
+CURSOR="$(echo "$PAGE1" | jq -r '.next_cursor')"
+if [[ "$CURSOR" == "null" ]]; then
+  echo "FAIL: expected next_cursor on first page" >&2
+  exit 1
+fi
+PAGE2="$(run_lf --output json contract note list "$CID" --limit 1 --after "$CURSOR")"
+assert_eq "1" "$(echo "$PAGE2" | jq '.items | length')" "page2 has remaining 1 note"
+assert_eq "null" "$(echo "$PAGE2" | jq -r '.next_cursor')" "page2 has no more"
+assert_exit_code 1 run_lf --output json contract note list "$CID" --after bogus-cursor
 
 # 4. contract get embeds notes
 echo "[4] contract get embeds notes"

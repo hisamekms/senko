@@ -149,8 +149,10 @@ senko task dod uncheck <task_id> <index>
 senko task deps add <task_id> --on <dep_id>
 senko task deps remove <task_id> --on <dep_id>
 senko task deps set <task_id> --on <id1> <id2> ...
-senko task deps list <task_id>
+senko task deps list <task_id> [--limit 20] [--after <cursor>]
 ```
+
+`task deps list` は `{items, next_cursor}` を返す。cursor セマンティクスは `task list` と同じ。
 
 ## `senko contract`
 
@@ -159,7 +161,7 @@ senko contract add --title "..." [--description ...] [--definition-of-done ...] 
                    [--tag ...] [--metadata '{...}']
 senko contract add --from-json / --from-json-file <path>
 
-senko contract list [--tag ...]
+senko contract list [--tag ...] [--limit 20] [--after <cursor>]
 senko contract get <id>
 
 senko contract edit <id> --title ... --description ...
@@ -174,13 +176,15 @@ senko contract dod check <contract_id> <index>
 senko contract dod uncheck <contract_id> <index>
 
 senko contract note add <contract_id> --content "..." [--source-task <task_id>]
-senko contract note list <contract_id>
+senko contract note list <contract_id> [--limit 20] [--after <cursor>]
 ```
+
+`contract list` と `contract note list` は `{items, next_cursor}` を返す。cursor セマンティクスは `task list` と同じ。
 
 ## `senko project`
 
 ```bash
-senko project list
+senko project list [--limit 20] [--after <cursor>]
 senko project create --name <name> [--description ...]
 senko project delete <id>
 ```
@@ -190,14 +194,14 @@ senko project delete <id>
 ```bash
 senko project metadata-field add --name <name> --type string|number|boolean \
                                  [--required-on-complete] [--description ...]
-senko project metadata-field list
+senko project metadata-field list [--limit 20] [--after <cursor>]
 senko project metadata-field remove --name <name>
 ```
 
 ### `project members`
 
 ```bash
-senko project members list
+senko project members list [--limit 20] [--after <cursor>]
 senko project members add --user-id <id> [--role owner|member|viewer]
 senko project members remove --user-id <id>
 senko project members set-role --user-id <id> --role owner|member|viewer
@@ -206,7 +210,7 @@ senko project members set-role --user-id <id> --role owner|member|viewer
 ## `senko user`
 
 ```bash
-senko user list
+senko user list [--limit 20] [--after <cursor>]
 senko user create --username <name> [--sub <oidc-sub>] [--display-name ...] [--email ...]
 senko user update <id> [--username ...] [--display-name ...]
 senko user delete <id>
@@ -219,10 +223,12 @@ senko auth login [--device-name <name>]   # OIDC ブラウザログイン → ke
 senko auth token                           # 保存済み token を stdout へ (scripting 用)
 senko auth status                          # 現在のログイン情報
 senko auth logout                          # 現セッション revoke + keychain から削除
-senko auth sessions                        # 自分のセッション一覧
+senko auth sessions [--limit 20] [--after <cursor>]   # 自分のセッション一覧
 senko auth revoke <id>                     # 特定セッション revoke
 senko auth revoke --all                    # 全セッション revoke
 ```
+
+> **ページネーションに関する注記。** 上記の list 系コマンド (`project list` / `project metadata-field list` / `project members list` / `user list` / `auth sessions`) も `task list` と同じく `{items, next_cursor}` を返す。`--output text` では `next_cursor` がある時に末尾へ `... more: --after <cursor>` 行が追記される。`auth sessions` は期限切れセッションを **取得後に in-memory でフィルタ** する都合上、1 ページ分の items が `--limit` より少なくなることがあるので、`next_cursor` が `null` になるまで pagination を続けること。
 
 ## `senko hooks`
 

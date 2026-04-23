@@ -14,8 +14,9 @@ use pulldown_cmark::{Options, Parser};
 
 use crate::application::{ListTasksFilter, TaskOperations};
 use crate::bootstrap;
+use crate::domain::pagination::Cursor;
 use crate::domain::project::ProjectId;
-use crate::domain::task::{Cursor, TaskId};
+use crate::domain::task::TaskId;
 use crate::infra::config::Config;
 use crate::presentation::dto::{DodItemViewModel, TaskViewModel};
 

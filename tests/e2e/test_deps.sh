@@ -27,7 +27,7 @@ ADD_OUTPUT="$(run_lf --output json task deps add "$A_ID" --on "$B_ID")"
 assert_contains "$(echo "$ADD_OUTPUT" | jq -r '.dependencies | map(tostring) | join(",")')" "$B_ID" "A depends on B"
 
 LIST_OUTPUT="$(run_lf --output json task deps list "$A_ID")"
-LIST_IDS="$(echo "$LIST_OUTPUT" | jq -r '.[].id')"
+LIST_IDS="$(echo "$LIST_OUTPUT" | jq -r '.items[].id')"
 assert_contains "$LIST_IDS" "$B_ID" "deps list shows B"
 
 # 2. deps remove
@@ -37,7 +37,7 @@ REMOVE_DEPS="$(echo "$REMOVE_OUTPUT" | jq -r '.dependencies | length')"
 assert_eq "0" "$REMOVE_DEPS" "A has no dependencies after remove"
 
 REMOVE_LIST="$(run_lf --output json task deps list "$A_ID")"
-REMOVE_LIST_LEN="$(echo "$REMOVE_LIST" | jq -r 'length')"
+REMOVE_LIST_LEN="$(echo "$REMOVE_LIST" | jq -r '.items | length')"
 assert_eq "0" "$REMOVE_LIST_LEN" "deps list is empty after remove"
 
 # 3. deps set (bulk replace)
@@ -111,5 +111,21 @@ fi
 NEXT_E="$(run_lf --output json task next)"
 NEXT_E_ID="$(echo "$NEXT_E" | jq -r '.id')"
 assert_eq "$E_ID" "$NEXT_E_ID" "next returns task after its dependency is completed"
+
+# 7. deps list cursor pagination
+echo "[7] deps list cursor pagination"
+# Wire A to depend on B and C (2 deps), paginate with limit=1.
+run_lf task deps set "$A_ID" --on "$B_ID" "$C_ID" >/dev/null
+PAGE1="$(run_lf --output json task deps list "$A_ID" --limit 1)"
+assert_eq "1" "$(echo "$PAGE1" | jq '.items | length')" "deps page1 has 1 item"
+CURSOR="$(echo "$PAGE1" | jq -r '.next_cursor')"
+if [[ "$CURSOR" == "null" ]]; then
+  echo "FAIL: expected next_cursor on first page" >&2
+  exit 1
+fi
+PAGE2="$(run_lf --output json task deps list "$A_ID" --limit 1 --after "$CURSOR")"
+assert_eq "1" "$(echo "$PAGE2" | jq '.items | length')" "deps page2 has 1 item"
+assert_eq "null" "$(echo "$PAGE2" | jq -r '.next_cursor')" "deps page2 has no more"
+assert_exit_code 1 run_lf --output json task deps list "$A_ID" --after bogus-cursor
 
 test_summary

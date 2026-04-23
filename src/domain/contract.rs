@@ -436,6 +436,26 @@ impl UpdateContractArrayParams {
 
 // --- Repository port ---
 
+// --- List filters ---
+
+/// Filter / paging inputs for `list_contracts`.
+#[derive(Clone, Default)]
+pub struct ListContractsFilter {
+    pub tags: Vec<String>,
+    pub limit: Option<u32>,
+    pub after: Option<ContractId>,
+}
+
+/// Filter / paging inputs for `list_contract_notes`.
+#[derive(Clone, Default)]
+pub struct ListContractNotesFilter {
+    pub limit: Option<u32>,
+    /// Cursor payload: the `contract_notes.id` of the last note returned.
+    pub after: Option<i64>,
+}
+
+// --- Repository port ---
+
 #[async_trait]
 pub trait ContractRepository: Send + Sync {
     async fn create_contract(
@@ -446,7 +466,11 @@ pub trait ContractRepository: Send + Sync {
 
     async fn get_contract(&self, id: ContractId) -> Result<Contract>;
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>>;
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<crate::domain::pagination::ListPage<Contract>>;
 
     async fn update_contract(
         &self,
@@ -458,6 +482,13 @@ pub trait ContractRepository: Send + Sync {
     async fn delete_contract(&self, id: ContractId) -> Result<()>;
 
     async fn add_note(&self, contract_id: ContractId, note: &ContractNote) -> Result<ContractNote>;
+
+    /// Paginated list of notes for a contract. Ordering: `id ASC`.
+    async fn list_contract_notes(
+        &self,
+        contract_id: ContractId,
+        filter: &ListContractNotesFilter,
+    ) -> Result<crate::domain::pagination::ListPage<ContractNote>>;
 
     async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract>;
 

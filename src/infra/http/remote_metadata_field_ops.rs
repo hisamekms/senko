@@ -1,8 +1,12 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 
 use crate::application::port::MetadataFieldOperations;
-use crate::domain::metadata_field::{CreateMetadataFieldParams, MetadataField};
+use crate::domain::metadata_field::{
+    CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataField,
+};
+use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::project::ProjectId;
 
 use super::client::HttpClient;
@@ -50,14 +54,26 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         read_json_or_error(resp).await
     }
 
-    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
-        let resp = self
-            .auth(
-                self.client()
-                    .get(self.http.project_url(project_id, "/metadata-fields")),
-            )
-            .send()
-            .await?;
+    async fn list_metadata_fields(
+        &self,
+        project_id: ProjectId,
+        filter: &ListMetadataFieldsFilter,
+    ) -> Result<ListPage<MetadataField>> {
+        let mut url = self.http.project_url(project_id, "/metadata-fields");
+        let mut params: Vec<String> = Vec::new();
+        if let Some(l) = filter.limit {
+            params.push(format!("limit={l}"));
+        }
+        if let Some(after) = filter.after {
+            params.push(format!(
+                "after={}",
+                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+            ));
+        }
+        if !params.is_empty() {
+            url = format!("{url}?{}", params.join("&"));
+        }
+        let resp = self.auth(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 

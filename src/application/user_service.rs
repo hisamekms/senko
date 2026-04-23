@@ -6,8 +6,10 @@ use async_trait::async_trait;
 use crate::application::port::TaskBackend;
 use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
+use crate::domain::pagination::ListPage;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, UpdateUserParams, User, UserId, Username,
+    ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter, NewApiKey,
+    UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -25,8 +27,8 @@ impl UserService {
 impl UserOperations for UserService {
     // --- User management ---
 
-    async fn list_users(&self) -> Result<Vec<User>> {
-        self.backend.list_users().await
+    async fn list_users(&self, filter: &ListUsersFilter) -> Result<ListPage<User>> {
+        self.backend.list_users(filter).await
     }
 
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
@@ -128,18 +130,28 @@ impl UserOperations for UserService {
     }
 
     /// List active (non-expired) sessions for a user.
+    ///
+    /// Paginates raw `api_keys` by id via `list_api_keys_page`, filtering expired
+    /// rows in-memory. `next_cursor` is derived from the raw last row so that
+    /// in-memory filtering never breaks the cursor chain. Pages may therefore
+    /// contain fewer items than `filter.limit`.
     async fn list_active_sessions(
         &self,
         user_id: UserId,
         session_config: &SessionConfig,
-    ) -> Result<Vec<ApiKey>> {
-        let keys = self.backend.list_api_keys(user_id).await?;
+        filter: &ListSessionsFilter,
+    ) -> Result<ListPage<ApiKey>> {
+        let raw = self.backend.list_api_keys_page(user_id, filter).await?;
         let now = chrono::Utc::now();
-        let filtered = keys
+        let items = raw
+            .items
             .into_iter()
             .filter(|k| !is_key_expired(k, session_config, now))
             .collect();
-        Ok(filtered)
+        Ok(ListPage {
+            items,
+            next_cursor: raw.next_cursor,
+        })
     }
 
     /// Revoke a specific session, verifying ownership.

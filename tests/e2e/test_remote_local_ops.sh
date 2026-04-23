@@ -112,7 +112,7 @@ DEP_ADD=$(run_lf task deps add "$T5_ID" --on "$T4_ID")
 assert_contains "$(echo "$DEP_ADD" | jq -r '.dependencies[]')" "$T4_ID" "local: deps add"
 
 DEPS_LIST=$(run_lf task deps list "$T5_ID")
-assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "local: deps list"
+assert_eq "1" "$(echo "$DEPS_LIST" | jq '.items | length')" "local: deps list"
 
 DEP_RM=$(run_lf task deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "local: deps remove"
@@ -192,7 +192,7 @@ DEP_ADD=$(run_http task deps add "$T5_ID" --on "$T4_ID")
 assert_contains "$(echo "$DEP_ADD" | jq -r '.dependencies[]')" "$T4_ID" "remote: deps add"
 
 DEPS_LIST=$(run_http task deps list "$T5_ID")
-assert_eq "1" "$(echo "$DEPS_LIST" | jq 'length')" "remote: deps list"
+assert_eq "1" "$(echo "$DEPS_LIST" | jq '.items | length')" "remote: deps list"
 
 DEP_RM=$(run_http task deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "remote: deps remove"

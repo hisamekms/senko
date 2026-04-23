@@ -1,7 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use crate::domain::project::{CreateProjectParams, Project, ProjectId};
+use crate::domain::pagination::ListPage;
+use crate::domain::project::{
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+};
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
 /// Application-level port that exposes all project operations.
@@ -13,7 +16,7 @@ use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 pub trait ProjectOperations: Send + Sync {
     // --- Project CRUD ---
 
-    async fn list_projects(&self) -> Result<Vec<Project>>;
+    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>>;
     async fn create_project(
         &self,
         params: &CreateProjectParams,
@@ -25,7 +28,11 @@ pub trait ProjectOperations: Send + Sync {
 
     // --- Member management ---
 
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>>;
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<ListPage<ProjectMember>>;
     async fn add_project_member(
         &self,
         project_id: ProjectId,

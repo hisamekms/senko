@@ -74,22 +74,36 @@ assert_eq '[]' "$(echo "$GOT" | jq -c '.notes')" "get: notes empty"
 # 6. list (all)
 echo "[6] List all contracts"
 LIST_ALL="$(run_lf --output json contract list)"
-LIST_COUNT="$(echo "$LIST_ALL" | jq 'length')"
+LIST_COUNT="$(echo "$LIST_ALL" | jq '.items | length')"
 assert_eq "4" "$LIST_COUNT" "list: 4 contracts created"
 
 # 7. list --tag filter
 echo "[7] List contracts with --tag filter"
 LIST_T1="$(run_lf --output json contract list --tag t1)"
-T1_COUNT="$(echo "$LIST_T1" | jq 'length')"
+T1_COUNT="$(echo "$LIST_T1" | jq '.items | length')"
 assert_eq "1" "$T1_COUNT" "list --tag t1: only Full Contract"
-assert_json_field "$LIST_T1" '.[0].title' "Full Contract" "list --tag t1: title matches"
+assert_json_field "$LIST_T1" '.items[0].title' "Full Contract" "list --tag t1: title matches"
 
 LIST_FILE="$(run_lf --output json contract list --tag file-tag)"
-FILE_COUNT="$(echo "$LIST_FILE" | jq 'length')"
+FILE_COUNT="$(echo "$LIST_FILE" | jq '.items | length')"
 assert_eq "1" "$FILE_COUNT" "list --tag file-tag: only From File"
 
 LIST_NONE="$(run_lf --output json contract list --tag nonexistent)"
-assert_eq "0" "$(echo "$LIST_NONE" | jq 'length')" "list --tag nonexistent: empty"
+assert_eq "0" "$(echo "$LIST_NONE" | jq '.items | length')" "list --tag nonexistent: empty"
+
+# 7b. cursor pagination
+echo "[7b] contract list cursor pagination"
+PAGE1="$(run_lf --output json contract list --limit 2)"
+assert_eq "2" "$(echo "$PAGE1" | jq '.items | length')" "page1 has 2 contracts"
+CURSOR="$(echo "$PAGE1" | jq -r '.next_cursor')"
+if [[ "$CURSOR" == "null" ]]; then
+  echo "FAIL: expected next_cursor on first page" >&2
+  exit 1
+fi
+PAGE2="$(run_lf --output json contract list --limit 2 --after "$CURSOR")"
+assert_eq "2" "$(echo "$PAGE2" | jq '.items | length')" "page2 has remaining 2 contracts"
+assert_eq "null" "$(echo "$PAGE2" | jq -r '.next_cursor')" "page2 has no more"
+assert_exit_code 1 run_lf --output json contract list --after not-a-valid-cursor
 
 # 8. edit scalar fields
 echo "[8] Edit scalar fields"

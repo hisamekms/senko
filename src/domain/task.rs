@@ -1138,42 +1138,16 @@ pub struct ListTasksFilter {
     pub after: Option<TaskId>,
 }
 
-/// A page of tasks with an optional cursor to fetch the next page.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ListTasksPage {
-    pub items: Vec<Task>,
-    pub next_cursor: Option<String>,
-}
+pub type ListTasksPage = crate::domain::pagination::ListPage<Task>;
 
-/// Opaque cursor for task list pagination.
+/// Filter / paging inputs for `list_dependencies` (task deps).
 ///
-/// Wire format: base64 URL-safe (no padding) of JSON `{"id": <i64>}`.
-/// Callers should treat the string as opaque.
-pub struct Cursor;
-
-impl Cursor {
-    /// Encode a task id as an opaque cursor string.
-    pub fn encode(id: TaskId) -> String {
-        use base64::Engine as _;
-        let payload = serde_json::json!({ "id": id.0 });
-        let json = serde_json::to_vec(&payload).expect("cursor payload is serializable");
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(json)
-    }
-
-    /// Decode an opaque cursor string back to a task id.
-    pub fn decode(raw: &str) -> Result<TaskId, DomainError> {
-        use base64::Engine as _;
-        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
-            .decode(raw)
-            .map_err(|_| DomainError::InvalidCursor)?;
-        let v: serde_json::Value =
-            serde_json::from_slice(&bytes).map_err(|_| DomainError::InvalidCursor)?;
-        let id = v
-            .get("id")
-            .and_then(|x| x.as_i64())
-            .ok_or(DomainError::InvalidCursor)?;
-        Ok(TaskId(id))
-    }
+/// Cursor payload is the `TaskId` of the last returned dependency, so sorting
+/// must be by `depends_on_task_id ASC` to keep the cursor stable.
+#[derive(Clone, Default)]
+pub struct ListTaskDepsFilter {
+    pub limit: Option<u32>,
+    pub after: Option<TaskId>,
 }
 
 #[derive(Clone)]
@@ -1319,7 +1293,12 @@ pub trait TaskRepository: Send + Sync {
         params: &UpdateTaskArrayParams,
     ) -> Result<()>;
     async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()>;
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>>;
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<super::pagination::ListPage<Task>>;
     async fn save(&self, task: &Task) -> Result<()>;
 }
 

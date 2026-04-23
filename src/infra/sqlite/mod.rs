@@ -4,21 +4,26 @@ use std::path::Path;
 use crate::domain::DEFAULT_USER_ID;
 use crate::domain::contract::{
     Contract, ContractId, ContractNote, ContractRepository, CreateContractParams,
-    UpdateContractArrayParams, UpdateContractParams,
+    ListContractNotesFilter, ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
-    CreateMetadataFieldParams, MetadataField, MetadataFieldType, UpdateMetadataFieldParams,
+    CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataField, MetadataFieldType,
+    UpdateMetadataFieldParams,
 };
-use crate::domain::project::{CreateProjectParams, DEFAULT_PROJECT_ID, Project, ProjectId};
+use crate::domain::pagination::{Cursor, ListPage, build_page};
+use crate::domain::project::{
+    CreateProjectParams, DEFAULT_PROJECT_ID, ListProjectMembersFilter, ListProjectsFilter, Project,
+    ProjectId,
+};
 use crate::domain::task::{
-    self, CreateTaskParams, Cursor, DodItem, ListTasksFilter, ListTasksPage, MetadataUpdate,
-    Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    self, CreateTaskParams, DodItem, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
+    MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
     shallow_merge_metadata,
 };
 use crate::domain::user::{
-    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, NewApiKey, ProjectMember,
-    Role, UpdateUserParams, User, UserId, Username,
+    AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter,
+    ListUsersFilter, NewApiKey, ProjectMember, Role, UpdateUserParams, User, UserId, Username,
 };
 use crate::infra::TaskDbId;
 use crate::infra::xdg::XdgDirs;
@@ -618,11 +623,24 @@ fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
     Ok(Project::new(id, name.to_string(), description, created_at))
 }
 
-fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
-    let mut stmt =
-        conn.prepare("SELECT id, name, description, created_at FROM projects ORDER BY id")?;
-    let projects = stmt
-        .query_map([], |row| {
+fn list_projects(conn: &Connection, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+    let mut sql = String::from("SELECT id, name, description, created_at FROM projects WHERE 1=1");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        let after_i64: i64 = after.into();
+        param_values.push(Box::new(after_i64));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let projects: Vec<Project> = stmt
+        .query_map(param_refs.as_slice(), |row| {
             Ok(Project::new(
                 row.get(0)?,
                 row.get(1)?,
@@ -631,7 +649,9 @@ fn list_projects(conn: &Connection) -> Result<Vec<Project>> {
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(projects)
+    Ok(build_page(projects, filter.limit, |p| {
+        Cursor::encode(p.id())
+    }))
 }
 
 fn delete_project(conn: &Connection, id: ProjectId) -> Result<()> {
@@ -758,12 +778,25 @@ fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
     ))
 }
 
-fn list_users(conn: &Connection) -> Result<Vec<User>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, username, sub, display_name, email, created_at FROM users ORDER BY id",
-    )?;
-    let users = stmt
-        .query_map([], |row| {
+fn list_users(conn: &Connection, filter: &ListUsersFilter) -> Result<ListPage<User>> {
+    let mut sql = String::from(
+        "SELECT id, username, sub, display_name, email, created_at FROM users WHERE 1=1",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        param_values.push(Box::new(after));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let users: Vec<User> = stmt
+        .query_map(param_refs.as_slice(), |row| {
             Ok(User::new(
                 row.get(0)?,
                 row.get(1)?,
@@ -774,7 +807,7 @@ fn list_users(conn: &Connection) -> Result<Vec<User>> {
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(users)
+    Ok(build_page(users, filter.limit, |u| Cursor::encode(u.id())))
 }
 
 fn update_user(conn: &Connection, id: UserId, params: &UpdateUserParams) -> Result<User> {
@@ -884,6 +917,44 @@ fn list_api_keys(conn: &Connection, user_id: UserId) -> Result<Vec<ApiKey>> {
     Ok(keys)
 }
 
+fn list_api_keys_page(
+    conn: &Connection,
+    user_id: UserId,
+    filter: &ListSessionsFilter,
+) -> Result<ListPage<ApiKey>> {
+    let mut sql = String::from(
+        "SELECT id, user_id, key_prefix, name, device_name, created_at, last_used_at FROM api_keys WHERE user_id = ?1",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(user_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        param_values.push(Box::new(after));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let keys: Vec<ApiKey> = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            Ok(ApiKey::new(
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3)?,
+                row.get(4)?,
+                row.get(5)?,
+                row.get(6)?,
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(build_page(keys, filter.limit, |k| Cursor::encode(k.id())))
+}
+
 fn delete_api_key(conn: &Connection, key_id: i64) -> Result<()> {
     let affected = conn.execute("DELETE FROM api_keys WHERE id = ?1", params![key_id])?;
     if affected == 0 {
@@ -945,18 +1016,36 @@ fn remove_project_member(conn: &Connection, project_id: ProjectId, user_id: User
     Ok(())
 }
 
-fn list_project_members(conn: &Connection, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
-    let mut stmt = conn.prepare(
-        "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = ?1 ORDER BY id",
-    )?;
-    let members = stmt
-        .query_map(rusqlite::params![project_id], |row| {
+fn list_project_members(
+    conn: &Connection,
+    project_id: ProjectId,
+    filter: &ListProjectMembersFilter,
+) -> Result<ListPage<ProjectMember>> {
+    let mut sql = String::from(
+        "SELECT id, user_id, role, created_at FROM project_members WHERE project_id = ?1",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        param_values.push(Box::new(after));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let rows = stmt
+        .query_map(param_refs.as_slice(), |row| {
             let role_str: String = row.get(2)?;
             Ok((row.get(0)?, row.get(1)?, role_str, row.get(3)?))
         })?
         .collect::<std::result::Result<Vec<(i64, UserId, String, String)>, _>>()?;
 
-    members
+    let members = rows
         .into_iter()
         .map(|(id, user_id, role_str, created_at)| {
             let role: Role = role_str
@@ -966,7 +1055,10 @@ fn list_project_members(conn: &Connection, project_id: ProjectId) -> Result<Vec<
                 id, project_id, user_id, role, created_at,
             ))
         })
-        .collect()
+        .collect::<Result<Vec<ProjectMember>>>()?;
+    Ok(build_page(members, filter.limit, |m| {
+        Cursor::encode(m.id())
+    }))
 }
 
 fn get_project_member(
@@ -1674,34 +1766,20 @@ fn list_tasks(
         param_values.iter().map(|v| v.as_ref()).collect();
 
     let mut stmt = conn.prepare(&sql)?;
-    let mut ids: Vec<TaskDbId> = stmt
+    let ids: Vec<TaskDbId> = stmt
         .query_map(param_refs.as_slice(), |row| row.get::<_, TaskDbId>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-
-    // Determine whether there is a next page and trim the peeked row.
-    let has_more = if let Some(l) = filter.limit {
-        if ids.len() as u32 > l {
-            ids.truncate(l as usize);
-            true
-        } else {
-            false
-        }
-    } else {
-        false
-    };
 
     let mut items = Vec::with_capacity(ids.len());
     for id in ids {
         items.push(get_task(conn, id)?);
     }
 
-    let next_cursor = if has_more {
-        items.last().map(|t| Cursor::encode(t.id()))
-    } else {
-        None
-    };
-
-    Ok(ListTasksPage { items, next_cursor })
+    Ok(crate::domain::pagination::build_page(
+        items,
+        filter.limit,
+        |t| Cursor::encode(t.id()),
+    ))
 }
 
 /// SQL-optimized implementation of [`crate::domain::task::select_next`].
@@ -1813,18 +1891,39 @@ fn is_task_ready(conn: &Connection, project_id: ProjectId, task_number: TaskId) 
     Ok(found.is_some())
 }
 
-fn list_dependencies(conn: &Connection, task_id: TaskDbId) -> Result<Vec<Task>> {
+fn list_dependencies(
+    conn: &Connection,
+    task_id: TaskDbId,
+    filter: &ListTaskDepsFilter,
+) -> Result<ListPage<Task>> {
     get_task(conn, task_id)?;
-    let dep_ids = query_task_db_id_list(
-        conn,
-        "SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1",
-        task_id,
-    )?;
+
+    let mut sql =
+        String::from("SELECT depends_on_task_id FROM task_dependencies WHERE task_id = ?1");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(task_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND depends_on_task_id > ?");
+        let after_i64: i64 = after.into();
+        param_values.push(Box::new(after_i64));
+    }
+    sql.push_str(" ORDER BY depends_on_task_id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let dep_ids: Vec<TaskDbId> = stmt
+        .query_map(param_refs.as_slice(), |row| row.get::<_, TaskDbId>(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
     let mut tasks = Vec::with_capacity(dep_ids.len());
     for id in dep_ids {
         tasks.push(get_task(conn, id)?);
     }
-    Ok(tasks)
+    Ok(build_page(tasks, filter.limit, |t| Cursor::encode(t.id())))
 }
 
 fn query_dod_list(conn: &Connection, task_id: TaskDbId) -> Result<Vec<DodItem>> {
@@ -1851,14 +1950,6 @@ fn query_i64_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Result<Vec
     let mut stmt = conn.prepare(sql)?;
     let items: Vec<i64> = stmt
         .query_map(params![task_id], |row| row.get(0))?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    Ok(items)
-}
-
-fn query_task_db_id_list(conn: &Connection, sql: &str, task_id: TaskDbId) -> Result<Vec<TaskDbId>> {
-    let mut stmt = conn.prepare(sql)?;
-    let items: Vec<TaskDbId> = stmt
-        .query_map(params![task_id], |row| row.get::<_, TaskDbId>(0))?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(items)
 }
@@ -1951,13 +2042,31 @@ fn get_metadata_field(
     ))
 }
 
-fn list_metadata_fields(conn: &Connection, project_id: ProjectId) -> Result<Vec<MetadataField>> {
-    let mut stmt = conn.prepare(
+fn list_metadata_fields(
+    conn: &Connection,
+    project_id: ProjectId,
+    filter: &ListMetadataFieldsFilter,
+) -> Result<ListPage<MetadataField>> {
+    let mut sql = String::from(
         "SELECT id, project_id, name, field_type, required_on_complete, description, created_at
-         FROM metadata_fields WHERE project_id = ?1 ORDER BY id",
-    )?;
+         FROM metadata_fields WHERE project_id = ?1",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        param_values.push(Box::new(after));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
     let rows = stmt
-        .query_map(params![project_id], |row| {
+        .query_map(param_refs.as_slice(), |row| {
             Ok((
                 row.get::<_, i64>(0)?,
                 row.get::<_, ProjectId>(1)?,
@@ -1969,7 +2078,8 @@ fn list_metadata_fields(conn: &Connection, project_id: ProjectId) -> Result<Vec<
             ))
         })?
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    rows.into_iter()
+    let items: Vec<MetadataField> = rows
+        .into_iter()
         .map(|r| {
             let field_type: MetadataFieldType = r.3.parse()?;
             Ok(MetadataField::new(
@@ -1982,7 +2092,8 @@ fn list_metadata_fields(conn: &Connection, project_id: ProjectId) -> Result<Vec<
                 r.6,
             ))
         })
-        .collect()
+        .collect::<Result<Vec<_>>>()?;
+    Ok(build_page(items, filter.limit, |f| Cursor::encode(f.id())))
 }
 
 fn update_metadata_field(
@@ -2148,18 +2259,98 @@ fn create_contract(
     get_contract(conn, contract_id)
 }
 
-fn list_contracts(conn: &Connection, project_id: ProjectId) -> Result<Vec<Contract>> {
-    let ids: Vec<ContractId> = {
-        let mut stmt =
-            conn.prepare("SELECT id FROM contracts WHERE project_id = ?1 ORDER BY id")?;
-        stmt.query_map(params![project_id], |row| row.get(0))?
-            .collect::<std::result::Result<Vec<_>, _>>()?
-    };
-    let mut result = Vec::with_capacity(ids.len());
-    for id in ids {
-        result.push(get_contract(conn, id)?);
+fn list_contracts(
+    conn: &Connection,
+    project_id: ProjectId,
+    filter: &ListContractsFilter,
+) -> Result<ListPage<Contract>> {
+    let mut sql = String::from("SELECT c.id FROM contracts c WHERE c.project_id = ?1");
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(project_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND c.id > ?");
+        param_values.push(Box::new(after));
     }
-    Ok(result)
+    // AND-semantic tag filter: every requested tag must be present on the contract.
+    for tag in &filter.tags {
+        sql.push_str(
+            " AND EXISTS (SELECT 1 FROM contract_tags ct WHERE ct.contract_id = c.id AND ct.tag = ?)",
+        );
+        param_values.push(Box::new(tag.clone()));
+    }
+    sql.push_str(" ORDER BY c.id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    let ids: Vec<ContractId> = stmt
+        .query_map(param_refs.as_slice(), |row| row.get(0))?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let mut items = Vec::with_capacity(ids.len());
+    for id in ids {
+        items.push(get_contract(conn, id)?);
+    }
+    Ok(build_page(items, filter.limit, |c| Cursor::encode(c.id())))
+}
+
+fn list_contract_notes(
+    conn: &Connection,
+    contract_id: ContractId,
+    filter: &ListContractNotesFilter,
+) -> Result<ListPage<ContractNote>> {
+    let mut sql = String::from(
+        "SELECT id, content, source_task_id, created_at FROM contract_notes WHERE contract_id = ?1",
+    );
+    let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+    param_values.push(Box::new(contract_id));
+    if let Some(after) = filter.after {
+        sql.push_str(" AND id > ?");
+        param_values.push(Box::new(after));
+    }
+    sql.push_str(" ORDER BY id");
+    if let Some(l) = filter.limit {
+        sql.push_str(" LIMIT ?");
+        param_values.push(Box::new(l as i64 + 1));
+    }
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|v| v.as_ref()).collect();
+    let mut stmt = conn.prepare(&sql)?;
+    // We read id only for cursor computation; ContractNote doesn't expose it.
+    let rows: Vec<(i64, ContractNote)> = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            let id: i64 = row.get(0)?;
+            let content: String = row.get(1)?;
+            let source: Option<i64> = row.get(2)?;
+            let created_at: String = row.get(3)?;
+            Ok((
+                id,
+                ContractNote::new(content, source.map(TaskId::from), created_at),
+            ))
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    // Build a parallel Vec of the id so we can encode the trailing cursor after
+    // build_page trims the peeked row.
+    let ids: Vec<i64> = rows.iter().map(|(id, _)| *id).collect();
+    let notes: Vec<ContractNote> = rows.into_iter().map(|(_, n)| n).collect();
+    let page = match filter.limit {
+        Some(l) if notes.len() as u32 > l => {
+            let mut notes = notes;
+            notes.truncate(l as usize);
+            let cursor_id = ids[l as usize - 1];
+            ListPage {
+                items: notes,
+                next_cursor: Some(Cursor::encode(cursor_id)),
+            }
+        }
+        _ => ListPage {
+            items: notes,
+            next_cursor: None,
+        },
+    };
+    Ok(page)
 }
 
 fn update_contract(
@@ -2476,9 +2667,14 @@ impl ProjectMemberRepository for SqliteBackend {
         ))
     }
 
-    async fn list_project_members(&self, project_id: ProjectId) -> Result<Vec<ProjectMember>> {
+    async fn list_project_members(
+        &self,
+        project_id: ProjectId,
+        filter: &ListProjectMembersFilter,
+    ) -> Result<ListPage<ProjectMember>> {
+        let filter = filter.clone();
         blocking!(self, |conn: &Connection| list_project_members(
-            conn, project_id
+            conn, project_id, &filter
         ))
     }
 
@@ -2590,19 +2786,32 @@ impl ApiKeyRepository for SqliteBackend {
 
 #[async_trait]
 impl ProjectQueryPort for SqliteBackend {
-    async fn list_projects(&self) -> Result<Vec<Project>> {
-        blocking!(self, |conn: &Connection| list_projects(conn))
+    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_projects(conn, &filter))
     }
 }
 
 #[async_trait]
 impl UserQueryPort for SqliteBackend {
-    async fn list_users(&self) -> Result<Vec<User>> {
-        blocking!(self, |conn: &Connection| list_users(conn))
+    async fn list_users(&self, filter: &ListUsersFilter) -> Result<ListPage<User>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_users(conn, &filter))
     }
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         blocking!(self, |conn: &Connection| list_api_keys(conn, user_id))
+    }
+
+    async fn list_api_keys_page(
+        &self,
+        user_id: UserId,
+        filter: &ListSessionsFilter,
+    ) -> Result<ListPage<ApiKey>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_api_keys_page(
+            conn, user_id, &filter
+        ))
     }
 }
 
@@ -2655,10 +2864,16 @@ impl TaskRepository for SqliteBackend {
         })
     }
 
-    async fn list_dependencies(&self, project_id: ProjectId, task_id: TaskId) -> Result<Vec<Task>> {
+    async fn list_dependencies(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        filter: &ListTaskDepsFilter,
+    ) -> Result<ListPage<Task>> {
+        let filter = filter.clone();
         blocking!(self, |conn: &Connection| {
             let internal_id = resolve_task_number(conn, project_id, task_id)?;
-            list_dependencies(conn, internal_id)
+            list_dependencies(conn, internal_id, &filter)
         })
     }
 
@@ -2737,9 +2952,14 @@ impl MetadataFieldRepository for SqliteBackend {
         ))
     }
 
-    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>> {
+    async fn list_metadata_fields(
+        &self,
+        project_id: ProjectId,
+        filter: &ListMetadataFieldsFilter,
+    ) -> Result<ListPage<MetadataField>> {
+        let filter = filter.clone();
         blocking!(self, |conn: &Connection| list_metadata_fields(
-            conn, project_id
+            conn, project_id, &filter
         ))
     }
 
@@ -2779,8 +2999,28 @@ impl ContractRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_contract(conn, id))
     }
 
-    async fn list_contracts(&self, project_id: ProjectId) -> Result<Vec<Contract>> {
-        blocking!(self, |conn: &Connection| list_contracts(conn, project_id))
+    async fn list_contracts(
+        &self,
+        project_id: ProjectId,
+        filter: &ListContractsFilter,
+    ) -> Result<ListPage<Contract>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_contracts(
+            conn, project_id, &filter
+        ))
+    }
+
+    async fn list_contract_notes(
+        &self,
+        contract_id: ContractId,
+        filter: &ListContractNotesFilter,
+    ) -> Result<ListPage<ContractNote>> {
+        let filter = filter.clone();
+        blocking!(self, |conn: &Connection| list_contract_notes(
+            conn,
+            contract_id,
+            &filter
+        ))
     }
 
     async fn update_contract(
@@ -3545,20 +3785,263 @@ mod tests {
         assert!(page2.next_cursor.is_none());
     }
 
+    // --- Cursor pagination smoke tests for each list (task #337) ---
+
+    #[test]
+    fn list_projects_cursor_roundtrip() {
+        let (_tmp, conn) = setup();
+        for name in &["alpha", "bravo", "charlie"] {
+            create_project(
+                &conn,
+                &CreateProjectParams {
+                    name: name.to_string(),
+                    description: None,
+                },
+            )
+            .unwrap();
+        }
+        // 1 existing default + 3 newly created = 4 projects.
+        let page1 = list_projects(
+            &conn,
+            &ListProjectsFilter {
+                limit: Some(2),
+                after: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        let cursor1 = page1.next_cursor.expect("more pages");
+        let after1: ProjectId = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_projects(
+            &conn,
+            &ListProjectsFilter {
+                limit: Some(2),
+                after: Some(after1),
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_users_cursor_roundtrip() {
+        let (_tmp, conn) = setup();
+        for n in &["a", "b", "c"] {
+            create_user(
+                &conn,
+                &CreateUserParams {
+                    username: Username(n.to_string()),
+                    sub: None,
+                    display_name: None,
+                    email: None,
+                },
+            )
+            .unwrap();
+        }
+        let page1 = list_users(
+            &conn,
+            &ListUsersFilter {
+                limit: Some(2),
+                after: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        let cursor1 = page1.next_cursor.expect("more pages");
+        let after1: i64 = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_users(
+            &conn,
+            &ListUsersFilter {
+                limit: Some(2),
+                after: Some(after1),
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_contracts_cursor_and_tag_filter() {
+        let (_tmp, conn) = setup();
+        create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "A".into(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec!["t1".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+        create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "B".into(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec!["t1".into(), "t2".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+        create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "C".into(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec!["t2".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+
+        // Tag filter t1 → contracts A and B. limit 1 → first, cursor to next.
+        let page1 = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                tags: vec!["t1".into()],
+                limit: Some(1),
+                after: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 1);
+        assert_eq!(page1.items[0].title(), "A");
+        let cursor = page1.next_cursor.expect("more");
+        let after: ContractId = Cursor::decode(&cursor).unwrap();
+        let page2 = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                tags: vec!["t1".into()],
+                limit: Some(1),
+                after: Some(after),
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items[0].title(), "B");
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_dependencies_cursor_roundtrip() {
+        let (_tmp, conn) = setup();
+        // Parent task depending on 3 others.
+        let deps: Vec<_> = (0..3)
+            .map(|i| {
+                create_task(
+                    &conn,
+                    ProjectId(1),
+                    &default_create_params(&format!("d{i}")),
+                )
+                .unwrap()
+            })
+            .collect();
+        let parent = create_task(&conn, ProjectId(1), &default_create_params("p")).unwrap();
+
+        // Wire up dependencies by updating parent's dep list.
+        let (parent, _) = parent
+            .set_dependencies(
+                deps.iter().map(|t| t.id()).collect::<Vec<_>>().as_slice(),
+                Some("2026-04-22T00:00:00Z".into()),
+            )
+            .unwrap();
+        save_task(&conn, &parent).unwrap();
+
+        let parent_db = TaskDbId(parent.id().into());
+        let page1 = list_dependencies(
+            &conn,
+            parent_db,
+            &ListTaskDepsFilter {
+                limit: Some(2),
+                after: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        let cursor1 = page1.next_cursor.expect("more");
+        let after1: TaskId = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_dependencies(
+            &conn,
+            parent_db,
+            &ListTaskDepsFilter {
+                limit: Some(2),
+                after: Some(after1),
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_contract_notes_cursor_roundtrip() {
+        let (_tmp, conn) = setup();
+        let contract = create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "T".into(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec![],
+                metadata: None,
+            },
+        )
+        .unwrap();
+        for i in 0..4 {
+            let note = ContractNote::new(format!("n{i}"), None, "2026-04-22T00:00:00Z".into());
+            add_contract_note(&conn, contract.id(), &note).unwrap();
+        }
+
+        let page1 = list_contract_notes(
+            &conn,
+            contract.id(),
+            &ListContractNotesFilter {
+                limit: Some(2),
+                after: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        let cursor1 = page1.next_cursor.expect("more");
+        let after1: i64 = Cursor::decode(&cursor1).unwrap();
+        let page2 = list_contract_notes(
+            &conn,
+            contract.id(),
+            &ListContractNotesFilter {
+                limit: Some(2),
+                after: Some(after1),
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert!(page2.next_cursor.is_none());
+    }
+
     #[test]
     fn cursor_encode_decode_roundtrip() {
         let id = TaskId(42);
         let encoded = Cursor::encode(id);
-        let decoded = Cursor::decode(&encoded).unwrap();
+        let decoded: TaskId = Cursor::decode(&encoded).unwrap();
         assert_eq!(decoded, id);
     }
 
     #[test]
     fn cursor_decode_invalid() {
-        assert!(Cursor::decode("not!valid").is_err());
-        assert!(Cursor::decode("").is_err());
+        assert!(Cursor::decode::<TaskId>("not!valid").is_err());
+        assert!(Cursor::decode::<TaskId>("").is_err());
         // valid base64 but invalid JSON
-        assert!(Cursor::decode("aGVsbG8").is_err());
+        assert!(Cursor::decode::<TaskId>("aGVsbG8").is_err());
     }
 
     #[test]
@@ -4204,9 +4687,14 @@ mod tests {
             .unwrap();
         save_task(&conn, &t1).unwrap();
 
-        let deps = list_dependencies(&conn, TaskDbId(t1.id().into())).unwrap();
-        assert_eq!(deps.len(), 2);
-        let dep_ids: Vec<TaskId> = deps.iter().map(|t| t.id()).collect();
+        let deps = list_dependencies(
+            &conn,
+            TaskDbId(t1.id().into()),
+            &ListTaskDepsFilter::default(),
+        )
+        .unwrap();
+        assert_eq!(deps.items.len(), 2);
+        let dep_ids: Vec<TaskId> = deps.items.iter().map(|t| t.id()).collect();
         assert!(dep_ids.contains(&t2.id()));
         assert!(dep_ids.contains(&t3.id()));
     }
@@ -4216,8 +4704,13 @@ mod tests {
         let (_tmp, conn) = setup();
         let t1 = create_task(&conn, ProjectId(1), &default_create_params("t1")).unwrap();
 
-        let deps = list_dependencies(&conn, TaskDbId(t1.id().into())).unwrap();
-        assert!(deps.is_empty());
+        let deps = list_dependencies(
+            &conn,
+            TaskDbId(t1.id().into()),
+            &ListTaskDepsFilter::default(),
+        )
+        .unwrap();
+        assert!(deps.items.is_empty());
     }
 
     #[test]
@@ -4625,8 +5118,11 @@ mod tests {
         let by_name = backend.get_project_by_name("test-project").await.unwrap();
         assert_eq!(by_name.id(), proj.id());
 
-        let list = backend.list_projects().await.unwrap();
-        assert!(!list.is_empty());
+        let list = backend
+            .list_projects(&ListProjectsFilter::default())
+            .await
+            .unwrap();
+        assert!(!list.items.is_empty());
 
         backend.delete_project(proj.id()).await.unwrap();
         assert!(backend.get_project(proj.id()).await.is_err());
@@ -4661,8 +5157,11 @@ mod tests {
         let by_sub = backend.get_user_by_sub("alice").await.unwrap();
         assert_eq!(by_sub.id(), user.id());
 
-        let list = backend.list_users().await.unwrap();
-        assert_eq!(list.len(), 2); // default user + alice
+        let list = backend
+            .list_users(&ListUsersFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(list.items.len(), 2); // default user + alice
 
         backend.delete_user(user.id()).await.unwrap();
         assert!(backend.get_user(user.id()).await.is_err());
@@ -4702,15 +5201,21 @@ mod tests {
             .unwrap();
         assert_eq!(updated.role(), Role::Owner);
 
-        let members = backend.list_project_members(ProjectId(1)).await.unwrap();
-        assert_eq!(members.len(), 2); // default user (owner) + bob
+        let members = backend
+            .list_project_members(ProjectId(1), &ListProjectMembersFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(members.items.len(), 2); // default user (owner) + bob
 
         backend
             .remove_project_member(ProjectId(1), user.id())
             .await
             .unwrap();
-        let members = backend.list_project_members(ProjectId(1)).await.unwrap();
-        assert_eq!(members.len(), 1); // only default user (owner) remains
+        let members = backend
+            .list_project_members(ProjectId(1), &ListProjectMembersFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(members.items.len(), 1); // only default user (owner) remains
     }
 
     #[tokio::test]
@@ -4737,11 +5242,11 @@ mod tests {
         assert_eq!(t2.dependencies(), &[t1.id()]);
 
         let deps = backend
-            .list_dependencies(ProjectId(1), t2.id())
+            .list_dependencies(ProjectId(1), t2.id(), &ListTaskDepsFilter::default())
             .await
             .unwrap();
-        assert_eq!(deps.len(), 1);
-        assert_eq!(deps[0].id(), t1.id());
+        assert_eq!(deps.items.len(), 1);
+        assert_eq!(deps.items[0].id(), t1.id());
 
         let next = backend.next_task(ProjectId(1), None, false).await.unwrap();
         assert!(next.is_none() || next.unwrap().id() == t1.id());
@@ -5108,8 +5613,10 @@ mod tests {
         )
         .unwrap();
 
-        let fields = list_metadata_fields(&conn, ProjectId(1)).unwrap();
-        assert_eq!(fields.len(), 2);
+        let fields =
+            list_metadata_fields(&conn, ProjectId(1), &ListMetadataFieldsFilter::default())
+                .unwrap();
+        assert_eq!(fields.items.len(), 2);
 
         // Different project should be empty
         create_project(
@@ -5120,8 +5627,10 @@ mod tests {
             },
         )
         .unwrap();
-        let other_fields = list_metadata_fields(&conn, ProjectId(2)).unwrap();
-        assert!(other_fields.is_empty());
+        let other_fields =
+            list_metadata_fields(&conn, ProjectId(2), &ListMetadataFieldsFilter::default())
+                .unwrap();
+        assert!(other_fields.items.is_empty());
     }
 
     #[test]
@@ -5434,10 +5943,13 @@ mod tests {
             .await
             .unwrap();
 
-        let list = backend.list_contracts(ProjectId(1)).await.unwrap();
-        assert_eq!(list.len(), 2);
-        assert_eq!(list[0].id(), a.id());
-        assert_eq!(list[1].id(), b.id());
+        let list = backend
+            .list_contracts(ProjectId(1), &ListContractsFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(list.items.len(), 2);
+        assert_eq!(list.items[0].id(), a.id());
+        assert_eq!(list.items[1].id(), b.id());
     }
 
     #[tokio::test]
@@ -5546,8 +6058,11 @@ mod tests {
 
         // Child rows must be gone (SQLite FK cascade)
         assert!(backend.get_contract(c.id()).await.is_err());
-        let list = backend.list_contracts(ProjectId(1)).await.unwrap();
-        assert!(list.is_empty());
+        let list = backend
+            .list_contracts(ProjectId(1), &ListContractsFilter::default())
+            .await
+            .unwrap();
+        assert!(list.items.is_empty());
     }
 
     #[tokio::test]

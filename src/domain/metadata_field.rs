@@ -179,7 +179,11 @@ pub trait MetadataFieldRepository: Send + Sync {
         field_id: i64,
     ) -> Result<MetadataField>;
 
-    async fn list_metadata_fields(&self, project_id: ProjectId) -> Result<Vec<MetadataField>>;
+    async fn list_metadata_fields(
+        &self,
+        project_id: ProjectId,
+        filter: &ListMetadataFieldsFilter,
+    ) -> Result<super::pagination::ListPage<MetadataField>>;
 
     async fn update_metadata_field(
         &self,
@@ -189,6 +193,14 @@ pub trait MetadataFieldRepository: Send + Sync {
     ) -> Result<MetadataField>;
 
     async fn delete_metadata_field(&self, project_id: ProjectId, field_id: i64) -> Result<()>;
+}
+
+/// Filter / paging inputs for `list_metadata_fields`.
+#[derive(Clone, Default)]
+pub struct ListMetadataFieldsFilter {
+    pub limit: Option<u32>,
+    /// Cursor payload: the `metadata_fields.id` of the last row returned.
+    pub after: Option<i64>,
 }
 
 // --- Tests ---
