@@ -2221,12 +2221,15 @@ mod tests {
             return;
         }
         let backend = setup().await;
-        let task = backend.create_task(1, &params("Test task")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("Test task"))
+            .await
+            .unwrap();
         assert_eq!(task.title(), "Test task");
         assert_eq!(task.status(), TaskStatus::Draft);
         assert_eq!(task.priority(), Priority::P2);
 
-        let fetched = backend.get_task(1, task.id()).await.unwrap();
+        let fetched = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(fetched.id(), task.id());
         assert_eq!(fetched.title(), "Test task");
     }
@@ -2239,7 +2242,7 @@ mod tests {
         let backend = setup().await;
 
         let task = backend
-            .create_task(1, &params("Lifecycle test"))
+            .create_task(ProjectId(1), &params("Lifecycle test"))
             .await
             .unwrap();
         assert_eq!(task.status(), TaskStatus::Draft);
@@ -2247,19 +2250,19 @@ mod tests {
         // Draft → Todo
         let (task, _) = task.publish(now_utc()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task.status(), TaskStatus::Todo);
 
         // Todo → InProgress
         let (task, _) = task.start(None, None, now_utc(), None).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task.status(), TaskStatus::InProgress);
 
         // InProgress → Completed
         let (task, _) = task.complete(now_utc()).unwrap();
         backend.save(&task).await.unwrap();
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task.status(), TaskStatus::Completed);
     }
 
@@ -2274,7 +2277,7 @@ mod tests {
         p.definition_of_done = vec!["Write tests".to_string(), "Review code".to_string()];
         p.tags = vec!["backend".to_string(), "postgres".to_string()];
 
-        let task = backend.create_task(1, &p).await.unwrap();
+        let task = backend.create_task(ProjectId(1), &p).await.unwrap();
         assert_eq!(task.definition_of_done().len(), 2);
         assert_eq!(task.definition_of_done()[0].content(), "Write tests");
         assert!(!task.definition_of_done()[0].checked());
@@ -2289,21 +2292,30 @@ mod tests {
         }
         let backend = setup().await;
 
-        let t1 = backend.create_task(1, &params("Task 1")).await.unwrap();
-        let t2 = backend.create_task(1, &params("Task 2")).await.unwrap();
+        let t1 = backend
+            .create_task(ProjectId(1), &params("Task 1"))
+            .await
+            .unwrap();
+        let t2 = backend
+            .create_task(ProjectId(1), &params("Task 2"))
+            .await
+            .unwrap();
 
         let (t2, _) = t2.add_dependency(t1.id(), Some(now_utc())).unwrap();
         backend.save(&t2).await.unwrap();
-        let t2 = backend.get_task(1, t2.id()).await.unwrap();
+        let t2 = backend.get_task(ProjectId(1), t2.id()).await.unwrap();
         assert_eq!(t2.dependencies(), vec![t1.id()]);
 
-        let deps = backend.list_dependencies(1, t2.id()).await.unwrap();
+        let deps = backend
+            .list_dependencies(ProjectId(1), t2.id())
+            .await
+            .unwrap();
         assert_eq!(deps.len(), 1);
         assert_eq!(deps[0].id(), t1.id());
 
         let (t2, _) = t2.remove_dependency(t1.id(), Some(now_utc())).unwrap();
         backend.save(&t2).await.unwrap();
-        let t2 = backend.get_task(1, t2.id()).await.unwrap();
+        let t2 = backend.get_task(ProjectId(1), t2.id()).await.unwrap();
         assert!(t2.dependencies().is_empty());
     }
 
@@ -2315,47 +2327,89 @@ mod tests {
         let backend = setup().await;
 
         // Draft → false
-        let draft = backend.create_task(1, &params("Draft")).await.unwrap();
-        assert!(!backend.is_task_ready(1, draft.id()).await.unwrap());
+        let draft = backend
+            .create_task(ProjectId(1), &params("Draft"))
+            .await
+            .unwrap();
+        assert!(
+            !backend
+                .is_task_ready(ProjectId(1), draft.id())
+                .await
+                .unwrap()
+        );
 
         // Todo, no deps → true
-        let (free, _) = draft.ready(now_utc()).unwrap();
+        let (free, _) = draft.publish(now_utc()).unwrap();
         backend.save(&free).await.unwrap();
-        assert!(backend.is_task_ready(1, free.id()).await.unwrap());
+        assert!(
+            backend
+                .is_task_ready(ProjectId(1), free.id())
+                .await
+                .unwrap()
+        );
 
         // In-progress → false
         let (wip, _) = free.start(None, None, now_utc(), None).unwrap();
         backend.save(&wip).await.unwrap();
-        assert!(!backend.is_task_ready(1, wip.id()).await.unwrap());
+        assert!(!backend.is_task_ready(ProjectId(1), wip.id()).await.unwrap());
 
         // Completed → false
         let (done, _) = wip.complete(now_utc()).unwrap();
         backend.save(&done).await.unwrap();
-        assert!(!backend.is_task_ready(1, done.id()).await.unwrap());
+        assert!(
+            !backend
+                .is_task_ready(ProjectId(1), done.id())
+                .await
+                .unwrap()
+        );
 
         // Todo with completed dep → true
-        let unblocked_raw = backend.create_task(1, &params("Unblocked")).await.unwrap();
+        let unblocked_raw = backend
+            .create_task(ProjectId(1), &params("Unblocked"))
+            .await
+            .unwrap();
         let (unblocked_raw, _) = unblocked_raw
             .add_dependency(done.id(), Some(now_utc()))
             .unwrap();
         backend.save(&unblocked_raw).await.unwrap();
-        let (unblocked, _) = unblocked_raw.ready(now_utc()).unwrap();
+        let (unblocked, _) = unblocked_raw.publish(now_utc()).unwrap();
         backend.save(&unblocked).await.unwrap();
-        assert!(backend.is_task_ready(1, unblocked.id()).await.unwrap());
+        assert!(
+            backend
+                .is_task_ready(ProjectId(1), unblocked.id())
+                .await
+                .unwrap()
+        );
 
         // Todo with incomplete dep → false
-        let dep = backend.create_task(1, &params("Dep")).await.unwrap();
-        let blocked_raw = backend.create_task(1, &params("Blocked")).await.unwrap();
+        let dep = backend
+            .create_task(ProjectId(1), &params("Dep"))
+            .await
+            .unwrap();
+        let blocked_raw = backend
+            .create_task(ProjectId(1), &params("Blocked"))
+            .await
+            .unwrap();
         let (blocked_raw, _) = blocked_raw
             .add_dependency(dep.id(), Some(now_utc()))
             .unwrap();
         backend.save(&blocked_raw).await.unwrap();
-        let (blocked, _) = blocked_raw.ready(now_utc()).unwrap();
+        let (blocked, _) = blocked_raw.publish(now_utc()).unwrap();
         backend.save(&blocked).await.unwrap();
-        assert!(!backend.is_task_ready(1, blocked.id()).await.unwrap());
+        assert!(
+            !backend
+                .is_task_ready(ProjectId(1), blocked.id())
+                .await
+                .unwrap()
+        );
 
         // Missing task → false
-        assert!(!backend.is_task_ready(1, TaskId(999_999)).await.unwrap());
+        assert!(
+            !backend
+                .is_task_ready(ProjectId(1), TaskId(999_999))
+                .await
+                .unwrap()
+        );
     }
 
     #[tokio::test]
@@ -2365,17 +2419,27 @@ mod tests {
         }
         let backend = setup().await;
 
-        let t1 = backend.create_task(1, &params("Todo task")).await.unwrap();
+        let t1 = backend
+            .create_task(ProjectId(1), &params("Todo task"))
+            .await
+            .unwrap();
         let (t1, _) = t1.publish(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
-        let _t2 = backend.create_task(1, &params("Draft task")).await.unwrap();
+        let _t2 = backend
+            .create_task(ProjectId(1), &params("Draft task"))
+            .await
+            .unwrap();
 
         let filter = ListTasksFilter {
             statuses: vec![TaskStatus::Todo],
             ..Default::default()
         };
-        let tasks = backend.list_tasks(1, &filter).await.unwrap().items;
+        let tasks = backend
+            .list_tasks(ProjectId(1), &filter)
+            .await
+            .unwrap()
+            .items;
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].title(), "Todo task");
     }
@@ -2388,17 +2452,17 @@ mod tests {
         let backend = setup().await;
 
         // No tasks → None
-        let next = backend.next_task(1, None, false).await.unwrap();
+        let next = backend.next_task(ProjectId(1), None, false).await.unwrap();
         assert!(next.is_none());
 
         let t1 = backend
-            .create_task(1, &params("High priority"))
+            .create_task(ProjectId(1), &params("High priority"))
             .await
             .unwrap();
         let (t1, _) = t1.publish(now_utc()).unwrap();
         backend.save(&t1).await.unwrap();
 
-        let next = backend.next_task(1, None, false).await.unwrap();
+        let next = backend.next_task(ProjectId(1), None, false).await.unwrap();
         assert!(next.is_some());
         assert_eq!(next.unwrap().title(), "High priority");
     }
@@ -2469,10 +2533,13 @@ mod tests {
         }
         let backend = setup().await;
 
-        let task = backend.create_task(1, &params("Original")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("Original"))
+            .await
+            .unwrap();
         let updated = backend
             .update_task(
-                1,
+                ProjectId(1),
                 task.id(),
                 &UpdateTaskParams {
                     title: Some("Updated".to_string()),
@@ -2505,11 +2572,14 @@ mod tests {
         }
         let backend = setup().await;
 
-        let task = backend.create_task(1, &params("Array test")).await.unwrap();
+        let task = backend
+            .create_task(ProjectId(1), &params("Array test"))
+            .await
+            .unwrap();
 
         backend
             .update_task_arrays(
-                1,
+                ProjectId(1),
                 task.id(),
                 &UpdateTaskArrayParams {
                     set_tags: None,
@@ -2529,7 +2599,7 @@ mod tests {
             .await
             .unwrap();
 
-        let task = backend.get_task(1, task.id()).await.unwrap();
+        let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(task.tags().len(), 2);
         assert_eq!(task.definition_of_done().len(), 1);
         assert_eq!(task.definition_of_done()[0].content(), "DoD item");
@@ -2542,10 +2612,16 @@ mod tests {
         }
         let backend = setup().await;
 
-        backend.create_task(1, &params("Task A")).await.unwrap();
-        backend.create_task(1, &params("Task B")).await.unwrap();
+        backend
+            .create_task(ProjectId(1), &params("Task A"))
+            .await
+            .unwrap();
+        backend
+            .create_task(ProjectId(1), &params("Task B"))
+            .await
+            .unwrap();
 
-        let stats = backend.task_stats(1).await.unwrap();
+        let stats = backend.task_stats(ProjectId(1)).await.unwrap();
         assert_eq!(*stats.get("draft").unwrap_or(&0), 2);
     }
 
@@ -2563,13 +2639,19 @@ mod tests {
             required_on_complete: false,
             description: Some("Sprint name".to_string()),
         };
-        let field = backend.create_metadata_field(1, &params).await.unwrap();
+        let field = backend
+            .create_metadata_field(ProjectId(1), &params)
+            .await
+            .unwrap();
         assert_eq!(field.name(), "sprint");
         assert_eq!(field.field_type(), MetadataFieldType::String);
         assert!(!field.required_on_complete());
         assert_eq!(field.description(), Some("Sprint name"));
 
-        let fetched = backend.get_metadata_field(1, field.id()).await.unwrap();
+        let fetched = backend
+            .get_metadata_field(ProjectId(1), field.id())
+            .await
+            .unwrap();
         assert_eq!(fetched.id(), field.id());
     }
 
@@ -2581,7 +2663,7 @@ mod tests {
         let backend = setup().await;
         backend
             .create_metadata_field(
-                1,
+                ProjectId(1),
                 &CreateMetadataFieldParams {
                     name: "sprint".to_string(),
                     field_type: MetadataFieldType::String,
@@ -2593,7 +2675,7 @@ mod tests {
             .unwrap();
         backend
             .create_metadata_field(
-                1,
+                ProjectId(1),
                 &CreateMetadataFieldParams {
                     name: "points".to_string(),
                     field_type: MetadataFieldType::Number,
@@ -2604,7 +2686,7 @@ mod tests {
             .await
             .unwrap();
 
-        let fields = backend.list_metadata_fields(1).await.unwrap();
+        let fields = backend.list_metadata_fields(ProjectId(1)).await.unwrap();
         assert_eq!(fields.len(), 2);
     }
 
@@ -2616,7 +2698,7 @@ mod tests {
         let backend = setup().await;
         let field = backend
             .create_metadata_field(
-                1,
+                ProjectId(1),
                 &CreateMetadataFieldParams {
                     name: "sprint".to_string(),
                     field_type: MetadataFieldType::String,
@@ -2630,7 +2712,7 @@ mod tests {
         // Clear description
         let updated = backend
             .update_metadata_field(
-                1,
+                ProjectId(1),
                 field.id(),
                 &UpdateMetadataFieldParams {
                     required_on_complete: None,
@@ -2644,7 +2726,7 @@ mod tests {
         // Set description
         let updated = backend
             .update_metadata_field(
-                1,
+                ProjectId(1),
                 field.id(),
                 &UpdateMetadataFieldParams {
                     required_on_complete: None,
@@ -2664,7 +2746,7 @@ mod tests {
         let backend = setup().await;
         let field = backend
             .create_metadata_field(
-                1,
+                ProjectId(1),
                 &CreateMetadataFieldParams {
                     name: "sprint".to_string(),
                     field_type: MetadataFieldType::String,
@@ -2674,8 +2756,11 @@ mod tests {
             )
             .await
             .unwrap();
-        backend.delete_metadata_field(1, field.id()).await.unwrap();
-        let result = backend.get_metadata_field(1, field.id()).await;
+        backend
+            .delete_metadata_field(ProjectId(1), field.id())
+            .await
+            .unwrap();
+        let result = backend.get_metadata_field(ProjectId(1), field.id()).await;
         assert!(result.is_err());
     }
 
@@ -2691,8 +2776,11 @@ mod tests {
             required_on_complete: false,
             description: None,
         };
-        backend.create_metadata_field(1, &params).await.unwrap();
-        let result = backend.create_metadata_field(1, &params).await;
+        backend
+            .create_metadata_field(ProjectId(1), &params)
+            .await
+            .unwrap();
+        let result = backend.create_metadata_field(ProjectId(1), &params).await;
         assert!(result.is_err());
     }
 
@@ -2752,11 +2840,11 @@ mod tests {
         }
         let backend = setup().await;
         let created = backend
-            .create_contract(1, &contract_params("Spec"))
+            .create_contract(ProjectId(1), &contract_params("Spec"))
             .await
             .unwrap();
         assert_eq!(created.title(), "Spec");
-        assert_eq!(created.project_id(), 1);
+        assert_eq!(created.project_id(), ProjectId(1));
         assert_eq!(created.definition_of_done().len(), 2);
         assert_eq!(created.tags(), &["api".to_string()]);
 
@@ -2772,7 +2860,7 @@ mod tests {
         }
         let backend = setup().await;
         let c = backend
-            .create_contract(1, &contract_params("Update me"))
+            .create_contract(ProjectId(1), &contract_params("Update me"))
             .await
             .unwrap();
 
@@ -2815,7 +2903,7 @@ mod tests {
         }
         let backend = setup().await;
         let c = backend
-            .create_contract(1, &contract_params("Delete"))
+            .create_contract(ProjectId(1), &contract_params("Delete"))
             .await
             .unwrap();
         backend
@@ -2837,15 +2925,15 @@ mod tests {
         }
         let backend = setup().await;
         let c = backend
-            .create_contract(1, &contract_params("linked at create"))
+            .create_contract(ProjectId(1), &contract_params("linked at create"))
             .await
             .unwrap();
         let mut p = params("task with contract");
         p.contract_id = Some(c.id());
-        let task = backend.create_task(1, &p).await.unwrap();
+        let task = backend.create_task(ProjectId(1), &p).await.unwrap();
         assert_eq!(task.contract_id(), Some(c.id()));
 
-        let got = backend.get_task(1, task.id()).await.unwrap();
+        let got = backend.get_task(ProjectId(1), task.id()).await.unwrap();
         assert_eq!(got.contract_id(), Some(c.id()));
     }
 
@@ -2856,18 +2944,18 @@ mod tests {
         }
         let backend = setup().await;
         let c = backend
-            .create_contract(1, &contract_params("linked"))
+            .create_contract(ProjectId(1), &contract_params("linked"))
             .await
             .unwrap();
         let task = backend
-            .create_task(1, &params("linked task"))
+            .create_task(ProjectId(1), &params("linked task"))
             .await
             .unwrap();
         assert_eq!(task.contract_id(), None);
 
         let updated = backend
             .update_task(
-                1,
+                ProjectId(1),
                 task.id(),
                 &UpdateTaskParams {
                     title: None,
