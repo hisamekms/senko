@@ -165,10 +165,20 @@ Capture all the IDs for Phase 3.
 
 Set up dependencies between tasks:
 
-1. Check existing active tasks for potential dependencies:
+1. Check existing active tasks for potential dependencies (walk every page — `task list` is cursor-paginated):
 
 ```bash
-senko task list --status todo --status in_progress
+CURSOR=""
+while :; do
+  if [ -z "$CURSOR" ]; then
+    PAGE=$(senko task list --status todo --status in_progress --limit 50)
+  else
+    PAGE=$(senko task list --status todo --status in_progress --limit 50 --after "$CURSOR")
+  fi
+  echo "$PAGE" | jq '.items[]'
+  CURSOR=$(echo "$PAGE" | jq -r '.next_cursor // empty')
+  [ -z "$CURSOR" ] && break
+done
 ```
 
 2. For **split tasks**: set dependencies between the new tasks where one must complete before another can start (sequential relationships). Tasks that can run in parallel should have no dependency between them.

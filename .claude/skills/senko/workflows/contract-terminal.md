@@ -15,7 +15,19 @@ senko task get <id>
 - Load Contract state:
   ```bash
   senko contract get <contract_id>
-  senko contract note list <contract_id>
+
+  # Walk every page of contract notes — `contract note list` is cursor-paginated.
+  CURSOR=""
+  while :; do
+    if [ -z "$CURSOR" ]; then
+      PAGE=$(senko contract note list <contract_id> --limit 50)
+    else
+      PAGE=$(senko contract note list <contract_id> --limit 50 --after "$CURSOR")
+    fi
+    echo "$PAGE" | jq '.items[]'
+    CURSOR=$(echo "$PAGE" | jq -r '.next_cursor // empty')
+    [ -z "$CURSOR" ] && break
+  done
   ```
   Hold the contract DoD, description, and notes in working context.
 - Enumerate sibling tasks linked to the same Contract and verify they are all `completed`. Use the task's `dependencies` array (set up by `add-task.md` Phase 3) — every ID there should be a completed sub-task. For each dependency ID:

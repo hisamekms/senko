@@ -4,13 +4,23 @@ Visualize task dependencies as a text-based graph for terminal display.
 
 ## Procedure
 
-1. Fetch all tasks:
+1. Fetch all tasks (walk every page — `task list` is cursor-paginated):
 
 ```bash
-senko task list
+CURSOR=""
+while :; do
+  if [ -z "$CURSOR" ]; then
+    PAGE=$(senko task list --limit 50)
+  else
+    PAGE=$(senko task list --limit 50 --after "$CURSOR")
+  fi
+  echo "$PAGE" | jq '.items[]'
+  CURSOR=$(echo "$PAGE" | jq -r '.next_cursor // empty')
+  [ -z "$CURSOR" ] && break
+done
 ```
 
-2. From the JSON output, build a dependency graph. Each task's `dependencies` array lists the IDs it depends on.
+2. From the streamed task items, build a dependency graph. Each task's `dependencies` array lists the IDs it depends on.
 
 3. Render the graph as a text-based diagram using these conventions:
 

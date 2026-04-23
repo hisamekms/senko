@@ -67,7 +67,19 @@ Read full task info from `senko task get <id>` output: `description`, `plan`, `d
 
 ```bash
 senko contract get <contract_id>
-senko contract note list <contract_id>
+
+# Walk every page of contract notes — `contract note list` is cursor-paginated.
+CURSOR=""
+while :; do
+  if [ -z "$CURSOR" ]; then
+    PAGE=$(senko contract note list <contract_id> --limit 50)
+  else
+    PAGE=$(senko contract note list <contract_id> --limit 50 --after "$CURSOR")
+  fi
+  echo "$PAGE" | jq '.items[]'
+  CURSOR=$(echo "$PAGE" | jq -r '.next_cursor // empty')
+  [ -z "$CURSOR" ] && break
+done
 ```
 
 Surface the Contract's title, description, DoD checklist, and the full note list into the assistant's working context before moving on. Prior sessions may have recorded decisions, gotchas, or scope clarifications there.
@@ -96,7 +108,7 @@ Wait for the user to approve the plan.
 
 > This subsection applies **only** when the task has a `contract_id` set. Skip entirely for Contract-less tasks.
 
-Notes are the shared memory between sibling sub-tasks and the terminal task. Record one — via the command below — at each of the following moments. Each note should be 1–2 sentences; before adding, re-read `senko contract note list <contract_id>` and skip the write if the same observation is already present.
+Notes are the shared memory between sibling sub-tasks and the terminal task. Record one — via the command below — at each of the following moments. Each note should be 1–2 sentences; before adding, walk every page of `senko contract note list <contract_id>` (using the same CURSOR while loop shown in Step 1 — repeat `--after "$CURSOR"` until `next_cursor` is null) and skip the write if the same observation is already present.
 
 For every note you add, wrap the write with the `contract_note_add` workflow-stage hooks. Emit pre-hooks, run `senko contract note add`, then emit post-hooks:
 
