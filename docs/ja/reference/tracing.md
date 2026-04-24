@@ -87,9 +87,21 @@ Remote は起動時に次の標準 OTel 環境変数を読み、OTel SDK を初�
 | `OTEL_LOGS_EXPORTER` | `otlp` / `console` / `none` | `none` (※) | logs の送出先 |
 | `OTEL_SERVICE_NAME` | 文字列 | `senko-server` | `service.name` Resource 属性の値 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | URL | — | OTLP collector。これが設定されると exporter 既定が `otlp` に昇格 |
-| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | OTel SDK の Resource 属性 (SDK が直接読む) |
+| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | OTel SDK の Resource 属性 (SDK が直接読む)。`service.version=…` を含めると Remote の既定値 (ビルド時の `CARGO_PKG_VERSION`) を上書きできる |
 
 > **(※) 既定値についての注意**: OTel 仕様の既定は `otlp` ですが、senko Remote は **OTel env が何も設定されていない時は `none`** にしています (ローカル開発で意図せぬ OTLP 接続を避けるため)。`OTEL_EXPORTER_OTLP_ENDPOINT` を設定すると exporter の既定が `otlp` に昇格します。未知の exporter 名は警告ログを出して `none` として扱います。
+
+### 自動付与される Resource 属性
+
+Remote は起動時に次の Resource 属性を自動付与します。全ての traces / logs にこれらが載ります。
+
+| 属性 | 既定値 | env による上書き |
+|---|---|---|
+| `service.name` | `senko-server` | 上書き不可 (pre-existing) |
+| `service.version` | ビルド時の `CARGO_PKG_VERSION` | `OTEL_RESOURCE_ATTRIBUTES=service.version=…` で上書き可 |
+| `senko.version` | ビルド時の `CARGO_PKG_VERSION` | **上書き不可**。telemetry データの provenance 担保のため senko バイナリが常に自己申告する |
+
+`senko.version` は Aviary 連携仕様で必須とされているため、env からの書き換えはできません。運用上 "どのバージョンの senko が emit したか" の真実を保つための設計判断です。
 
 ## Baggage → Span attribute の昇格
 

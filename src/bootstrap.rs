@@ -565,6 +565,39 @@ impl TelemetryGuard {
     }
 }
 
+/// Build the OTel `Resource` used by both the tracer and logger providers.
+///
+/// Resource attribute policy:
+/// - `service.name`: pinned to `"senko-server"` (overrides `OTEL_SERVICE_NAME`
+///   and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` — pre-existing behavior).
+/// - `service.version`: defaults to `CARGO_PKG_VERSION`; env-supplied
+///   `OTEL_RESOURCE_ATTRIBUTES=service.version=...` takes precedence.
+/// - `senko.version`: always `CARGO_PKG_VERSION`. Cannot be overridden by
+///   env — operators should treat this as an authoritative provenance tag.
+pub(crate) fn build_telemetry_resource() -> opentelemetry_sdk::Resource {
+    use opentelemetry::KeyValue;
+    use opentelemetry_sdk::Resource;
+
+    const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+    let env_has_service_version = std::env::var("OTEL_RESOURCE_ATTRIBUTES")
+        .ok()
+        .map(|s| {
+            parse_otel_resource_attributes(&s)
+                .iter()
+                .any(|(k, _)| k == "service.version")
+        })
+        .unwrap_or(false);
+
+    let mut builder = Resource::builder().with_service_name("senko-server");
+    if !env_has_service_version {
+        builder = builder.with_attribute(KeyValue::new("service.version", VERSION));
+    }
+    builder
+        .with_attribute(KeyValue::new("senko.version", VERSION))
+        .build()
+}
+
 /// Initialize tracing + OTel SDK for `senko serve` / `senko serve --proxy`.
 ///
 /// Behavior is controlled entirely by OTel standard environment variables;
@@ -580,7 +613,6 @@ impl TelemetryGuard {
 /// Unknown exporter values log a warning and behave like `none`.
 pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
     use opentelemetry::propagation::TextMapCompositePropagator;
-    use opentelemetry_sdk::Resource;
     use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 
     // Always install the composite propagator so the HTTP middleware can
@@ -609,13 +641,7 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
         };
     }
 
-    // Resource. The SDK reads OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES
-    // through built-in detectors when we start from `Resource::builder()`.
-    // A fallback service name keeps traces identifiable even when the
-    // operator forgot to set OTEL_SERVICE_NAME.
-    let resource = Resource::builder()
-        .with_service_name("senko-server")
-        .build();
+    let resource = build_telemetry_resource();
 
     let tracer_provider = build_tracer_provider(resource.clone());
     let logger_provider = build_logger_provider(resource);
@@ -1393,6 +1419,114 @@ name = "project-local"
         }
         let got = resolve_trace_attributes(&[]);
         assert_eq!(got.get("senko.operation.id"), Some(&"otel-val".to_string()),);
+        clear_trace_env();
+    }
+
+    // --- build_telemetry_resource ---
+
+    /// Test-only exporter that captures the `Resource` forwarded by the SDK
+    /// via `set_resource`. We use this instead of `InMemorySpanExporter`
+    /// because the latter stores the resource privately with no getter.
+    #[derive(Clone, Debug, Default)]
+    struct ResourceCapturingExporter {
+        resource: std::sync::Arc<std::sync::Mutex<Option<opentelemetry_sdk::Resource>>>,
+    }
+
+    impl ResourceCapturingExporter {
+        fn captured(&self) -> opentelemetry_sdk::Resource {
+            self.resource
+                .lock()
+                .unwrap()
+                .clone()
+                .expect("set_resource was not called")
+        }
+    }
+
+    impl opentelemetry_sdk::trace::SpanExporter for ResourceCapturingExporter {
+        async fn export(
+            &self,
+            _batch: Vec<opentelemetry_sdk::trace::SpanData>,
+        ) -> opentelemetry_sdk::error::OTelSdkResult {
+            Ok(())
+        }
+
+        fn set_resource(&mut self, resource: &opentelemetry_sdk::Resource) {
+            *self.resource.lock().unwrap() = Some(resource.clone());
+        }
+    }
+
+    /// Build a provider with our resource and return what the exporter received.
+    fn capture_resource() -> opentelemetry_sdk::Resource {
+        use opentelemetry_sdk::trace::SdkTracerProvider;
+        let exporter = ResourceCapturingExporter::default();
+        // `build()` calls `set_resource` on every processor synchronously,
+        // which forwards to the exporter — no span needs to be emitted.
+        let _provider = SdkTracerProvider::builder()
+            .with_resource(build_telemetry_resource())
+            .with_simple_exporter(exporter.clone())
+            .build();
+        exporter.captured()
+    }
+
+    fn attr(resource: &opentelemetry_sdk::Resource, key: &str) -> Option<String> {
+        resource
+            .get(&opentelemetry::Key::new(key.to_string()))
+            .map(|v| v.to_string())
+    }
+
+    #[test]
+    #[serial]
+    fn resource_has_service_version_from_cargo_pkg_version_when_env_absent() {
+        clear_trace_env();
+        let resource = capture_resource();
+        assert_eq!(
+            attr(&resource, "service.version").as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resource_always_has_senko_version_from_cargo_pkg_version() {
+        clear_trace_env();
+        let resource = capture_resource();
+        assert_eq!(
+            attr(&resource, "senko.version").as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+
+        // Even when the operator tries to override it via env, senko.version
+        // must stay pinned to the baked-in version.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "senko.version=evil");
+        }
+        let resource = capture_resource();
+        assert_eq!(
+            attr(&resource, "senko.version").as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resource_service_version_respects_env_override() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "service.version=1.2.3-foo");
+        }
+        let resource = capture_resource();
+        assert_eq!(
+            attr(&resource, "service.version").as_deref(),
+            Some("1.2.3-foo"),
+        );
+        // senko.version stays at the baked-in version.
+        assert_eq!(
+            attr(&resource, "senko.version").as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
         clear_trace_env();
     }
 }

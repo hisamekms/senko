@@ -87,9 +87,21 @@ The Remote reads the standard OTel environment variables at startup to initializ
 | `OTEL_LOGS_EXPORTER` | `otlp` / `console` / `none` | `none` (see note) | Logs destination. |
 | `OTEL_SERVICE_NAME` | string | `senko-server` | Value of the `service.name` Resource attribute. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | URL | — | OTLP collector endpoint. When set, the default exporter is promoted to `otlp`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | Resource attributes (read directly by the SDK). |
+| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | Resource attributes (read directly by the SDK). Including `service.version=…` here overrides the Remote's default (baked-in `CARGO_PKG_VERSION`). |
 
 > **Note on defaults**: the OTel spec says the default exporter is `otlp`, but senko Remote defaults to **`none` when no OTel env is set** — this keeps local development quiet and avoids unintended OTLP connections. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` promotes the default to `otlp`. Unknown exporter names log a warning and fall back to `none`.
+
+### Auto-attached Resource Attributes
+
+The Remote auto-attaches the following Resource attributes at startup. They ride on every exported trace and log:
+
+| Attribute | Default | Env override |
+|---|---|---|
+| `service.name` | `senko-server` | Not overridable (pre-existing). |
+| `service.version` | Baked-in `CARGO_PKG_VERSION` at build time. | Overridable via `OTEL_RESOURCE_ATTRIBUTES=service.version=…`. |
+| `senko.version` | Baked-in `CARGO_PKG_VERSION` at build time. | **Not overridable.** The senko binary always self-reports this, keeping telemetry provenance honest. |
+
+`senko.version` is required by the Aviary integration contract, so no env override is provided — operators should always see the actual version that emitted the data.
 
 ## Baggage → Span Attribute Promotion
 
