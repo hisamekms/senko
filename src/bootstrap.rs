@@ -641,10 +641,35 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
     }
 }
 
+/// Resolve the effective exporter choice for traces/logs.
+///
+/// Per Contract #7 ("未設定時は export しない") the default is **not** the
+/// OTel-spec default of `"otlp"`: a bare `senko serve` with no OTel env at
+/// all must emit nothing, to avoid log spam / connect retries against a
+/// non-existent collector in local-dev. The user opts in by either setting
+/// `<OTEL_*_EXPORTER>` explicitly (honor whatever they chose, including
+/// `otlp` / `console` / `none`) OR by setting `OTEL_EXPORTER_OTLP_ENDPOINT`
+/// (signals intent to talk to a collector → use `otlp`).
+fn resolve_exporter_choice(exporter_env: &str) -> String {
+    if let Ok(v) = std::env::var(exporter_env)
+        && !v.is_empty()
+    {
+        return v;
+    }
+    if std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
+        .ok()
+        .filter(|v| !v.is_empty())
+        .is_some()
+    {
+        return "otlp".to_string();
+    }
+    "none".to_string()
+}
+
 fn build_tracer_provider(
     resource: opentelemetry_sdk::Resource,
 ) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
-    let choice = std::env::var("OTEL_TRACES_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
+    let choice = resolve_exporter_choice("OTEL_TRACES_EXPORTER");
     match choice.as_str() {
         "otlp" => match opentelemetry_otlp::SpanExporter::builder()
             .with_tonic()
@@ -681,7 +706,7 @@ fn build_tracer_provider(
 fn build_logger_provider(
     resource: opentelemetry_sdk::Resource,
 ) -> Option<opentelemetry_sdk::logs::SdkLoggerProvider> {
-    let choice = std::env::var("OTEL_LOGS_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
+    let choice = resolve_exporter_choice("OTEL_LOGS_EXPORTER");
     match choice.as_str() {
         "otlp" => match opentelemetry_otlp::LogExporter::builder()
             .with_tonic()
