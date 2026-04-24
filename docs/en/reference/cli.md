@@ -14,9 +14,12 @@ Complete list of `senko` subcommands.
 --postgres-url <URL>    PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
 --project <NAME>        project to operate on (env: SENKO_PROJECT)
 --user <NAME>           user to act as (env: SENKO_USER)
+--attr KEY=VALUE        attribute to attach to trace/baggage (repeatable, malformed input errors out)
 ```
 
 > Place `--output` and `--dry-run` **before the subcommand**: `senko --output text task list`.
+
+> For the full behavior of `--attr` / `SENKO_TRACE_ATTRIBUTES` / `OTEL_RESOURCE_ATTRIBUTES` — precedence, reserved-namespace exclusion — see the [Tracing Reference](tracing.md).
 
 ## Command Overview
 

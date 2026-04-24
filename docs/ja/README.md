@@ -56,6 +56,9 @@ senko skill-install
 
 デプロイ形態別に目的の How-To を引きます。
 
+**分散トレーシング** (runtime 横断)
+- [OTel Tracing 運用ガイド](guides/tracing.md) — CLI → Remote の属性伝搬、Claude Code との共存、Jaeger / Tempo / console exporter の検証手順、セキュリティ考慮
+
 **CLI を使う人** — [guides/cli/](guides/cli/)
 - [Skill のインストールと更新](guides/cli/skill-install.md)
 - [Workflow stage の実例](guides/cli/workflow-stages.md)
@@ -81,6 +84,7 @@ senko skill-install
 - [REST API リファレンス](reference/api.md) — エンドポイント全量
 - [データモデル](reference/data-model.md) — DB スキーマ
 - [Hooks リファレンス](reference/hooks.md) — envelope / trigger マトリクス
+- [Tracing リファレンス](reference/tracing.md) — baggage / traceparent 伝搬と Remote OTel 環境変数
 - **設定リファレンス** — [reference/config/](reference/config/)
   - [概論](reference/config/overview.md) — ファイル配置・優先順位・runtime フィルタ
   - [`[cli.*]`](reference/config/cli.md)

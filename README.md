@@ -60,6 +60,9 @@ Explains **why** senko is designed the way it is, framed around the three pillar
 
 How-to guides organized by deployment shape.
 
+**Distributed tracing** (cross-runtime)
+- [OTel Tracing Operations Guide](docs/en/guides/tracing.md) — CLI → Remote attribute propagation, Claude Code integration, Jaeger / Tempo / console-exporter verification, security
+
 **If you use the CLI** — [docs/en/guides/cli/](docs/en/guides/cli/)
 - [Installing and Updating the Skill](docs/en/guides/cli/skill-install.md)
 - [Workflow Stage Examples](docs/en/guides/cli/workflow-stages.md)
@@ -85,6 +88,7 @@ How-to guides organized by deployment shape.
 - [REST API Reference](docs/en/reference/api.md) — every endpoint
 - [Data Model](docs/en/reference/data-model.md) — DB schema
 - [Hooks Reference](docs/en/reference/hooks.md) — envelope and trigger matrix
+- [Tracing Reference](docs/en/reference/tracing.md) — baggage / traceparent propagation and Remote OTel env
 - **Config Reference** — [docs/en/reference/config/](docs/en/reference/config/)
   - [Overview](docs/en/reference/config/overview.md) — file layout, precedence, runtime filtering
   - [`[cli.*]`](docs/en/reference/config/cli.md)

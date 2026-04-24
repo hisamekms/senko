@@ -14,9 +14,12 @@
 --postgres-url <URL>    PostgreSQL 接続 URL (env: SENKO_POSTGRES_URL)
 --project <NAME>        操作対象プロジェクト (env: SENKO_PROJECT)
 --user <NAME>           操作ユーザ (env: SENKO_USER)
+--attr KEY=VALUE        trace/baggage に乗せる属性 (繰り返し可、malformed はエラー終了)
 ```
 
 > `--output` と `--dry-run` は **サブコマンドの前** に置いてください: `senko --output text task list`
+
+> `--attr` / `SENKO_TRACE_ATTRIBUTES` / `OTEL_RESOURCE_ATTRIBUTES` の詳細・優先順位・予約 namespace 除外仕様は [Tracing リファレンス](tracing.md) を参照。
 
 ## コマンド一覧
 
