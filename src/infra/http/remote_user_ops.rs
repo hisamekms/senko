@@ -24,9 +24,13 @@ pub struct RemoteUserOperations {
 }
 
 impl RemoteUserOperations {
-    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: &str,
+        api_key: Option<String>,
+        attributes: std::collections::BTreeMap<String, String>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key),
+            http: HttpClient::new(base_url, api_key, attributes),
         }
     }
 
@@ -34,8 +38,9 @@ impl RemoteUserOperations {
         self.http.url(path)
     }
 
-    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        self.http.auth(builder)
+    /// Attach Bearer auth + W3C trace-propagation headers to the request builder.
+    fn prepare(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.http.propagate(self.http.auth(builder))
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -62,13 +67,13 @@ impl UserOperations for RemoteUserOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
         let resp = self
-            .auth(self.client().post(self.url("/api/v1/users")).json(params))
+            .prepare(self.client().post(self.url("/api/v1/users")).json(params))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -76,7 +81,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn get_user(&self, id: UserId) -> Result<User> {
         let resp = self
-            .auth(self.client().get(self.url(&format!("/api/v1/users/{id}"))))
+            .prepare(self.client().get(self.url(&format!("/api/v1/users/{id}"))))
             .send()
             .await?;
         read_json_or_error(resp).await
@@ -116,7 +121,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .put(self.url(&format!("/api/v1/users/{id}")))
                     .json(params),
@@ -128,7 +133,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn delete_user(&self, id: UserId) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .delete(self.url(&format!("/api/v1/users/{id}"))),
             )
@@ -146,7 +151,7 @@ impl UserOperations for RemoteUserOperations {
         device_name: Option<&str>,
     ) -> Result<ApiKeyWithSecret> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .post(self.url(&format!("/api/v1/users/{user_id}/api-keys")))
                     .json(&json!({ "name": name, "device_name": device_name })),
@@ -158,7 +163,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .get(self.url(&format!("/api/v1/users/{user_id}/api-keys"))),
             )
@@ -169,7 +174,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .delete(self.url(&format!("/api/v1/users/{user_id}/api-keys/{key_id}"))),
             )
@@ -244,7 +249,7 @@ impl UserOperations for RemoteUserOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         let raw: ListPage<ApiKey> = read_json_or_error(resp).await?;
         let now = chrono::Utc::now();
         let items = raw
@@ -260,7 +265,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .delete(self.url(&format!("/api/v1/users/{user_id}/api-keys/{key_id}"))),
             )
@@ -279,7 +284,7 @@ impl UserOperations for RemoteUserOperations {
 
     async fn fetch_me(&self) -> Result<serde_json::Value> {
         let resp = self
-            .auth(self.client().get(self.url("/auth/me")))
+            .prepare(self.client().get(self.url("/auth/me")))
             .send()
             .await?;
         read_json_or_error(resp).await

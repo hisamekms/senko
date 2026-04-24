@@ -20,10 +20,23 @@ pub struct RemoteHookDataSource {
 }
 
 impl RemoteHookDataSource {
-    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: &str,
+        api_key: Option<String>,
+        attributes: std::collections::BTreeMap<String, String>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key),
+            http: HttpClient::new(base_url, api_key, attributes),
         }
+    }
+
+    /// Attach Bearer auth + W3C trace-propagation headers to the request builder.
+    fn prepare(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.http.propagate(self.http.auth(builder))
+    }
+
+    fn client(&self) -> &reqwest::Client {
+        self.http.reqwest()
     }
 }
 
@@ -31,10 +44,8 @@ impl RemoteHookDataSource {
 impl HookDataSource for RemoteHookDataSource {
     async fn task_stats(&self, project_id: ProjectId) -> Result<HashMap<String, i64>> {
         let resp = self
-            .http
-            .auth(
-                self.http
-                    .reqwest()
+            .prepare(
+                self.client()
                     .get(self.http.project_url(project_id, "/stats")),
             )
             .send()
@@ -45,7 +56,7 @@ impl HookDataSource for RemoteHookDataSource {
     async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         let tasks: Vec<Task> = {
             let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
-            let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
+            let resp = self.prepare(self.client().get(&url)).send().await?;
             read_json_or_error(resp).await?
         };
         Ok(tasks.len() as i64)
@@ -53,10 +64,8 @@ impl HookDataSource for RemoteHookDataSource {
 
     async fn get_project(&self, id: ProjectId) -> Result<Project> {
         let resp = self
-            .http
-            .auth(
-                self.http
-                    .reqwest()
+            .prepare(
+                self.client()
                     .get(self.http.url(&format!("/api/v1/projects/{id}"))),
             )
             .send()
@@ -67,8 +76,7 @@ impl HookDataSource for RemoteHookDataSource {
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         let projects: Vec<Project> = {
             let resp = self
-                .http
-                .auth(self.http.reqwest().get(self.http.url("/api/v1/projects")))
+                .prepare(self.client().get(self.http.url("/api/v1/projects")))
                 .send()
                 .await?;
             read_json_or_error(resp).await?
@@ -81,10 +89,8 @@ impl HookDataSource for RemoteHookDataSource {
 
     async fn get_user(&self, id: UserId) -> Result<User> {
         let resp = self
-            .http
-            .auth(
-                self.http
-                    .reqwest()
+            .prepare(
+                self.client()
                     .get(self.http.url(&format!("/api/v1/users/{id}"))),
             )
             .send()
@@ -95,8 +101,7 @@ impl HookDataSource for RemoteHookDataSource {
     async fn get_user_by_username(&self, username: &Username) -> Result<User> {
         let users: Vec<User> = {
             let resp = self
-                .http
-                .auth(self.http.reqwest().get(self.http.url("/api/v1/users")))
+                .prepare(self.client().get(self.http.url("/api/v1/users")))
                 .send()
                 .await?;
             read_json_or_error(resp).await?
@@ -109,10 +114,8 @@ impl HookDataSource for RemoteHookDataSource {
 
     async fn get_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
         let resp = self
-            .http
-            .auth(
-                self.http
-                    .reqwest()
+            .prepare(
+                self.client()
                     .get(self.http.project_url(project_id, &format!("/tasks/{id}"))),
             )
             .send()
@@ -122,7 +125,7 @@ impl HookDataSource for RemoteHookDataSource {
 
     async fn list_ready_tasks(&self, project_id: ProjectId) -> Result<Vec<Task>> {
         let url = format!("{}?ready=true", self.http.project_url(project_id, "/tasks"));
-        let resp = self.http.auth(self.http.reqwest().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 

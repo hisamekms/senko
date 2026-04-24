@@ -235,6 +235,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::SkillInstall {
                 output_dir: None,
                 yes: true,

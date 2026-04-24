@@ -165,7 +165,10 @@ mod tests {
     fn parse_otel_happy_path() {
         assert_eq!(
             parse_otel_resource_attributes("a=1,b=2"),
-            vec![("a".to_string(), "1".to_string()), ("b".to_string(), "2".to_string())],
+            vec![
+                ("a".to_string(), "1".to_string()),
+                ("b".to_string(), "2".to_string())
+            ],
         );
     }
 
@@ -173,7 +176,10 @@ mod tests {
     fn parse_otel_whitespace_around_entries() {
         assert_eq!(
             parse_otel_resource_attributes(" k =v , x = y "),
-            vec![("k".to_string(), "v".to_string()), ("x".to_string(), " y".to_string())],
+            vec![
+                ("k".to_string(), "v".to_string()),
+                ("x".to_string(), " y".to_string())
+            ],
         );
     }
 
@@ -195,11 +201,16 @@ mod tests {
 
     #[test]
     fn parse_otel_empty_input() {
-        assert_eq!(parse_otel_resource_attributes(""), Vec::<(String, String)>::new());
+        assert_eq!(
+            parse_otel_resource_attributes(""),
+            Vec::<(String, String)>::new()
+        );
     }
 
     fn pairs(kvs: &[(&str, &str)]) -> Vec<(String, String)> {
-        kvs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        kvs.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -235,21 +246,13 @@ mod tests {
 
     #[test]
     fn merge_does_not_filter_reserved_from_senko() {
-        let merged = merge_attributes(
-            pairs(&[]),
-            pairs(&[("service.name", "svc")]),
-            pairs(&[]),
-        );
+        let merged = merge_attributes(pairs(&[]), pairs(&[("service.name", "svc")]), pairs(&[]));
         assert_eq!(merged.get("service.name"), Some(&"svc".to_string()));
     }
 
     #[test]
     fn merge_does_not_filter_reserved_from_cli() {
-        let merged = merge_attributes(
-            pairs(&[("service.name", "svc")]),
-            pairs(&[]),
-            pairs(&[]),
-        );
+        let merged = merge_attributes(pairs(&[("service.name", "svc")]), pairs(&[]), pairs(&[]));
         assert_eq!(merged.get("service.name"), Some(&"svc".to_string()));
     }
 
@@ -288,8 +291,16 @@ mod tests {
         assert_eq!(tp.trace_id.len(), 32, "trace_id={}", tp.trace_id);
         assert_eq!(tp.span_id.len(), 16, "span_id={}", tp.span_id);
         assert_eq!(tp.header, format!("00-{}-{}-01", tp.trace_id, tp.span_id));
-        assert!(tp.trace_id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        assert!(tp.span_id.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            tp.trace_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
+        assert!(
+            tp.span_id
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
     }
 
     #[test]

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -25,8 +26,29 @@ use crate::infra::http::remote_metadata_field_ops::RemoteMetadataFieldOperations
 use crate::infra::http::remote_project_ops::RemoteProjectOperations;
 use crate::infra::http::remote_task_ops::RemoteTaskOperations;
 use crate::infra::http::remote_user_ops::RemoteUserOperations;
+use crate::infra::http::trace_propagation::{merge_attributes, parse_otel_resource_attributes};
 use crate::infra::pr_verifier::GhCliPrVerifier;
 use crate::infra::xdg::XdgDirs;
+
+/// Resolve the final W3C Baggage attribute map from the three sources defined
+/// by the OTel client-tracing contract, in precedence order:
+/// `cli_attrs` (CLI `--attr`) > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES`
+/// (with reserved namespaces filtered out of the OTel env source only).
+///
+/// `cli_attrs` is already parsed at clap time; env vars are parsed here via
+/// [`parse_otel_resource_attributes`] so malformed entries are silently
+/// skipped per OTel spec.
+pub fn resolve_trace_attributes(cli_attrs: &[(String, String)]) -> BTreeMap<String, String> {
+    let senko_env = std::env::var("SENKO_TRACE_ATTRIBUTES")
+        .ok()
+        .map(|s| parse_otel_resource_attributes(&s))
+        .unwrap_or_default();
+    let otel_env = std::env::var("OTEL_RESOURCE_ATTRIBUTES")
+        .ok()
+        .map(|s| parse_otel_resource_attributes(&s))
+        .unwrap_or_default();
+    merge_attributes(cli_attrs.to_vec(), senko_env, otel_env)
+}
 
 // Re-exports for presentation layer (avoid direct infra dependency)
 pub use crate::infra::hook;
@@ -231,7 +253,11 @@ pub fn create_local_task_operations(
     LocalTaskOperations::new(backend, hooks, pr_verifier, completion_policy)
 }
 
-pub fn create_remote_task_operations(config: &Config, project_root: &Path) -> RemoteTaskOperations {
+pub fn create_remote_task_operations(
+    config: &Config,
+    project_root: &Path,
+    cli_attrs: &[(String, String)],
+) -> RemoteTaskOperations {
     let url = config
         .cli
         .remote
@@ -239,13 +265,17 @@ pub fn create_remote_task_operations(config: &Config, project_root: &Path) -> Re
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
+    let attributes = resolve_trace_attributes(cli_attrs);
 
-    let hook_data: Arc<dyn HookDataSource> =
-        Arc::new(RemoteHookDataSource::new(url, api_key.clone()));
+    let hook_data: Arc<dyn HookDataSource> = Arc::new(RemoteHookDataSource::new(
+        url,
+        api_key.clone(),
+        attributes.clone(),
+    ));
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
 
-    RemoteTaskOperations::new(url, api_key, hooks)
+    RemoteTaskOperations::new(url, api_key, attributes, hooks)
 }
 
 /// Create the appropriate `TaskOperations` and `ProjectOperations` based on config.
@@ -254,12 +284,16 @@ pub fn create_remote_task_operations(config: &Config, project_root: &Path) -> Re
 pub fn create_task_operations(
     project_root: &Path,
     config: &Config,
+    cli_attrs: &[(String, String)],
 ) -> Result<(Arc<dyn TaskOperations>, Arc<dyn ProjectOperations>)> {
     if config.cli.remote.url.is_some() {
-        let task_ops: Arc<dyn TaskOperations> =
-            Arc::new(create_remote_task_operations(config, project_root));
+        let task_ops: Arc<dyn TaskOperations> = Arc::new(create_remote_task_operations(
+            config,
+            project_root,
+            cli_attrs,
+        ));
         let project_ops: Arc<dyn ProjectOperations> =
-            Arc::new(create_remote_project_operations(config));
+            Arc::new(create_remote_project_operations(config, cli_attrs));
         Ok((task_ops, project_ops))
     } else {
         let backend = create_backend(project_root, config)?;
@@ -281,7 +315,10 @@ pub fn create_user_service(backend: Arc<dyn TaskBackend>) -> UserService {
     UserService::new(backend)
 }
 
-pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
+pub fn create_remote_user_operations(
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> RemoteUserOperations {
     let url = config
         .cli
         .remote
@@ -289,10 +326,13 @@ pub fn create_remote_user_operations(config: &Config) -> RemoteUserOperations {
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
-    RemoteUserOperations::new(url, api_key)
+    RemoteUserOperations::new(url, api_key, resolve_trace_attributes(cli_attrs))
 }
 
-pub fn create_remote_project_operations(config: &Config) -> RemoteProjectOperations {
+pub fn create_remote_project_operations(
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> RemoteProjectOperations {
     let url = config
         .cli
         .remote
@@ -300,7 +340,7 @@ pub fn create_remote_project_operations(config: &Config) -> RemoteProjectOperati
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
-    RemoteProjectOperations::new(url, api_key)
+    RemoteProjectOperations::new(url, api_key, resolve_trace_attributes(cli_attrs))
 }
 
 pub fn create_metadata_field_service(backend: Arc<dyn TaskBackend>) -> MetadataFieldService {
@@ -335,6 +375,7 @@ pub fn create_contract_service(
 pub fn create_remote_contract_operations(
     config: &Config,
     project_root: &Path,
+    cli_attrs: &[(String, String)],
 ) -> RemoteContractOperations {
     let url = config
         .cli
@@ -343,16 +384,23 @@ pub fn create_remote_contract_operations(
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
+    let attributes = resolve_trace_attributes(cli_attrs);
 
-    let hook_data: Arc<dyn HookDataSource> =
-        Arc::new(RemoteHookDataSource::new(url, api_key.clone()));
+    let hook_data: Arc<dyn HookDataSource> = Arc::new(RemoteHookDataSource::new(
+        url,
+        api_key.clone(),
+        attributes.clone(),
+    ));
     let backend_info = resolve_backend_info(config, project_root);
     let hooks = create_hook_executor(config.clone(), RuntimeMode::Cli, backend_info, hook_data);
 
-    RemoteContractOperations::new(url, api_key, hooks)
+    RemoteContractOperations::new(url, api_key, attributes, hooks)
 }
 
-pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {
+pub fn create_remote_hook_data(
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> Arc<dyn HookDataSource> {
     let url = config
         .cli
         .remote
@@ -360,14 +408,29 @@ pub fn create_remote_hook_data(config: &Config) -> Arc<dyn HookDataSource> {
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
-    Arc::new(RemoteHookDataSource::new(url, api_key))
+    Arc::new(RemoteHookDataSource::new(
+        url,
+        api_key,
+        resolve_trace_attributes(cli_attrs),
+    ))
 }
 
-pub fn create_hook_data_from(url: &str, token: Option<String>) -> Arc<dyn HookDataSource> {
-    Arc::new(RemoteHookDataSource::new(url, token))
+pub fn create_hook_data_from(
+    url: &str,
+    token: Option<String>,
+    cli_attrs: &[(String, String)],
+) -> Arc<dyn HookDataSource> {
+    Arc::new(RemoteHookDataSource::new(
+        url,
+        token,
+        resolve_trace_attributes(cli_attrs),
+    ))
 }
 
-pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadataFieldOperations {
+pub fn create_remote_metadata_field_operations(
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> RemoteMetadataFieldOperations {
     let url = config
         .cli
         .remote
@@ -375,7 +438,7 @@ pub fn create_remote_metadata_field_operations(config: &Config) -> RemoteMetadat
         .as_ref()
         .expect("cli.remote.url required for remote operations");
     let api_key = config.cli.remote.token.clone();
-    RemoteMetadataFieldOperations::new(url, api_key)
+    RemoteMetadataFieldOperations::new(url, api_key, resolve_trace_attributes(cli_attrs))
 }
 
 pub fn create_hook_test_service(
@@ -929,5 +992,77 @@ name = "project-local"
             msg.contains("trusted_headers"),
             "error should mention trusted_headers: {msg}"
         );
+    }
+
+    // --- resolve_trace_attributes ---
+
+    /// Clear all trace-related env vars. Callers MUST be `#[serial]`.
+    fn clear_trace_env() {
+        // SAFETY: callers are marked #[serial].
+        unsafe {
+            std::env::remove_var("SENKO_TRACE_ATTRIBUTES");
+            std::env::remove_var("OTEL_RESOURCE_ATTRIBUTES");
+        }
+    }
+
+    fn pair(k: &str, v: &str) -> (String, String) {
+        (k.to_string(), v.to_string())
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_empty_when_no_sources() {
+        clear_trace_env();
+        let got = resolve_trace_attributes(&[]);
+        assert!(got.is_empty(), "expected empty, got {got:?}");
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_cli_wins_over_senko_env() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("SENKO_TRACE_ATTRIBUTES", "run.id=from-senko");
+        }
+        let got = resolve_trace_attributes(&[pair("run.id", "from-cli")]);
+        assert_eq!(got.get("run.id"), Some(&"from-cli".to_string()));
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_senko_env_wins_over_otel_env() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("SENKO_TRACE_ATTRIBUTES", "run.id=from-senko");
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "run.id=from-otel");
+        }
+        let got = resolve_trace_attributes(&[]);
+        assert_eq!(got.get("run.id"), Some(&"from-senko".to_string()));
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_filters_reserved_from_otel_env_only() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var(
+                "OTEL_RESOURCE_ATTRIBUTES",
+                "service.name=senko-cli,run.id=visible",
+            );
+            std::env::set_var("SENKO_TRACE_ATTRIBUTES", "service.name=from-senko");
+        }
+        let got = resolve_trace_attributes(&[pair("host.name", "from-cli")]);
+        // service.name from OTEL is filtered, but SENKO value survives.
+        assert_eq!(got.get("service.name"), Some(&"from-senko".to_string()));
+        // host.name from CLI is NOT filtered (explicit user override).
+        assert_eq!(got.get("host.name"), Some(&"from-cli".to_string()));
+        // Non-reserved key from OTEL passes through.
+        assert_eq!(got.get("run.id"), Some(&"visible".to_string()));
+        clear_trace_env();
     }
 }

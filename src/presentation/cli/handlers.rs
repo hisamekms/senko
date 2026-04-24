@@ -99,12 +99,16 @@ fn ensure_cli_token(config: &mut Config) {
     }
 }
 
-async fn resolve_current_user_id(root: &Path, config: &Config) -> Result<Option<UserId>> {
+async fn resolve_current_user_id(
+    root: &Path,
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> Result<Option<UserId>> {
     if config.user.name.is_none() {
         return Ok(None);
     }
     let user_ops: Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
-        Arc::new(create_remote_user_operations(config))
+        Arc::new(create_remote_user_operations(config, cli_attrs))
     } else {
         let backend = create_backend(root, config)?;
         Arc::new(create_user_service(backend))
@@ -125,10 +129,15 @@ fn parse_assignee_user_id(value: &str) -> Result<AssigneeUserId> {
 
 /// Resolve [`AssigneeUserId::SelfUser`] to a numeric ID.
 /// Only needed in local mode; in remote mode the API resolves "self".
-async fn resolve_assignee(value: AssigneeUserId, root: &Path, config: &Config) -> Result<UserId> {
+async fn resolve_assignee(
+    value: AssigneeUserId,
+    root: &Path,
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> Result<UserId> {
     match value {
         AssigneeUserId::Id(id) => Ok(id),
-        AssigneeUserId::SelfUser => resolve_current_user_id(root, config)
+        AssigneeUserId::SelfUser => resolve_current_user_id(root, config, cli_attrs)
             .await?
             .context("'self' を解決できません: user.name が未設定です"),
     }
@@ -154,7 +163,7 @@ pub async fn cmd_add(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     let parsed_assignee = match assignee_user_id {
@@ -215,7 +224,7 @@ pub async fn cmd_add(
     if config.cli.remote.url.is_none()
         && let Some(AssigneeUserId::SelfUser) = &params.assignee_user_id
     {
-        let uid = resolve_current_user_id(&root, &config)
+        let uid = resolve_current_user_id(&root, &config, &cli.attr)
             .await?
             .context("'self' を解決できません: user.name が未設定です")?;
         params.assignee_user_id = Some(AssigneeUserId::Id(uid));
@@ -304,7 +313,7 @@ pub async fn cmd_list(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     let statuses = status
@@ -321,7 +330,10 @@ pub async fn cmd_list(
         if config.cli.remote.url.is_some() {
             (None, true)
         } else {
-            (resolve_current_user_id(&root, &config).await?, false)
+            (
+                resolve_current_user_id(&root, &config, &cli.attr).await?,
+                false,
+            )
         }
     } else {
         (None, false)
@@ -395,7 +407,7 @@ pub async fn cmd_list(
 pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     let task = task_ops.get_task(project_id, task_id).await?;
 
@@ -480,7 +492,7 @@ pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
 pub async fn cmd_publish(cli: &Cli, id: TaskId) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
@@ -521,7 +533,7 @@ pub async fn cmd_start(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     // In remote mode, the server derives user_id from the authenticated caller;
     // the CLI must not hit GET /api/v1/users (master-gated) just to convert
@@ -530,7 +542,7 @@ pub async fn cmd_start(
     let user_id = if config.cli.remote.url.is_some() {
         None
     } else {
-        resolve_current_user_id(&root, &config).await?
+        resolve_current_user_id(&root, &config, &cli.attr).await?
     };
     let metadata: Option<MetadataUpdate> = metadata
         .map(|s| -> Result<MetadataUpdate> {
@@ -588,14 +600,14 @@ pub async fn cmd_next(
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     // In remote mode, the server derives user_id from the authenticated caller;
     // see cmd_start for the rationale.
     let user_id = if config.cli.remote.url.is_some() {
         None
     } else {
-        resolve_current_user_id(&root, &config).await?
+        resolve_current_user_id(&root, &config, &cli.attr).await?
     };
     let metadata: Option<MetadataUpdate> = metadata
         .map(|s| -> Result<MetadataUpdate> {
@@ -648,7 +660,7 @@ pub async fn cmd_next(
 pub async fn cmd_complete(cli: &Cli, id: TaskId, skip_pr_check: bool) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
@@ -690,7 +702,7 @@ pub async fn cmd_complete(cli: &Cli, id: TaskId, skip_pr_check: bool) -> Result<
 pub async fn cmd_cancel(cli: &Cli, id: TaskId, reason: Option<String>) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     if cli.dry_run {
@@ -1187,8 +1199,8 @@ pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
                 std::sync::Arc<dyn ProjectOperations>,
             ) = if config.cli.remote.url.is_some() {
                 (
-                    create_remote_hook_data(&config),
-                    std::sync::Arc::new(create_remote_project_operations(&config)),
+                    create_remote_hook_data(&config, &cli.attr),
+                    std::sync::Arc::new(create_remote_project_operations(&config, &cli.attr)),
                 )
             } else {
                 let backend = create_backend(&root, &config)?;
@@ -1311,7 +1323,7 @@ pub async fn cmd_edit(
 ) -> Result<()> {
     let project_root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &project_root)?;
-    let (task_ops, project_ops) = create_task_operations(&project_root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&project_root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     // Verify task exists (even in dry-run)
@@ -1439,7 +1451,7 @@ pub async fn cmd_edit(
             if config.cli.remote.url.is_none() {
                 // Local mode: resolve SelfUser to numeric ID
                 Some(Some(AssigneeUserId::Id(
-                    resolve_assignee(parsed, &project_root, &config).await?,
+                    resolve_assignee(parsed, &project_root, &config, &cli.attr).await?,
                 )))
             } else {
                 // Remote mode: send as-is (API resolves "self")
@@ -1540,7 +1552,7 @@ pub async fn cmd_edit(
 pub async fn cmd_dod(cli: &Cli, command: &TaskDodCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
@@ -1600,7 +1612,7 @@ fn print_dod_items(items: &[crate::domain::task::DodItem]) {
 pub async fn cmd_deps(cli: &Cli, command: &TaskDepsCommand) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
@@ -1740,8 +1752,8 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
         std::sync::Arc<dyn crate::application::MetadataFieldOperations>,
     ) = if config.cli.remote.url.is_some() {
         (
-            std::sync::Arc::new(create_remote_project_operations(&config)),
-            std::sync::Arc::new(create_remote_metadata_field_operations(&config)),
+            std::sync::Arc::new(create_remote_project_operations(&config, &cli.attr)),
+            std::sync::Arc::new(create_remote_metadata_field_operations(&config, &cli.attr)),
         )
     } else {
         let backend = create_backend(&root, &config)?;
@@ -1909,7 +1921,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
     let user_service: std::sync::Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
-        std::sync::Arc::new(create_remote_user_operations(&config))
+        std::sync::Arc::new(create_remote_user_operations(&config, &cli.attr))
     } else {
         let backend = create_backend(&root, &config)?;
         std::sync::Arc::new(create_user_service(backend))
@@ -2009,7 +2021,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
 pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let (_task_ops, project_ops) = create_task_operations(&root, &config)?;
+    let (_task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match action {
@@ -2583,9 +2595,15 @@ pub async fn cmd_auth_revoke(cli: &Cli, id: Option<i64>, all: bool) -> Result<()
 
 // --- Contract commands ---
 
-fn build_contract_ops(config: &Config, root: &Path) -> Result<Arc<dyn ContractOperations>> {
+fn build_contract_ops(
+    config: &Config,
+    root: &Path,
+    cli_attrs: &[(String, String)],
+) -> Result<Arc<dyn ContractOperations>> {
     if config.cli.remote.url.is_some() {
-        Ok(Arc::new(create_remote_contract_operations(config, root)))
+        Ok(Arc::new(create_remote_contract_operations(
+            config, root, cli_attrs,
+        )))
     } else {
         let backend = create_backend(root, config)?;
         Ok(Arc::new(create_contract_service(backend, config, root)))
@@ -2626,8 +2644,8 @@ fn print_dod_items_contract(items: &[crate::domain::task::DodItem]) {
 pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
-    let contract_ops = build_contract_ops(&config, &root)?;
-    let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root)?;
+    let contract_ops = build_contract_ops(&config, &root, &cli.attr)?;
+    let (_task_ops_unused, project_ops) = build_project_ops_pair(&config, &root, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match action {
@@ -3055,13 +3073,14 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
 fn build_project_ops_pair(
     config: &Config,
     root: &Path,
+    cli_attrs: &[(String, String)],
 ) -> Result<(
     Arc<dyn crate::application::TaskOperations>,
     Arc<dyn ProjectOperations>,
 )> {
     // Reuse existing task_operations bootstrap to satisfy resolve_project_id with the same
     // local/remote switching semantics.
-    create_task_operations(root, config)
+    create_task_operations(root, config, cli_attrs)
 }
 
 #[cfg(test)]
@@ -3083,6 +3102,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Task {
                 action: TaskAction::Add {
                     title: None,
@@ -3158,6 +3178,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Task {
                 action: TaskAction::Add {
                     title: None,
@@ -3225,6 +3246,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Task {
                 action: TaskAction::Add {
                     title: None,
@@ -3284,6 +3306,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Task {
                 action: TaskAction::Add {
                     title: None,
@@ -3349,6 +3372,7 @@ mod tests {
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Task {
                 action: TaskAction::Add {
                     title: None,
@@ -3614,6 +3638,7 @@ url = "http://localhost:3142"
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Auth {
                 command: super::super::AuthCommand::Status,
             },
@@ -3651,6 +3676,7 @@ token = "my-api-key"
             postgres_url: None,
             project: None,
             user: None,
+            attr: vec![],
             command: Command::Auth {
                 command: super::super::AuthCommand::Status,
             },

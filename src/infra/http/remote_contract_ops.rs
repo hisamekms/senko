@@ -28,9 +28,14 @@ pub struct RemoteContractOperations {
 }
 
 impl RemoteContractOperations {
-    pub fn new(base_url: &str, api_key: Option<String>, hooks: Arc<dyn HookExecutor>) -> Self {
+    pub fn new(
+        base_url: &str,
+        api_key: Option<String>,
+        attributes: std::collections::BTreeMap<String, String>,
+        hooks: Arc<dyn HookExecutor>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key),
+            http: HttpClient::new(base_url, api_key, attributes),
             hooks,
         }
     }
@@ -39,8 +44,9 @@ impl RemoteContractOperations {
         self.http.project_url(project_id, path)
     }
 
-    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        self.http.auth(builder)
+    /// Attach Bearer auth + W3C trace-propagation headers to the request builder.
+    fn prepare(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.http.propagate(self.http.auth(builder))
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -148,7 +154,7 @@ impl ContractOperations for RemoteContractOperations {
 
         let url = self.project_url(project_id, "/contracts");
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .post(&url)
                     .json(&create_params_to_json(params)),
@@ -163,7 +169,7 @@ impl ContractOperations for RemoteContractOperations {
 
     async fn get_contract(&self, project_id: ProjectId, id: ContractId) -> Result<Contract> {
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -192,7 +198,7 @@ impl ContractOperations for RemoteContractOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -209,7 +215,7 @@ impl ContractOperations for RemoteContractOperations {
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
         let body = update_body(params, array_params);
         let resp = self
-            .auth(self.client().put(&url).json(&body))
+            .prepare(self.client().put(&url).json(&body))
             .send()
             .await?;
         let contract: Contract = read_json_or_error(resp).await?;
@@ -223,7 +229,7 @@ impl ContractOperations for RemoteContractOperations {
         self.fire_pre(&trigger, None).await?;
 
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
-        let resp = self.auth(self.client().delete(&url)).send().await?;
+        let resp = self.prepare(self.client().delete(&url)).send().await?;
         check_success(resp).await?;
 
         self.fire_post(&trigger, None).await;
@@ -243,7 +249,7 @@ impl ContractOperations for RemoteContractOperations {
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/check"),
         );
-        let resp = self.auth(self.client().post(&url)).send().await?;
+        let resp = self.prepare(self.client().post(&url)).send().await?;
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
@@ -263,7 +269,7 @@ impl ContractOperations for RemoteContractOperations {
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/uncheck"),
         );
-        let resp = self.auth(self.client().post(&url)).send().await?;
+        let resp = self.prepare(self.client().post(&url)).send().await?;
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
@@ -286,7 +292,7 @@ impl ContractOperations for RemoteContractOperations {
             "source_task_id": source_task_id,
         });
         let resp = self
-            .auth(self.client().post(&url).json(&body))
+            .prepare(self.client().post(&url).json(&body))
             .send()
             .await?;
         let note: ContractNote = read_json_or_error(resp).await?;
@@ -315,7 +321,7 @@ impl ContractOperations for RemoteContractOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 }

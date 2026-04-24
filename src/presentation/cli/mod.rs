@@ -97,8 +97,31 @@ pub struct Cli {
     #[arg(long)]
     pub user: Option<String>,
 
+    /// Attach a trace-propagation attribute to every outbound HTTP request
+    /// as a W3C Baggage entry. Repeatable. Takes highest precedence over
+    /// SENKO_TRACE_ATTRIBUTES and OTEL_RESOURCE_ATTRIBUTES.
+    #[arg(long = "attr", value_name = "KEY=VALUE", value_parser = parse_cli_attribute)]
+    pub attr: Vec<(String, String)>,
+
     #[command(subcommand)]
     pub command: Command,
+}
+
+/// Parse a single `KEY=VALUE` CLI argument. Empty key or empty value is an error.
+/// Unlike the OTel env-var format, malformed CLI input surfaces loudly rather
+/// than being silently skipped.
+fn parse_cli_attribute(s: &str) -> Result<(String, String), String> {
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| format!("invalid --attr '{s}': expected KEY=VALUE"))?;
+    let key = k.trim();
+    if key.is_empty() {
+        return Err(format!("invalid --attr '{s}': key must not be empty"));
+    }
+    if v.is_empty() {
+        return Err(format!("invalid --attr '{s}': value must not be empty"));
+    }
+    Ok((key.to_string(), v.to_string()))
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1178,7 +1201,8 @@ pub async fn run(cli: Cli) -> Result<()> {
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
-            let (task_ops, project_ops) = crate::bootstrap::create_task_operations(&root, &config)?;
+            let (task_ops, project_ops) =
+                crate::bootstrap::create_task_operations(&root, &config, &cli.attr)?;
             let project_id = crate::bootstrap::resolve_project_id(&*project_ops, &config).await?;
             let port_is_explicit = config.web_port_is_explicit();
             let effective_port = config.web_port_or(3141);
@@ -1223,6 +1247,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 let hook_data = crate::bootstrap::create_hook_data_from(
                     config.server.relay.url.as_ref().unwrap(),
                     config.server.relay.token.clone(),
+                    &cli.attr,
                 );
                 crate::presentation::api::serve_proxy(
                     root,
@@ -1280,6 +1305,63 @@ mod tests {
     use clap::Parser;
 
     use super::*;
+
+    #[test]
+    fn parse_global_attr_repeatable() {
+        let cli = Cli::parse_from([
+            "senko",
+            "--attr",
+            "run.id=A",
+            "--attr",
+            "session.id=B",
+            "task",
+            "list",
+        ]);
+        assert_eq!(
+            cli.attr,
+            vec![
+                ("run.id".to_string(), "A".to_string()),
+                ("session.id".to_string(), "B".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn parse_global_attr_defaults_empty() {
+        let cli = Cli::parse_from(["senko", "task", "list"]);
+        assert!(cli.attr.is_empty());
+    }
+
+    #[test]
+    fn parse_global_attr_rejects_missing_equals() {
+        let err = Cli::try_parse_from(["senko", "--attr", "foo", "task", "list"])
+            .expect_err("expected parse failure");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("expected KEY=VALUE"),
+            "unexpected error message: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_global_attr_rejects_empty_key() {
+        let err = Cli::try_parse_from(["senko", "--attr", "=bar", "task", "list"])
+            .expect_err("expected parse failure");
+        assert!(err.to_string().contains("key must not be empty"));
+    }
+
+    #[test]
+    fn parse_global_attr_rejects_empty_value() {
+        let err = Cli::try_parse_from(["senko", "--attr", "k=", "task", "list"])
+            .expect_err("expected parse failure");
+        assert!(err.to_string().contains("value must not be empty"));
+    }
+
+    #[test]
+    fn parse_global_attr_supports_equals_in_value() {
+        let cli = Cli::parse_from(["senko", "--attr", "k=a=b", "task", "list"]);
+        assert_eq!(cli.attr, vec![("k".to_string(), "a=b".to_string())]);
+    }
 
     #[test]
     fn parse_add_subcommand() {

@@ -630,23 +630,40 @@ pub async fn serve_proxy(
         hook_data,
     );
 
+    // Proxy mode: the relay forwards CLI requests. Trace-propagation attributes
+    // belong to the originating CLI invocation and would ideally be passed through
+    // from inbound headers (task 341). For now, start empty; the proxy still emits
+    // its own traceparent per outbound request.
+    let proxy_attrs: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
         task_service: Arc::new(RemoteTaskOperations::new(
             remote_url,
             api_key.clone(),
+            proxy_attrs.clone(),
             hook_executor.clone(),
         )),
-        project_service: Arc::new(RemoteProjectOperations::new(remote_url, api_key.clone())),
-        user_service: Arc::new(RemoteUserOperations::new(remote_url, api_key.clone())),
+        project_service: Arc::new(RemoteProjectOperations::new(
+            remote_url,
+            api_key.clone(),
+            proxy_attrs.clone(),
+        )),
+        user_service: Arc::new(RemoteUserOperations::new(
+            remote_url,
+            api_key.clone(),
+            proxy_attrs.clone(),
+        )),
         metadata_service: Arc::new(RemoteMetadataFieldOperations::new(
             remote_url,
             api_key.clone(),
+            proxy_attrs.clone(),
         )),
         contract_service: Arc::new(RemoteContractOperations::new(
             remote_url,
             api_key,
+            proxy_attrs,
             hook_executor,
         )),
         auth_mode: None,

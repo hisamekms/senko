@@ -21,14 +21,19 @@ pub struct RemoteMetadataFieldOperations {
 }
 
 impl RemoteMetadataFieldOperations {
-    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: &str,
+        api_key: Option<String>,
+        attributes: std::collections::BTreeMap<String, String>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key),
+            http: HttpClient::new(base_url, api_key, attributes),
         }
     }
 
-    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        self.http.auth(builder)
+    /// Attach Bearer auth + W3C trace-propagation headers to the request builder.
+    fn prepare(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.http.propagate(self.http.auth(builder))
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -44,7 +49,7 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         params: &CreateMetadataFieldParams,
     ) -> Result<MetadataField> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .post(self.http.project_url(project_id, "/metadata-fields"))
                     .json(params),
@@ -73,13 +78,13 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
     async fn delete_metadata_field_by_name(&self, project_id: ProjectId, name: &str) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client().delete(
                     self.http
                         .project_url(project_id, &format!("/metadata-fields/{name}")),

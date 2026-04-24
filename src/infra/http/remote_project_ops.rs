@@ -23,9 +23,13 @@ pub struct RemoteProjectOperations {
 }
 
 impl RemoteProjectOperations {
-    pub fn new(base_url: &str, api_key: Option<String>) -> Self {
+    pub fn new(
+        base_url: &str,
+        api_key: Option<String>,
+        attributes: std::collections::BTreeMap<String, String>,
+    ) -> Self {
         Self {
-            http: HttpClient::new(base_url, api_key),
+            http: HttpClient::new(base_url, api_key, attributes),
         }
     }
 
@@ -33,8 +37,9 @@ impl RemoteProjectOperations {
         self.http.url(path)
     }
 
-    fn auth(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
-        self.http.auth(builder)
+    /// Attach Bearer auth + W3C trace-propagation headers to the request builder.
+    fn prepare(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        self.http.propagate(self.http.auth(builder))
     }
 
     fn client(&self) -> &reqwest::Client {
@@ -61,7 +66,7 @@ impl ProjectOperations for RemoteProjectOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -71,7 +76,7 @@ impl ProjectOperations for RemoteProjectOperations {
         _caller_user_id: Option<UserId>,
     ) -> Result<Project> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .post(self.url("/api/v1/projects"))
                     .json(params),
@@ -83,7 +88,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     async fn get_project(&self, id: ProjectId) -> Result<Project> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .get(self.url(&format!("/api/v1/projects/{id}"))),
             )
@@ -115,7 +120,7 @@ impl ProjectOperations for RemoteProjectOperations {
 
     async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<UserId>) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .delete(self.url(&format!("/api/v1/projects/{id}"))),
             )
@@ -145,7 +150,7 @@ impl ProjectOperations for RemoteProjectOperations {
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));
         }
-        let resp = self.auth(self.client().get(&url)).send().await?;
+        let resp = self.prepare(self.client().get(&url)).send().await?;
         read_json_or_error(resp).await
     }
 
@@ -156,7 +161,7 @@ impl ProjectOperations for RemoteProjectOperations {
         _caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .post(self.url(&format!("/api/v1/projects/{project_id}/members")))
                     .json(&json!({ "user_id": params.user_id, "role": params.role })),
@@ -173,7 +178,7 @@ impl ProjectOperations for RemoteProjectOperations {
         _caller_user_id: Option<UserId>,
     ) -> Result<()> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .delete(self.url(&format!("/api/v1/projects/{project_id}/members/{user_id}"))),
             )
@@ -188,7 +193,7 @@ impl ProjectOperations for RemoteProjectOperations {
         user_id: UserId,
     ) -> Result<ProjectMember> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .get(self.url(&format!("/api/v1/projects/{project_id}/members/{user_id}"))),
             )
@@ -205,7 +210,7 @@ impl ProjectOperations for RemoteProjectOperations {
         _caller_user_id: Option<UserId>,
     ) -> Result<ProjectMember> {
         let resp = self
-            .auth(
+            .prepare(
                 self.client()
                     .put(self.url(&format!("/api/v1/projects/{project_id}/members/{user_id}")))
                     .json(&json!({ "role": role })),
