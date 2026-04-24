@@ -14,6 +14,12 @@ use crate::domain::task::{MetadataUpdate, UpdateTaskArrayParams, UpdateTaskParam
 
 tokio::task_local! {
     pub static PASSTHROUGH_TOKEN: String;
+    /// Per-request baggage extracted from the inbound `baggage` header by
+    /// `propagate_trace_context`. Re-emitted on outbound `HttpClient` requests
+    /// so relay mode forwards CLI-origin baggage to the upstream Remote.
+    /// Contains the raw key/value pairs without reserved-namespace re-filtering
+    /// (the CLI already filters; relay is a passthrough).
+    pub static INBOUND_BAGGAGE: std::collections::BTreeMap<String, String>;
 }
 
 /// Error type representing a non-success HTTP response from the upstream server.

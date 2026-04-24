@@ -94,7 +94,10 @@ As a result, a baggage entry `run.id=xyz` becomes `baggage.run.id = "xyz"` in Ja
 
 ## Proxy Mode
 
-`senko serve --proxy` issues a **fresh `traceparent`** when forwarding to the upstream Remote (re-emitted, not passed through). Forwarding the inbound baggage as outbound attributes is **not yet implemented**.
+`senko serve --proxy` issues a **fresh `traceparent`** when forwarding to the upstream Remote (re-emitted, not passed through). The inbound `baggage` is extracted and **re-emitted** on the forwarded request, so `baggage.<key>` entries set by the originating CLI appear on the upstream Remote's spans as-is.
+
+- The relay does **not re-filter reserved namespaces** — the CLI already filters, and a second filter here would silently drop keys the user opted into via `--attr` or `SENKO_TRACE_ATTRIBUTES`.
+- The upstream Remote's `propagate_trace_context` still applies defensive reserved-namespace filtering when promoting received baggage into `baggage.<key>` span attributes (unchanged).
 
 ## Graceful Shutdown
 

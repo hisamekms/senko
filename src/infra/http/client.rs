@@ -1,20 +1,23 @@
 use std::collections::BTreeMap;
 
-use super::PASSTHROUGH_TOKEN;
 use super::trace_propagation::{build_baggage_header, new_traceparent};
+use super::{INBOUND_BAGGAGE, PASSTHROUGH_TOKEN};
 use crate::domain::project::ProjectId;
 
 /// Shared HTTP client encapsulating base URL, reqwest client, optional API key,
-/// and a pre-built Baggage header derived from the merged trace attributes.
+/// and the static trace attributes to re-emit on every outbound request.
 ///
 /// Used by `Remote*Operations` via composition.
 pub(crate) struct HttpClient {
     base_url: String,
     client: reqwest::Client,
     api_key: Option<String>,
-    /// Pre-built `baggage` header value. `None` when the merged attribute map
-    /// is empty (caller omits the header entirely).
-    baggage_header: Option<String>,
+    /// Static trace attributes configured at construction time (CLI `--attr`,
+    /// `OTEL_RESOURCE_ATTRIBUTES`, etc.). On every `propagate()` call these
+    /// are merged with the per-request `INBOUND_BAGGAGE` task-local (see
+    /// `super::INBOUND_BAGGAGE`) so relay mode forwards CLI-origin baggage
+    /// to the upstream; inbound entries win on key conflict.
+    attributes: BTreeMap<String, String>,
 }
 
 impl HttpClient {
@@ -31,7 +34,7 @@ impl HttpClient {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
             api_key,
-            baggage_header: build_baggage_header(&attributes),
+            attributes,
         }
     }
 
@@ -60,14 +63,30 @@ impl HttpClient {
     ///
     /// - `traceparent` is always added (freshly generated per call so each HTTP
     ///   request is its own span on the server side).
-    /// - `baggage` is added only when the merged attribute map was non-empty at
-    ///   construction.
+    /// - `baggage` is built per-call by merging the static `attributes` with
+    ///   any `INBOUND_BAGGAGE` task-local (set by `propagate_trace_context`
+    ///   middleware). Inbound entries win on key conflict so relay mode
+    ///   forwards CLI-origin baggage. Omitted when the merged map is empty.
     pub fn propagate(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         let mut builder = builder.header("traceparent", new_traceparent().header);
-        if let Some(ref baggage) = self.baggage_header {
+        let merged = self.merged_attributes();
+        if let Some(baggage) = build_baggage_header(&merged) {
             builder = builder.header("baggage", baggage);
         }
         builder
+    }
+
+    /// Static attrs merged with the per-request `INBOUND_BAGGAGE` task-local.
+    /// Inbound wins on key conflict; absence of the task-local (no active
+    /// scope) yields just the static attrs.
+    fn merged_attributes(&self) -> BTreeMap<String, String> {
+        let mut merged = self.attributes.clone();
+        let _ = INBOUND_BAGGAGE.try_with(|inbound| {
+            for (k, v) in inbound.iter() {
+                merged.insert(k.clone(), v.clone());
+            }
+        });
+        merged
     }
 
     pub fn reqwest(&self) -> &reqwest::Client {
@@ -156,5 +175,86 @@ mod tests {
         assert_eq!(headers.get("authorization").unwrap(), "Bearer tok");
         assert!(headers.get("traceparent").is_some());
         assert_eq!(headers.get("baggage").unwrap(), "k=v");
+    }
+
+    fn rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn propagate_reads_inbound_baggage_from_task_local() {
+        // Relay scenario: static attrs empty, inbound baggage carries the
+        // CLI-origin keys. The outbound request should re-emit them.
+        let client = client_with(BTreeMap::new());
+        let mut inbound = BTreeMap::new();
+        inbound.insert("run.id".to_string(), "abc".to_string());
+        inbound.insert("session.id".to_string(), "xyz".to_string());
+
+        let baggage = rt().block_on(INBOUND_BAGGAGE.scope(inbound, async {
+            let headers = build_headers(&client);
+            headers
+                .get("baggage")
+                .expect("baggage missing")
+                .to_str()
+                .unwrap()
+                .to_string()
+        }));
+
+        assert_eq!(baggage, "run%2Eid=abc,session%2Eid=xyz");
+    }
+
+    #[test]
+    fn propagate_merges_static_and_inbound_with_inbound_winning() {
+        // Static has `run.id=static`, inbound has `run.id=inbound` + an extra
+        // key. Merge should contain `run.id=inbound` (inbound wins) plus the
+        // extra key.
+        let mut static_attrs = BTreeMap::new();
+        static_attrs.insert("run.id".to_string(), "static".to_string());
+        static_attrs.insert("host".to_string(), "relay".to_string());
+        let client = client_with(static_attrs);
+
+        let mut inbound = BTreeMap::new();
+        inbound.insert("run.id".to_string(), "inbound".to_string());
+        inbound.insert("extra".to_string(), "new".to_string());
+
+        let baggage = rt().block_on(INBOUND_BAGGAGE.scope(inbound, async {
+            let headers = build_headers(&client);
+            headers
+                .get("baggage")
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        }));
+
+        // BTreeMap order: extra, host, run.id
+        assert_eq!(baggage, "extra=new,host=relay,run%2Eid=inbound");
+    }
+
+    #[test]
+    fn propagate_without_task_local_scope_uses_only_static_attrs() {
+        // Outside any INBOUND_BAGGAGE scope, HttpClient falls back to static
+        // attrs only — identical to pre-relay behavior.
+        let mut attrs = BTreeMap::new();
+        attrs.insert("k".to_string(), "v".to_string());
+        let client = client_with(attrs);
+        let headers = build_headers(&client);
+        assert_eq!(headers.get("baggage").unwrap(), "k=v");
+    }
+
+    #[test]
+    fn propagate_with_empty_scope_and_empty_static_omits_baggage() {
+        let client = client_with(BTreeMap::new());
+        let result = rt().block_on(INBOUND_BAGGAGE.scope(BTreeMap::new(), async {
+            let headers = build_headers(&client);
+            headers.get("baggage").is_some()
+        }));
+        assert!(
+            !result,
+            "expected no baggage header when both sources empty"
+        );
     }
 }

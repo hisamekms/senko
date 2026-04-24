@@ -94,7 +94,10 @@ Remote 側のミドルウェア (`presentation/api/telemetry.rs` の `propagate_
 
 ## Proxy モードの注意
 
-`senko serve --proxy` は、上流 Remote への転送時に **新しい `traceparent`** を発行します (パススルーではなく再発射)。インバウンドの baggage を上流への属性として再発射する機構は **まだ未実装** です。
+`senko serve --proxy` は、上流 Remote への転送時に **新しい `traceparent`** を発行します (パススルーではなく再発射)。インバウンドの `baggage` は抽出されて上流への転送リクエストにも再発射されるため、CLI が発した `baggage.<key>` は上流 Remote のスパンにそのまま現れます。
+
+- Relay 側では **予約 namespace の再フィルタを行いません** (CLI 側で既に整形済み。二重フィルタは `--attr` 等で明示指定されたキーを意図せず落とすことになるため)
+- 上流 Remote の `propagate_trace_context` が受信した `baggage` を `baggage.<key>` span attribute に昇格する際、防御的に予約 namespace を除外するのは従来通り
 
 ## グレースフルシャットダウン
 

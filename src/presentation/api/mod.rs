@@ -630,10 +630,10 @@ pub async fn serve_proxy(
         hook_data,
     );
 
-    // Proxy mode: the relay forwards CLI requests. Trace-propagation attributes
-    // belong to the originating CLI invocation and would ideally be passed through
-    // from inbound headers (task 341). For now, start empty; the proxy still emits
-    // its own traceparent per outbound request.
+    // Proxy mode: trace-propagation attributes belong to the originating CLI
+    // invocation. The inbound `baggage` header is captured per-request by
+    // `propagate_trace_context` into the `INBOUND_BAGGAGE` task-local and
+    // re-emitted by `HttpClient.propagate`, so the static attrs stay empty.
     let proxy_attrs: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
 
     let state = AppState {

@@ -4,9 +4,15 @@
 //! they also ride along on every OTel log record emitted while the request is
 //! being handled.
 //!
+//! In relay mode (`senko serve --proxy`), the extracted baggage is also
+//! stashed into the `INBOUND_BAGGAGE` task-local for the duration of the
+//! request so the outbound `HttpClient` can re-emit it on the forwarded
+//! request to the upstream Remote.
+//!
 //! The corresponding CLI-side emitter is `src/infra/http/trace_propagation.rs`
 //! (sibling task 339); this file is the receiving half.
 
+use std::collections::BTreeMap;
 use std::time::Instant;
 
 use axum::extract::Request;
@@ -18,6 +24,7 @@ use opentelemetry::propagation::Extractor;
 use tracing::Instrument;
 use tracing_opentelemetry::OpenTelemetrySpanExt;
 
+use crate::infra::http::INBOUND_BAGGAGE;
 use crate::infra::http::trace_propagation::is_reserved_namespace;
 
 /// Maximum length (in bytes) of a single Baggage value before it is truncated
@@ -60,10 +67,14 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     );
     let _ = span.set_parent(parent_cx.clone());
 
-    promote_baggage_to_span(&span, parent_cx.baggage(), BAGGAGE_VALUE_MAX_LEN);
+    let baggage = parent_cx.baggage();
+    promote_baggage_to_span(&span, baggage, BAGGAGE_VALUE_MAX_LEN);
+    let inbound_baggage = collect_inbound_baggage(baggage);
 
     let start = Instant::now();
-    let response = next.run(req).instrument(span.clone()).await;
+    let response = INBOUND_BAGGAGE
+        .scope(inbound_baggage, next.run(req).instrument(span.clone()))
+        .await;
     let latency = start.elapsed();
 
     let status = response.status();
@@ -87,6 +98,17 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     }
 
     response
+}
+
+/// Collect baggage entries into a flat `BTreeMap` for re-emission by relay
+/// mode. No reserved-namespace filtering here — the CLI already filters, and
+/// relay is a passthrough (re-filtering would drop entries the CLI explicitly
+/// permitted via `--attr` / `SENKO_TRACE_ATTRIBUTES`).
+fn collect_inbound_baggage(baggage: &Baggage) -> BTreeMap<String, String> {
+    baggage
+        .iter()
+        .map(|(key, (value, _metadata))| (key.as_str().to_string(), value.as_str().to_string()))
+        .collect()
 }
 
 /// Attach each non-reserved baggage entry as a `baggage.<key>` span attribute.
@@ -390,5 +412,220 @@ mod tests {
                 .iter()
                 .any(|kv| kv.key.as_str() == "baggage.service.name"),
         );
+    }
+
+    // --- INBOUND_BAGGAGE task-local propagation (relay re-emit) -------------
+
+    /// Build a router where the handler captures the `INBOUND_BAGGAGE`
+    /// task-local into a shared map. This lets us assert what the middleware
+    /// handed down to the per-request scope.
+    fn router_capturing_inbound_baggage(
+        captured: std::sync::Arc<std::sync::Mutex<Option<BTreeMap<String, String>>>>,
+    ) -> Router {
+        Router::new()
+            .route(
+                "/t",
+                get(move || {
+                    let captured = captured.clone();
+                    async move {
+                        let map = INBOUND_BAGGAGE.try_with(|b| b.clone()).unwrap_or_default();
+                        *captured.lock().unwrap() = Some(map);
+                        StatusCode::OK
+                    }
+                }),
+            )
+            .layer(from_fn(propagate_trace_context))
+    }
+
+    #[test]
+    fn middleware_scopes_inbound_baggage_for_downstream() {
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(TraceContextPropagator::new()),
+                Box::new(BaggagePropagator::new()),
+            ]),
+        );
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let app = router_capturing_inbound_baggage(captured.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let resp = app
+                .oneshot(request_with_headers(
+                    None,
+                    Some("run.id=xyz,session.id=abc"),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        });
+
+        let map = captured.lock().unwrap().clone().expect("handler ran");
+        assert_eq!(map.get("run.id").map(String::as_str), Some("xyz"));
+        assert_eq!(map.get("session.id").map(String::as_str), Some("abc"));
+    }
+
+    #[test]
+    fn middleware_scopes_empty_map_when_no_baggage_header() {
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(TraceContextPropagator::new()),
+                Box::new(BaggagePropagator::new()),
+            ]),
+        );
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let app = router_capturing_inbound_baggage(captured.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _ = app.oneshot(request_with_headers(None, None)).await.unwrap();
+        });
+
+        let map = captured.lock().unwrap().clone().expect("handler ran");
+        assert!(map.is_empty(), "expected empty map, got {map:?}");
+    }
+
+    #[test]
+    fn middleware_does_not_re_filter_reserved_namespace_for_inbound() {
+        // The CLI filters reserved keys from outbound; relay must NOT re-filter
+        // (DoD #3). If a reserved key somehow arrives at the relay it flows
+        // through to the upstream as-is; the upstream's promote_baggage_to_span
+        // is the line of defense for span attributes.
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(TraceContextPropagator::new()),
+                Box::new(BaggagePropagator::new()),
+            ]),
+        );
+
+        let captured = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let app = router_capturing_inbound_baggage(captured.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _ = app
+                .oneshot(request_with_headers(
+                    None,
+                    Some("service.name=evil,run.id=ok"),
+                ))
+                .await
+                .unwrap();
+        });
+
+        let map = captured.lock().unwrap().clone().expect("handler ran");
+        // Both keys present in the re-emission map — no relay-side filtering.
+        assert_eq!(map.get("service.name").map(String::as_str), Some("evil"));
+        assert_eq!(map.get("run.id").map(String::as_str), Some("ok"));
+    }
+
+    // --- Integration: full relay-style chain (middleware + HttpClient) -------
+
+    /// End-to-end: inbound `baggage` header at the relay reaches a mock
+    /// upstream as a forwarded `baggage` header via `HttpClient.propagate`.
+    /// Exercises: middleware scope → task-local → HttpClient.merged_attributes
+    /// → build_baggage_header → outbound reqwest.
+    #[test]
+    fn baggage_relayed_from_inbound_to_upstream() {
+        use crate::infra::http::client::HttpClient;
+        use std::sync::{Arc, Mutex};
+
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(TraceContextPropagator::new()),
+                Box::new(BaggagePropagator::new()),
+            ]),
+        );
+
+        let received = Arc::new(Mutex::new(Option::<String>::None));
+        let received_for_block = received.clone();
+
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async move {
+            // 1. Mock upstream: captures the forwarded `baggage` header.
+            let received_up = received_for_block.clone();
+            let upstream = Router::new().route(
+                "/upstream",
+                get(move |headers: HeaderMap| {
+                    let received_up = received_up.clone();
+                    async move {
+                        let bg = headers
+                            .get("baggage")
+                            .and_then(|v| v.to_str().ok())
+                            .map(String::from);
+                        *received_up.lock().unwrap() = bg;
+                        StatusCode::OK
+                    }
+                }),
+            );
+            let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let upstream_addr = upstream_listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(upstream_listener, upstream).await.unwrap();
+            });
+            let upstream_url = format!("http://{upstream_addr}");
+
+            // 2. Relay: propagate_trace_context middleware + handler that
+            //    forwards to upstream via HttpClient (static attrs empty, just
+            //    like serve_proxy's proxy_attrs).
+            let client = Arc::new(HttpClient::new(&upstream_url, None, BTreeMap::new()));
+            let client_for_handler = client.clone();
+            let upstream_url_for_handler = upstream_url.clone();
+            let relay = Router::new()
+                .route(
+                    "/relay",
+                    get(move || {
+                        let client = client_for_handler.clone();
+                        let url = upstream_url_for_handler.clone();
+                        async move {
+                            let resp = client
+                                .propagate(client.reqwest().get(format!("{url}/upstream")))
+                                .send()
+                                .await
+                                .unwrap();
+                            assert!(resp.status().is_success());
+                            StatusCode::OK
+                        }
+                    }),
+                )
+                .layer(from_fn(propagate_trace_context));
+            let relay_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let relay_addr = relay_listener.local_addr().unwrap();
+            tokio::spawn(async move {
+                axum::serve(relay_listener, relay).await.unwrap();
+            });
+            let relay_url = format!("http://{relay_addr}");
+
+            // 3. Send request to relay with a baggage header.
+            let resp = reqwest::Client::new()
+                .get(format!("{relay_url}/relay"))
+                .header("baggage", "run.id=xyz,session.id=abc")
+                .send()
+                .await
+                .unwrap();
+            assert!(resp.status().is_success());
+        });
+
+        let forwarded = received
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("upstream did not receive a request");
+        // NON_ALPHANUMERIC encodes `.` as %2E; BTreeMap sorts keys.
+        assert_eq!(forwarded, "run%2Eid=xyz,session%2Eid=abc");
     }
 }
