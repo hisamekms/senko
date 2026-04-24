@@ -11,9 +11,9 @@ use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
-use tower_http::trace::TraceLayer;
 
 mod auth;
+mod telemetry;
 
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
 use super::dto::{
@@ -561,7 +561,7 @@ pub async fn serve(
     backend: Arc<dyn TaskBackend>,
     auth_mode: Option<AuthMode>,
 ) -> Result<()> {
-    bootstrap::init_tracing(&config.log);
+    let telemetry = bootstrap::init_telemetry(&config.log);
 
     if auth_mode.is_none() {
         tracing::warn!(
@@ -601,7 +601,7 @@ pub async fn serve(
         trusted_headers_config: config.server.auth.trusted_headers.clone(),
     };
 
-    start_server(state, config, port, port_is_explicit).await
+    start_server(state, config, port, port_is_explicit, telemetry).await
 }
 
 /// Start the API server in proxy/relay mode (forwarding to a remote server).
@@ -613,7 +613,7 @@ pub async fn serve_proxy(
     config_path: Option<PathBuf>,
     hook_data: Arc<dyn crate::application::port::HookDataSource>,
 ) -> Result<()> {
-    bootstrap::init_tracing(&config.log);
+    let telemetry = bootstrap::init_telemetry(&config.log);
 
     let remote_url = config
         .server
@@ -673,7 +673,7 @@ pub async fn serve_proxy(
         trusted_headers_config: config.server.auth.trusted_headers.clone(),
     };
 
-    start_server(state, config, port, port_is_explicit).await
+    start_server(state, config, port, port_is_explicit, telemetry).await
 }
 
 async fn start_server(
@@ -681,6 +681,7 @@ async fn start_server(
     config: &Config,
     port: u16,
     port_is_explicit: bool,
+    telemetry: bootstrap::TelemetryGuard,
 ) -> Result<()> {
     let app = Router::new()
         // User CRUD
@@ -828,38 +829,9 @@ async fn start_server(
             version_header_middleware,
         ))
         .with_state(state)
-        .layer(
-            TraceLayer::new_for_http()
-                .make_span_with(|request: &axum::http::Request<_>| {
-                    tracing::info_span!(
-                        "http_request",
-                        method = %request.method(),
-                        uri = %request.uri(),
-                    )
-                })
-                .on_response(
-                    |response: &axum::http::Response<_>,
-                     latency: std::time::Duration,
-                     _span: &tracing::Span| {
-                        tracing::info!(
-                            status = response.status().as_u16(),
-                            latency_ms = latency.as_millis() as u64,
-                            "response"
-                        );
-                    },
-                )
-                .on_failure(
-                    |error: tower_http::classify::ServerErrorsFailureClass,
-                     latency: std::time::Duration,
-                     _span: &tracing::Span| {
-                        tracing::error!(
-                            latency_ms = latency.as_millis() as u64,
-                            error = %error,
-                            "request failed"
-                        );
-                    },
-                ),
-        );
+        .layer(axum::middleware::from_fn(
+            self::telemetry::propagate_trace_context,
+        ));
 
     let bind_addr_str = config.effective_server_host();
     let bind_ip: std::net::IpAddr = bind_addr_str
@@ -881,8 +853,38 @@ async fn start_server(
         tracing::info!(port = actual_port, addr = %bind_ip, "Listening on http://{bind_ip}:{actual_port}");
     }
 
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    telemetry.shutdown();
     Ok(())
+}
+
+/// Wait for SIGINT (Ctrl-C) or SIGTERM; return so `axum::serve` can drain
+/// in-flight requests and we can flush OTel providers in `TelemetryGuard`.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install SIGINT handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+    tracing::info!("shutdown signal received; flushing OTel providers");
 }
 
 fn get_local_ip() -> Option<std::net::IpAddr> {

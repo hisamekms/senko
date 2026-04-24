@@ -510,6 +510,211 @@ pub fn init_tracing(config: &LogConfig) {
     }
 }
 
+/// Guard returned by [`init_telemetry`] holding the OTel providers, so the
+/// server can flush pending spans / logs during graceful shutdown. `None` when
+/// an exporter is disabled (`OTEL_*_EXPORTER=none`, `OTEL_SDK_DISABLED=true`,
+/// or build failure).
+pub struct TelemetryGuard {
+    tracer_provider: Option<opentelemetry_sdk::trace::SdkTracerProvider>,
+    logger_provider: Option<opentelemetry_sdk::logs::SdkLoggerProvider>,
+}
+
+impl TelemetryGuard {
+    /// Flush and shut down both providers. Errors are demoted to `warn!` —
+    /// shutdown must never panic or propagate.
+    pub fn shutdown(self) {
+        if let Some(tp) = self.tracer_provider
+            && let Err(e) = tp.shutdown()
+        {
+            tracing::warn!(error = %e, "tracer provider shutdown failed");
+        }
+        if let Some(lp) = self.logger_provider
+            && let Err(e) = lp.shutdown()
+        {
+            tracing::warn!(error = %e, "logger provider shutdown failed");
+        }
+    }
+}
+
+/// Initialize tracing + OTel SDK for `senko serve` / `senko serve --proxy`.
+///
+/// Behavior is controlled entirely by OTel standard environment variables;
+/// senko adds no TOML knobs for telemetry per Contract #7:
+///
+/// - `OTEL_SDK_DISABLED=true` — short-circuits every OTel layer. The base
+///   `tracing_subscriber::fmt` logger still runs so local debugging works.
+/// - `OTEL_TRACES_EXPORTER` (default `otlp`): `otlp`, `console`, `none`.
+/// - `OTEL_LOGS_EXPORTER` (default `otlp`): same values.
+/// - `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`,
+///   `OTEL_RESOURCE_ATTRIBUTES` — read by the OTel SDK directly.
+///
+/// Unknown exporter values log a warning and behave like `none`.
+pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
+    use opentelemetry::propagation::TextMapCompositePropagator;
+    use opentelemetry_sdk::Resource;
+    use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
+
+    // Always install the composite propagator so the HTTP middleware can
+    // extract `traceparent` + `baggage` regardless of whether we're exporting.
+    opentelemetry::global::set_text_map_propagator(TextMapCompositePropagator::new(vec![
+        Box::new(TraceContextPropagator::new()),
+        Box::new(BaggagePropagator::new()),
+    ]));
+
+    let env_filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(&config.level));
+    let fmt_layer: Box<dyn tracing_subscriber::Layer<_> + Send + Sync> = match config.format {
+        LogFormat::Json => Box::new(tracing_subscriber::fmt::layer().json()),
+        LogFormat::Pretty => Box::new(tracing_subscriber::fmt::layer()),
+    };
+
+    if std::env::var("OTEL_SDK_DISABLED").ok().as_deref() == Some("true") {
+        tracing_subscriber::registry()
+            .with(env_filter)
+            .with(fmt_layer)
+            .init();
+        tracing::info!("OTEL_SDK_DISABLED=true — OTel exporters skipped");
+        return TelemetryGuard {
+            tracer_provider: None,
+            logger_provider: None,
+        };
+    }
+
+    // Resource. The SDK reads OTEL_SERVICE_NAME / OTEL_RESOURCE_ATTRIBUTES
+    // through built-in detectors when we start from `Resource::builder()`.
+    // A fallback service name keeps traces identifiable even when the
+    // operator forgot to set OTEL_SERVICE_NAME.
+    let resource = Resource::builder()
+        .with_service_name("senko-server")
+        .build();
+
+    let tracer_provider = build_tracer_provider(resource.clone());
+    let logger_provider = build_logger_provider(resource);
+
+    let registry = tracing_subscriber::registry()
+        .with(env_filter)
+        .with(fmt_layer);
+
+    // Attach the OTel span layer only when we actually have a tracer provider.
+    // `tracing_opentelemetry::layer()` without `with_tracer` installs a noop
+    // and costs nothing, but installing a proper tracer lets us skip the layer
+    // entirely in `none` mode — cheaper spans on a hot path.
+    match (&tracer_provider, &logger_provider) {
+        (Some(tp), Some(lp)) => {
+            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
+            registry
+                .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                .with(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(lp))
+                .init();
+            tracing::info!("OTel telemetry initialized with traces + logs exporters");
+        }
+        (Some(tp), None) => {
+            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
+            registry
+                .with(tracing_opentelemetry::layer().with_tracer(tracer))
+                .init();
+            tracing::info!("OTel telemetry initialized with traces exporter only");
+        }
+        (None, Some(lp)) => {
+            registry
+                .with(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(lp))
+                .init();
+            tracing::info!("OTel telemetry initialized with logs exporter only");
+        }
+        (None, None) => {
+            registry.init();
+            tracing::info!("OTel telemetry initialized without exporters");
+        }
+    }
+
+    if let Some(ref tp) = tracer_provider {
+        opentelemetry::global::set_tracer_provider(tp.clone());
+    }
+    // `opentelemetry::global` exposes no logger-provider setter in 0.31; the
+    // tracing bridge receives the provider by reference, so no global install
+    // is needed for log flow. The guard still owns `logger_provider` so we can
+    // flush it on shutdown.
+
+    TelemetryGuard {
+        tracer_provider,
+        logger_provider,
+    }
+}
+
+fn build_tracer_provider(
+    resource: opentelemetry_sdk::Resource,
+) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+    let choice = std::env::var("OTEL_TRACES_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
+    match choice.as_str() {
+        "otlp" => match opentelemetry_otlp::SpanExporter::builder()
+            .with_tonic()
+            .build()
+        {
+            Ok(exporter) => Some(
+                opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                    .with_batch_exporter(exporter)
+                    .with_resource(resource)
+                    .build(),
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to build OTLP span exporter; traces disabled");
+                None
+            }
+        },
+        "console" => Some(
+            opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
+                .with_resource(resource)
+                .build(),
+        ),
+        "none" => None,
+        other => {
+            tracing::warn!(
+                value = %other,
+                "unknown OTEL_TRACES_EXPORTER value; traces disabled",
+            );
+            None
+        }
+    }
+}
+
+fn build_logger_provider(
+    resource: opentelemetry_sdk::Resource,
+) -> Option<opentelemetry_sdk::logs::SdkLoggerProvider> {
+    let choice = std::env::var("OTEL_LOGS_EXPORTER").unwrap_or_else(|_| "otlp".to_string());
+    match choice.as_str() {
+        "otlp" => match opentelemetry_otlp::LogExporter::builder()
+            .with_tonic()
+            .build()
+        {
+            Ok(exporter) => Some(
+                opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                    .with_batch_exporter(exporter)
+                    .with_resource(resource)
+                    .build(),
+            ),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to build OTLP log exporter; OTel logs disabled");
+                None
+            }
+        },
+        "console" => Some(
+            opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_simple_exporter(opentelemetry_stdout::LogExporter::default())
+                .with_resource(resource)
+                .build(),
+        ),
+        "none" => None,
+        other => {
+            tracing::warn!(
+                value = %other,
+                "unknown OTEL_LOGS_EXPORTER value; OTel logs disabled",
+            );
+            None
+        }
+    }
+}
+
 pub fn load_config(
     project_root: &Path,
     explicit_config: Option<&Path>,

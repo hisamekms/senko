@@ -1,0 +1,394 @@
+//! HTTP middleware that receives W3C `traceparent` + `baggage` headers from
+//! the senko CLI, starts a server-side span under the extracted parent
+//! context, and promotes client-supplied baggage values to span attributes so
+//! they also ride along on every OTel log record emitted while the request is
+//! being handled.
+//!
+//! The corresponding CLI-side emitter is `src/infra/http/trace_propagation.rs`
+//! (sibling task 339); this file is the receiving half.
+
+use std::time::Instant;
+
+use axum::extract::Request;
+use axum::http::HeaderMap;
+use axum::middleware::Next;
+use axum::response::Response;
+use opentelemetry::baggage::{Baggage, BaggageExt};
+use opentelemetry::propagation::Extractor;
+use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
+
+use crate::infra::http::trace_propagation::is_reserved_namespace;
+
+/// Maximum length (in bytes) of a single Baggage value before it is truncated
+/// and a warning is emitted. Matches the Contract #7 spec: "1 値 256 char
+/// 超過時に切り詰め". Values are ASCII after percent-decoding in the common
+/// case, so bytes ≈ chars; truncation snaps to a UTF-8 boundary regardless.
+pub const BAGGAGE_VALUE_MAX_LEN: usize = 256;
+
+/// Adapter so `TextMapPropagator::extract` can read from axum's `HeaderMap`.
+struct HeaderMapExtractor<'a>(&'a HeaderMap);
+
+impl<'a> Extractor for HeaderMapExtractor<'a> {
+    fn get(&self, key: &str) -> Option<&str> {
+        self.0.get(key).and_then(|v| v.to_str().ok())
+    }
+
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|k| k.as_str()).collect()
+    }
+}
+
+/// Axum middleware — extract inbound trace context, open a server span, and
+/// promote baggage to span attributes. Replaces the older `tower_http::trace::TraceLayer`:
+/// status + latency are recorded on the span here.
+pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
+    let parent_cx = opentelemetry::global::get_text_map_propagator(|propagator| {
+        propagator.extract(&HeaderMapExtractor(req.headers()))
+    });
+
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let span = tracing::info_span!(
+        "http_request",
+        otel.name = %format!("{} {}", method, uri.path()),
+        otel.kind = "server",
+        http.method = %method,
+        http.target = %uri,
+        http.status_code = tracing::field::Empty,
+        latency_ms = tracing::field::Empty,
+    );
+    let _ = span.set_parent(parent_cx.clone());
+
+    promote_baggage_to_span(&span, parent_cx.baggage(), BAGGAGE_VALUE_MAX_LEN);
+
+    let start = Instant::now();
+    let response = next.run(req).instrument(span.clone()).await;
+    let latency = start.elapsed();
+
+    let status = response.status();
+    span.record("http.status_code", status.as_u16());
+    span.record("latency_ms", latency.as_millis() as u64);
+
+    if status.is_server_error() {
+        tracing::error!(
+            parent: &span,
+            status = status.as_u16(),
+            latency_ms = latency.as_millis() as u64,
+            "request failed",
+        );
+    } else {
+        tracing::info!(
+            parent: &span,
+            status = status.as_u16(),
+            latency_ms = latency.as_millis() as u64,
+            "response",
+        );
+    }
+
+    response
+}
+
+/// Attach each non-reserved baggage entry as a `baggage.<key>` span attribute.
+/// Reserved keys (`service.*`, `host.*`, etc. — see `trace_propagation`) are
+/// dropped defensively: the CLI already filters them, but a mis-configured
+/// client or proxy could still send them, and we never want them to overwrite
+/// server-side OTel Resource attributes of the same name.
+fn promote_baggage_to_span(span: &tracing::Span, baggage: &Baggage, max_len: usize) {
+    for (key, (value, _metadata)) in baggage.iter() {
+        let key_str = key.as_str();
+        if is_reserved_namespace(key_str) {
+            continue;
+        }
+        let raw = value.as_str();
+        let (truncated, was_truncated) = truncate_baggage_value(raw, max_len);
+        if was_truncated {
+            tracing::warn!(
+                key = key_str,
+                original_len = raw.len(),
+                max = max_len,
+                "baggage value truncated",
+            );
+        }
+        span.set_attribute(format!("baggage.{key_str}"), truncated);
+    }
+}
+
+/// Truncate to ≤ `max_len` bytes at a valid UTF-8 boundary. Returns
+/// `(truncated, true)` when truncation happened, `(original.to_string(), false)`
+/// otherwise. Snapping to a char boundary avoids panics on non-ASCII values
+/// that survive percent-decoding.
+fn truncate_baggage_value(value: &str, max_len: usize) -> (String, bool) {
+    if value.len() <= max_len {
+        return (value.to_string(), false);
+    }
+    let mut end = max_len;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    (value[..end].to_string(), true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use axum::Router;
+    use axum::body::Body;
+    use axum::http::{Request as HttpRequest, StatusCode};
+    use axum::middleware::from_fn;
+    use axum::routing::get;
+    use opentelemetry::KeyValue;
+    use opentelemetry::trace::TracerProvider as _;
+    use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
+    use opentelemetry_sdk::trace::{InMemorySpanExporter, SdkTracerProvider};
+    use tower::ServiceExt;
+
+    // --- truncate_baggage_value --------------------------------------------
+
+    #[test]
+    fn truncate_short_value_unchanged() {
+        let (out, truncated) = truncate_baggage_value("abc", 256);
+        assert_eq!(out, "abc");
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn truncate_exact_boundary_not_truncated() {
+        let s = "a".repeat(256);
+        let (out, truncated) = truncate_baggage_value(&s, 256);
+        assert_eq!(out.len(), 256);
+        assert!(!truncated);
+    }
+
+    #[test]
+    fn truncate_long_ascii_value() {
+        let s = "x".repeat(300);
+        let (out, truncated) = truncate_baggage_value(&s, 256);
+        assert!(truncated);
+        assert_eq!(out.len(), 256);
+        assert!(out.chars().all(|c| c == 'x'));
+    }
+
+    #[test]
+    fn truncate_snaps_to_utf8_boundary() {
+        // 254 ASCII bytes + "あ" (3 bytes in UTF-8) spans byte positions
+        // 254..257; truncating at byte 256 would land mid-char. The helper
+        // must back up to byte 254.
+        let mut s = "x".repeat(254);
+        s.push('あ');
+        assert!(s.len() > 256);
+        let (out, truncated) = truncate_baggage_value(&s, 256);
+        assert!(truncated);
+        assert!(out.len() <= 256);
+        // Valid UTF-8 => `&str` slicing did not panic and result is usable.
+        assert!(
+            out.is_ascii(),
+            "expected multibyte char to be dropped; got {out:?}"
+        );
+    }
+
+    // --- promote_baggage_to_span via the middleware -------------------------
+
+    /// Build a tracing subscriber wired to an in-memory OTel exporter and
+    /// run `body` under it. Returns the recorded `SpanData`.
+    fn with_test_subscriber<F, Fut>(body: F) -> Vec<opentelemetry_sdk::trace::SpanData>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        // Install a composite propagator so `get_text_map_propagator` works
+        // inside the middleware. Idempotent across test runs because global
+        // overwrite is a no-op for equal propagators in practice.
+        opentelemetry::global::set_text_map_propagator(
+            opentelemetry::propagation::TextMapCompositePropagator::new(vec![
+                Box::new(TraceContextPropagator::new()),
+                Box::new(BaggagePropagator::new()),
+            ]),
+        );
+
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let tracer = provider.tracer("senko-test");
+        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let subscriber = tracing_subscriber::registry().with(otel_layer);
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            body().await;
+        });
+
+        provider.force_flush().ok();
+        exporter.get_finished_spans().unwrap()
+    }
+
+    fn router_under_test() -> Router {
+        Router::new()
+            .route("/t", get(|| async { StatusCode::OK }))
+            .layer(from_fn(propagate_trace_context))
+    }
+
+    fn request_with_headers(traceparent: Option<&str>, baggage: Option<&str>) -> HttpRequest<Body> {
+        let mut builder = HttpRequest::builder().uri("/t").method("GET");
+        if let Some(tp) = traceparent {
+            builder = builder.header("traceparent", tp);
+        }
+        if let Some(bg) = baggage {
+            builder = builder.header("baggage", bg);
+        }
+        builder.body(Body::empty()).unwrap()
+    }
+
+    #[test]
+    fn middleware_promotes_baggage_to_span_attribute() {
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            let resp = app
+                .oneshot(request_with_headers(
+                    Some("00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01"),
+                    Some("run.id=xyz,session.id=abc"),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        });
+
+        assert_eq!(spans.len(), 1, "expected exactly one finished span");
+        let span = &spans[0];
+        // Propagated trace ID carries through.
+        assert_eq!(
+            format!(
+                "{:032x}",
+                u128::from_be_bytes(span.span_context.trace_id().to_bytes())
+            ),
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        );
+        let has_run_id = span
+            .attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "baggage.run.id" && kv.value.as_str() == "xyz");
+        let has_session_id = span
+            .attributes
+            .iter()
+            .any(|kv| kv.key.as_str() == "baggage.session.id" && kv.value.as_str() == "abc");
+        assert!(
+            has_run_id,
+            "missing baggage.run.id in {:?}",
+            span.attributes
+        );
+        assert!(
+            has_session_id,
+            "missing baggage.session.id in {:?}",
+            span.attributes
+        );
+    }
+
+    #[test]
+    fn middleware_filters_reserved_namespace() {
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            // Client sends a reserved-namespace key (they shouldn't, but we
+            // must drop it defensively).
+            let _ = app
+                .oneshot(request_with_headers(
+                    None,
+                    Some("service.name=evil,run.id=good"),
+                ))
+                .await
+                .unwrap();
+        });
+        let span = spans.into_iter().next().expect("one span");
+        for kv in &span.attributes {
+            assert_ne!(
+                kv.key.as_str(),
+                "baggage.service.name",
+                "reserved key must not be promoted",
+            );
+        }
+        assert!(
+            span.attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "baggage.run.id"),
+            "non-reserved key must still be promoted",
+        );
+    }
+
+    #[test]
+    fn middleware_truncates_oversized_baggage_value() {
+        // 300-byte value percent-encoded as `a` repeated. Baggage parser
+        // accepts unencoded alphanumerics, so we just pad raw `a`s.
+        let long_value = "a".repeat(300);
+        let header = format!("big={long_value}");
+
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            let _ = app
+                .oneshot(request_with_headers(None, Some(&header)))
+                .await
+                .unwrap();
+        });
+        let span = spans.into_iter().next().expect("one span");
+        let attr = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "baggage.big")
+            .expect("baggage.big present");
+        assert_eq!(
+            attr.value.as_str().len(),
+            BAGGAGE_VALUE_MAX_LEN,
+            "value should be truncated to BAGGAGE_VALUE_MAX_LEN bytes",
+        );
+    }
+
+    // --- Baggage helper (direct unit test of promote_baggage_to_span) -------
+
+    #[test]
+    fn promote_baggage_directly_records_and_skips_reserved() {
+        // Seed a tracing span into an in-memory OTel exporter, call
+        // promote_baggage_to_span directly, assert attributes.
+        let exporter = InMemorySpanExporter::default();
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let tracer = provider.tracer("senko-unit");
+
+        use tracing_subscriber::layer::SubscriberExt;
+        let subscriber =
+            tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
+        let _g = tracing::subscriber::set_default(subscriber);
+
+        let baggage = Baggage::from_iter([
+            KeyValue::new("run.id", "r1"),
+            KeyValue::new("service.name", "nope"),
+        ]);
+
+        {
+            let span = tracing::info_span!("manual");
+            promote_baggage_to_span(&span, &baggage, BAGGAGE_VALUE_MAX_LEN);
+            drop(span);
+        }
+
+        provider.force_flush().ok();
+        let spans = exporter.get_finished_spans().unwrap();
+        let span = spans.into_iter().next().expect("one span");
+        assert!(
+            span.attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "baggage.run.id"),
+        );
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "baggage.service.name"),
+        );
+    }
+}
