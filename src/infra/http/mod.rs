@@ -5,6 +5,7 @@ pub mod remote_metadata_field_ops;
 pub mod remote_project_ops;
 pub mod remote_task_ops;
 pub mod remote_user_ops;
+pub mod trace_propagation;
 
 use anyhow::Result;
 use serde_json::json;
