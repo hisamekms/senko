@@ -15,19 +15,28 @@ Every CLI → Remote request carries:
 
 If no attributes are configured, `baggage` is omitted and only `traceparent` is sent.
 
-## The Three Attribute Sources and Precedence
+## The Four Attribute Sources and Precedence
 
-The CLI merges three sources to decide what ends up in `baggage`:
+The CLI merges four sources to decide what ends up in `baggage`:
 
 | Source | Format | Malformed entry | Reserved-namespace filter |
 |---|---|---|---|
 | `--attr KEY=VALUE` (global CLI flag, repeatable) | One pair per use | **Hard error** (`invalid --attr …`) | Not applied |
 | `SENKO_TRACE_ATTRIBUTES` (env var) | `K=V,K=V,…` | Silently skipped (per OTel spec) | Not applied |
 | `OTEL_RESOURCE_ATTRIBUTES` (env var) | `K=V,K=V,…` | Silently skipped | **Applied** |
+| Auto-populated (`senko.operation.id`) | UUIDv4 generated once per CLI process | — | Not applied (internal value) |
 
 ### Precedence
 
-When the same key appears in multiple sources, the higher-priority one wins: **`--attr` > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES`**.
+When the same key appears in multiple sources, the higher-priority one wins: **`--attr` > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES` > auto**. Any of the upper three sources can override an auto-populated value.
+
+### Auto-Populated Attributes
+
+| Key | Value | When it's generated |
+|---|---|---|
+| `senko.operation.id` | UUIDv4 string | Minted once per CLI process on the first trace-attribute resolution, then reused for the rest of the invocation |
+
+`senko.operation.id` is the correlation ID that ties together every HTTP request, hook invocation, and status change within a single `senko …` invocation. Because the same value rides in every baggage header the CLI sends during that process, filtering on `baggage.senko.operation.id` on the Remote gives you all spans and logs for one user-level operation. If you want to force a specific ID (for testing, replay, or cross-CLI correlation), pass `--attr senko.operation.id=<own-id>` or set `SENKO_TRACE_ATTRIBUTES=senko.operation.id=<own-id>` — the explicit value wins.
 
 ### Using `--attr`
 

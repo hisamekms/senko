@@ -15,19 +15,28 @@ CLI → Remote の各リクエストに次のヘッダが付与されます。
 
 属性を一つも指定しない時は `baggage` は付かず、`traceparent` だけが流れます。
 
-## 属性の 3 ソースと優先順位
+## 属性の 4 ソースと優先順位
 
-CLI が baggage に載せる属性は、次の 3 ソースをマージして決まります。
+CLI が baggage に載せる属性は、次の 4 ソースをマージして決まります。
 
 | ソース | 形式 | malformed の扱い | 予約 namespace フィルタ |
 |---|---|---|---|
 | `--attr KEY=VALUE` (CLI グローバルフラグ、繰り返し可) | 1 回 1 ペア | **エラー終了** (`invalid --attr …`) | 適用しない |
 | `SENKO_TRACE_ATTRIBUTES` (環境変数) | `K=V,K=V,…` | silent skip (OTel spec 準拠) | 適用しない |
 | `OTEL_RESOURCE_ATTRIBUTES` (環境変数) | `K=V,K=V,…` | silent skip | **適用する** |
+| 自動採番 (`senko.operation.id`) | CLI プロセスで UUIDv4 を 1 回だけ採番 | — | 適用しない (内部生成値) |
 
 ### 優先順位
 
-同じキーが複数ソースに現れた時、**`--attr` > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES`** の順で高優先側が勝ちます。
+同じキーが複数ソースに現れた時、**`--attr` > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES` > 自動採番** の順で高優先側が勝ちます。自動採番の値は上 3 ソースのどれでも上書きできます。
+
+### 自動採番される属性
+
+| キー | 値 | 採番タイミング |
+|---|---|---|
+| `senko.operation.id` | UUIDv4 文字列 | CLI プロセス起動後、最初に trace 属性が解決されるタイミングで 1 回だけ採番し、同一プロセス内で再利用 |
+
+`senko.operation.id` は「1 CLI invocation 内の複数 HTTP リクエスト / hook / status 変更」を Remote 側で相関づけるための相関 ID です。同一 `senko …` コマンド内の全ての baggage に同じ値が乗るので、Remote 側で `baggage.senko.operation.id` を絞り込みキーにすると 1 操作に紐付く全 span / log を一覧できます。ユーザーが `--attr senko.operation.id=<own-id>` や `SENKO_TRACE_ATTRIBUTES=senko.operation.id=<own-id>` で上書きした場合はその値が勝ちます。
 
 ### `--attr` の使い方
 

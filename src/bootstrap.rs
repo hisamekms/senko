@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result, bail};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 use crate::application::port::TaskBackend;
 use crate::application::port::auth::AuthProvider;
@@ -30,9 +31,32 @@ use crate::infra::http::trace_propagation::{merge_attributes, parse_otel_resourc
 use crate::infra::pr_verifier::GhCliPrVerifier;
 use crate::infra::xdg::XdgDirs;
 
-/// Resolve the final W3C Baggage attribute map from the three sources defined
+/// Per-process UUIDv4 identifying one CLI invocation. Auto-generated on first
+/// access and cached for the lifetime of the process, so every outbound HTTP
+/// request in the same `senko …` invocation shares the same
+/// `senko.operation.id` baggage value — letting the Remote correlate the
+/// multiple API calls a single operation fans out into.
+fn auto_operation_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| Uuid::new_v4().to_string())
+}
+
+/// Build the lowest-priority "auto" trace-attribute source.
+///
+/// Kept as a small helper so future auto-populated attributes can be added
+/// here without touching every call site. Currently emits just
+/// `senko.operation.id = <uuid>`.
+fn auto_trace_attributes() -> Vec<(String, String)> {
+    vec![(
+        "senko.operation.id".to_string(),
+        auto_operation_id().to_string(),
+    )]
+}
+
+/// Resolve the final W3C Baggage attribute map from the four sources defined
 /// by the OTel client-tracing contract, in precedence order:
-/// `cli_attrs` (CLI `--attr`) > `SENKO_TRACE_ATTRIBUTES` > `OTEL_RESOURCE_ATTRIBUTES`
+/// `cli_attrs` (CLI `--attr`) > `SENKO_TRACE_ATTRIBUTES` >
+/// `OTEL_RESOURCE_ATTRIBUTES` > auto-populated (`senko.operation.id`)
 /// (with reserved namespaces filtered out of the OTel env source only).
 ///
 /// `cli_attrs` is already parsed at clap time; env vars are parsed here via
@@ -47,7 +71,12 @@ pub fn resolve_trace_attributes(cli_attrs: &[(String, String)]) -> BTreeMap<Stri
         .ok()
         .map(|s| parse_otel_resource_attributes(&s))
         .unwrap_or_default();
-    merge_attributes(cli_attrs.to_vec(), senko_env, otel_env)
+    merge_attributes(
+        cli_attrs.to_vec(),
+        senko_env,
+        otel_env,
+        auto_trace_attributes(),
+    )
 }
 
 // Re-exports for presentation layer (avoid direct infra dependency)
@@ -1241,10 +1270,15 @@ name = "project-local"
 
     #[test]
     #[serial]
-    fn resolve_trace_attributes_empty_when_no_sources() {
+    fn resolve_trace_attributes_contains_only_auto_when_no_sources() {
         clear_trace_env();
         let got = resolve_trace_attributes(&[]);
-        assert!(got.is_empty(), "expected empty, got {got:?}");
+        // Always auto-populated with senko.operation.id.
+        assert_eq!(got.len(), 1, "unexpected extra keys: {got:?}");
+        let id = got
+            .get("senko.operation.id")
+            .expect("senko.operation.id must be present");
+        Uuid::parse_str(id).expect("senko.operation.id must be a UUID");
     }
 
     #[test]
@@ -1293,6 +1327,72 @@ name = "project-local"
         assert_eq!(got.get("host.name"), Some(&"from-cli".to_string()));
         // Non-reserved key from OTEL passes through.
         assert_eq!(got.get("run.id"), Some(&"visible".to_string()));
+        clear_trace_env();
+    }
+
+    // --- auto senko.operation.id ---
+
+    #[test]
+    fn auto_operation_id_stable_across_calls() {
+        // OnceLock caches the first value — a single process must always
+        // observe the same ID regardless of how many times it's resolved.
+        let a = auto_operation_id().to_string();
+        let b = auto_operation_id().to_string();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn auto_operation_id_is_valid_uuid() {
+        let id = auto_operation_id();
+        let parsed = Uuid::parse_str(id).expect("auto_operation_id must be a valid UUID");
+        assert_eq!(parsed.get_version(), Some(uuid::Version::Random));
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_auto_operation_id_present_when_no_sources() {
+        clear_trace_env();
+        let got = resolve_trace_attributes(&[]);
+        let id = got
+            .get("senko.operation.id")
+            .expect("senko.operation.id must be auto-populated");
+        assert_eq!(id, auto_operation_id());
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_cli_wins_over_auto_operation_id() {
+        clear_trace_env();
+        let got = resolve_trace_attributes(&[pair("senko.operation.id", "custom-cli")]);
+        assert_eq!(
+            got.get("senko.operation.id"),
+            Some(&"custom-cli".to_string()),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_senko_env_wins_over_auto_operation_id() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("SENKO_TRACE_ATTRIBUTES", "senko.operation.id=env-val");
+        }
+        let got = resolve_trace_attributes(&[]);
+        assert_eq!(got.get("senko.operation.id"), Some(&"env-val".to_string()),);
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_trace_attributes_otel_env_wins_over_auto_operation_id() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "senko.operation.id=otel-val");
+        }
+        let got = resolve_trace_attributes(&[]);
+        assert_eq!(got.get("senko.operation.id"), Some(&"otel-val".to_string()),);
         clear_trace_env();
     }
 }

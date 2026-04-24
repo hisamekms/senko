@@ -53,15 +53,20 @@ pub fn parse_otel_resource_attributes(raw: &str) -> Vec<(String, String)> {
 }
 
 /// Merge attribute sources with precedence
-/// `cli_attrs > senko_env > otel_env(filtered)`. Reserved-namespace
+/// `cli_attrs > senko_env > otel_env(filtered) > auto`. Reserved-namespace
 /// filtering applies **only** to `otel_env` — explicit user overrides
-/// via `SENKO_TRACE_ATTRIBUTES` or `--attr` are respected verbatim.
+/// via `SENKO_TRACE_ATTRIBUTES` / `--attr` and internally auto-populated
+/// entries (e.g. `senko.operation.id`) are respected verbatim.
 pub fn merge_attributes(
     cli_attrs: Vec<(String, String)>,
     senko_env: Vec<(String, String)>,
     otel_env: Vec<(String, String)>,
+    auto: Vec<(String, String)>,
 ) -> BTreeMap<String, String> {
     let mut merged = BTreeMap::new();
+    for (k, v) in auto {
+        merged.insert(k, v);
+    }
     for (k, v) in otel_env {
         if is_reserved_namespace(&k) {
             continue;
@@ -219,6 +224,7 @@ mod tests {
             pairs(&[("run.id", "A")]),
             pairs(&[("run.id", "B")]),
             pairs(&[]),
+            pairs(&[]),
         );
         assert_eq!(merged.get("run.id"), Some(&"A".to_string()));
     }
@@ -229,6 +235,7 @@ mod tests {
             pairs(&[]),
             pairs(&[("run.id", "B")]),
             pairs(&[("run.id", "C")]),
+            pairs(&[]),
         );
         assert_eq!(merged.get("run.id"), Some(&"B".to_string()));
     }
@@ -239,6 +246,7 @@ mod tests {
             pairs(&[]),
             pairs(&[]),
             pairs(&[("service.name", "svc"), ("run.id", "X")]),
+            pairs(&[]),
         );
         assert_eq!(merged.get("service.name"), None);
         assert_eq!(merged.get("run.id"), Some(&"X".to_string()));
@@ -246,14 +254,57 @@ mod tests {
 
     #[test]
     fn merge_does_not_filter_reserved_from_senko() {
-        let merged = merge_attributes(pairs(&[]), pairs(&[("service.name", "svc")]), pairs(&[]));
+        let merged = merge_attributes(
+            pairs(&[]),
+            pairs(&[("service.name", "svc")]),
+            pairs(&[]),
+            pairs(&[]),
+        );
         assert_eq!(merged.get("service.name"), Some(&"svc".to_string()));
     }
 
     #[test]
     fn merge_does_not_filter_reserved_from_cli() {
-        let merged = merge_attributes(pairs(&[("service.name", "svc")]), pairs(&[]), pairs(&[]));
+        let merged = merge_attributes(
+            pairs(&[("service.name", "svc")]),
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[]),
+        );
         assert_eq!(merged.get("service.name"), Some(&"svc".to_string()));
+    }
+
+    #[test]
+    fn merge_auto_is_lowest_priority() {
+        let merged = merge_attributes(
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[("k", "from-otel")]),
+            pairs(&[("k", "from-auto")]),
+        );
+        assert_eq!(merged.get("k"), Some(&"from-otel".to_string()));
+    }
+
+    #[test]
+    fn merge_auto_survives_when_no_other_source_sets_it() {
+        let merged = merge_attributes(
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[("senko.operation.id", "u")]),
+        );
+        assert_eq!(merged.get("senko.operation.id"), Some(&"u".to_string()),);
+    }
+
+    #[test]
+    fn merge_auto_not_filtered_by_reserved_namespace() {
+        let merged = merge_attributes(
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[("service.name", "x")]),
+        );
+        assert_eq!(merged.get("service.name"), Some(&"x".to_string()));
     }
 
     #[test]

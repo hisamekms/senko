@@ -370,6 +370,46 @@ mod tests {
         );
     }
 
+    #[test]
+    fn middleware_promotes_senko_operation_id_baggage() {
+        use crate::bootstrap::resolve_trace_attributes;
+        use crate::infra::http::trace_propagation::build_baggage_header;
+
+        // SAFETY: telemetry tests in this file are not #[serial], but
+        // resolve_trace_attributes reads two env vars. Clear them so ambient
+        // CI env doesn't leak an override into the auto value.
+        unsafe {
+            std::env::remove_var("SENKO_TRACE_ATTRIBUTES");
+            std::env::remove_var("OTEL_RESOURCE_ATTRIBUTES");
+        }
+
+        // Build the exact baggage header a real CLI invocation would send
+        // when the user passes no --attr flags.
+        let attrs = resolve_trace_attributes(&[]);
+        let auto_id = attrs
+            .get("senko.operation.id")
+            .expect("auto senko.operation.id must be present")
+            .clone();
+        let header = build_baggage_header(&attrs).expect("baggage header must be non-empty");
+
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            let resp = app
+                .oneshot(request_with_headers(None, Some(&header)))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        });
+
+        let span = spans.into_iter().next().expect("one span");
+        let attr = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "baggage.senko.operation.id")
+            .expect("baggage.senko.operation.id must be promoted to span attribute");
+        assert_eq!(attr.value.as_str(), auto_id);
+    }
+
     // --- Baggage helper (direct unit test of promote_baggage_to_span) -------
 
     #[test]
