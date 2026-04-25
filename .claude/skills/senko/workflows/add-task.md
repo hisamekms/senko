@@ -129,7 +129,7 @@ The split path has a strict ordering — Contract must exist before the sub-task
    senko task edit $SUB_ID_2 --contract $CONTRACT_ID
    # ...
    senko task edit $TERMINAL_ID --contract $CONTRACT_ID --add-tag contract-terminal \
-     --add-definition-of-done "Verify Contract DoD items"
+     --add-definition-of-done "Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"
    ```
 
    The `contract-terminal` tag is what lets the skill route the terminal task to the Contract-verification workflow at execute/complete time. Do NOT omit it.
@@ -235,7 +235,7 @@ senko task edit <id> \
 senko task publish <id>
 ```
 
-**Note on the terminal task**: its `--add-definition-of-done "Verify Contract DoD items"` (set in Phase 2 step 4) is usually the only DoD it needs. The user may add more in Phase 4 if the split has side-artifacts that should be verified at the terminal step. Its branch can be set with the normal `branch_template` flow — no special handling.
+**Note on the terminal task**: its `--add-definition-of-done "Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"` (set in Phase 2 step 4) is usually the only DoD it needs. The user may add more in Phase 4 if the split has side-artifacts that should be verified at the terminal step. Its branch can be set with the normal `branch_template` flow — no special handling.
 
 Display the finalized task details (or task graph if multiple) to the user. For split paths, also print `$CONTRACT_ID` so the user can reference it in subsequent sessions.
 
