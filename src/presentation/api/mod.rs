@@ -882,9 +882,19 @@ async fn start_server(
             state.clone(),
             version_header_middleware,
         ))
-        .with_state(state)
+        .with_state(state.clone())
         .layer(axum::middleware::from_fn(
             self::telemetry::propagate_trace_context,
+        ))
+        // Outermost layer: resolve the inbound principal and scope the
+        // `RESOLVED_USER` task-local for the entire request, so
+        // `propagate_trace_context` can both stamp `enduser.*` on the
+        // `http_request` span and emit `senko.api.call` with the auth
+        // context populated. See `auth::resolve_enduser_middleware` and
+        // Contract #8 / Phase C3.
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            self::auth::resolve_enduser_middleware::<AppState>,
         ));
 
     let bind_addr_str = config.effective_server_host();

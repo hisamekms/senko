@@ -93,50 +93,64 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     );
     let _ = span.set_parent(parent_cx.clone());
 
+    // Phase C3: enrich the http_request span with the auth-resolved principal.
+    // `resolve_enduser_middleware` (outer layer) populates RESOLVED_USER
+    // before this middleware runs; `try_with` silently no-ops on
+    // unauthenticated / public-endpoint requests where the scope is absent.
+    let _ = crate::application::telemetry::RESOLVED_USER.try_with(|u| {
+        span.set_attribute("enduser.id", u.id);
+        span.set_attribute("enduser.name", u.username.clone());
+    });
+
     let inbound_baggage = apply_baggage_limits(parent_cx.baggage());
     promote_baggage_to_span(&span, &inbound_baggage);
 
     let start = Instant::now();
-    let response = INBOUND_BAGGAGE
-        .scope(inbound_baggage, next.run(req).instrument(span.clone()))
-        .await;
-    let latency = start.elapsed();
+    // The `senko.api.call` emit must run **inside** the `INBOUND_BAGGAGE`
+    // scope so `BusinessAttributesProcessor` can attach `senko.operation.id`
+    // and any caller-supplied baggage to the record. The outer
+    // `RESOLVED_USER` scope (from `resolve_enduser_middleware`) is still
+    // active here too, so `enduser.*` rides along on the same record.
+    INBOUND_BAGGAGE
+        .scope(inbound_baggage, async move {
+            let response = next.run(req).instrument(span.clone()).await;
+            let latency_ms = start.elapsed().as_millis() as u64;
+            let status_u16 = response.status().as_u16();
+            span.record("http.status_code", status_u16);
+            span.record("latency_ms", latency_ms);
 
-    let status = response.status();
-    let status_u16 = status.as_u16();
-    let latency_ms = latency.as_millis() as u64;
-    span.record("http.status_code", status_u16);
-    span.record("latency_ms", latency_ms);
+            // emit_business_event! expands to `tracing::event!(...);` with a
+            // trailing semicolon, so each match arm must be a block
+            // expression (otherwise the semicolon lands in expression
+            // position and triggers `future_incompatible` /
+            // `semicolon_in_expressions_from_macros`).
+            let _enter = span.enter();
+            match project_id {
+                Some(pid) => {
+                    crate::emit_business_event!(
+                        "senko.api.call",
+                        http.method = %method,
+                        http.route = %route,
+                        http.status_code = status_u16,
+                        latency_ms = latency_ms,
+                        senko.project.id = pid,
+                    );
+                }
+                None => {
+                    crate::emit_business_event!(
+                        "senko.api.call",
+                        http.method = %method,
+                        http.route = %route,
+                        http.status_code = status_u16,
+                        latency_ms = latency_ms,
+                    );
+                }
+            }
+            drop(_enter);
 
-    // emit_business_event! expands to `tracing::event!(...);` with a trailing
-    // semicolon, so each match arm must be a block expression (otherwise the
-    // semicolon lands in expression position and triggers `future_incompatible`
-    // / `semicolon_in_expressions_from_macros`).
-    let _enter = span.enter();
-    match project_id {
-        Some(pid) => {
-            crate::emit_business_event!(
-                "senko.api.call",
-                http.method = %method,
-                http.route = %route,
-                http.status_code = status_u16,
-                latency_ms = latency_ms,
-                senko.project.id = pid,
-            );
-        }
-        None => {
-            crate::emit_business_event!(
-                "senko.api.call",
-                http.method = %method,
-                http.route = %route,
-                http.status_code = status_u16,
-                latency_ms = latency_ms,
-            );
-        }
-    }
-    drop(_enter);
-
-    response
+            response
+        })
+        .await
 }
 
 /// Extract a `{name}` path-parameter value from `path` using `template` as
@@ -1151,6 +1165,122 @@ mod tests {
                 "project_id",
             ),
             None,
+        );
+    }
+
+    // --- C3: enduser propagation ----------------------------------------------
+
+    #[test]
+    fn http_request_span_carries_enduser_when_resolved_user_scope_active() {
+        // Simulates `resolve_enduser_middleware` having scoped RESOLVED_USER
+        // for the inbound request: the http_request span must pick the
+        // identity up via OpenTelemetrySpanExt::set_attribute.
+        use crate::application::telemetry::{RESOLVED_USER, ResolvedUser};
+
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            let user = ResolvedUser {
+                id: 11,
+                username: "carol".into(),
+            };
+            RESOLVED_USER
+                .scope(user, async move {
+                    let resp = app.oneshot(request_with_headers(None, None)).await.unwrap();
+                    assert_eq!(resp.status(), StatusCode::OK);
+                })
+                .await;
+        });
+
+        let span = spans.into_iter().next().expect("one span");
+        let id_attr = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "enduser.id")
+            .expect("enduser.id must be set on the http_request span");
+        let name_attr = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "enduser.name")
+            .expect("enduser.name must be set on the http_request span");
+        // `Value::I64` / `Value::String` both render via Display.
+        assert_eq!(id_attr.value.to_string(), "11");
+        assert_eq!(name_attr.value.to_string(), "carol");
+    }
+
+    #[test]
+    fn http_request_span_omits_enduser_when_resolved_user_unset() {
+        // No outer RESOLVED_USER scope (public endpoint / proxy mode):
+        // the span must not carry stray enduser.* attributes.
+        let spans = with_test_subscriber(|| async {
+            let app = router_under_test();
+            let resp = app.oneshot(request_with_headers(None, None)).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        });
+
+        let span = spans.into_iter().next().expect("one span");
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "enduser.id"),
+            "enduser.id must be absent without RESOLVED_USER scope"
+        );
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "enduser.name"),
+            "enduser.name must be absent without RESOLVED_USER scope"
+        );
+    }
+
+    #[test]
+    fn api_call_log_record_carries_enduser_when_resolved_user_scope_active() {
+        // Verifies the latent C1 fix: the senko.api.call emit now lives
+        // inside the INBOUND_BAGGAGE.scope async block, so both task-locals
+        // (RESOLVED_USER from the outer middleware, INBOUND_BAGGAGE from
+        // this middleware) are still active when BusinessAttributesProcessor
+        // enriches the record.
+        use crate::application::telemetry::test_support::{
+            build_capture_provider, capture_layer, lookup_attr,
+        };
+        use crate::application::telemetry::{RESOLVED_USER, ResolvedUser};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _g = tracing::subscriber::set_default(subscriber);
+            let app = router_under_test();
+            let user = ResolvedUser {
+                id: 11,
+                username: "carol".into(),
+            };
+            RESOLVED_USER
+                .scope(user, async move {
+                    let resp = app.oneshot(request_with_headers(None, None)).await.unwrap();
+                    assert_eq!(resp.status(), StatusCode::OK);
+                })
+                .await;
+        });
+
+        provider.force_flush().expect("flush");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let api_call = logs
+            .iter()
+            .map(|d| &d.record)
+            .find(|r| r.event_name() == Some("senko.api.call"))
+            .expect("senko.api.call record must be emitted");
+
+        assert_eq!(lookup_attr(api_call, "enduser.id"), Some(AnyValue::Int(11)));
+        assert_eq!(
+            lookup_attr(api_call, "enduser.name"),
+            Some(AnyValue::String("carol".into()))
         );
     }
 }
