@@ -1797,7 +1797,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 name: name.clone(),
                 description: description.clone(),
             };
-            let project = project_ops.create_project(&params, None).await?;
+            let (project, _events) = project_ops.create_project(&params, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&project)?);
@@ -2056,7 +2056,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
         }
         MemberAction::Add { user_id, role } => {
             let params = AddProjectMemberParams::new(*user_id, role.map(|r| r.into()));
-            let member = project_ops
+            let (member, _events) = project_ops
                 .add_project_member(project_id, &params, None)
                 .await?;
             match cli.output {
@@ -2073,7 +2073,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::Remove { user_id } => {
-            project_ops
+            let _events = project_ops
                 .remove_project_member(project_id, *user_id, None)
                 .await?;
             match cli.output {
@@ -2086,7 +2086,7 @@ pub async fn cmd_members(cli: &Cli, action: &MemberAction) -> Result<()> {
             }
         }
         MemberAction::SetRole { user_id, role } => {
-            let member = project_ops
+            let (member, _events) = project_ops
                 .update_member_role(project_id, *user_id, (*role).into(), None)
                 .await?;
             match cli.output {

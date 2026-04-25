@@ -14,7 +14,7 @@ use crate::domain::metadata_field::{
 use crate::domain::pagination::{Cursor, ListPage, build_page};
 use crate::domain::project::{
     CreateProjectParams, DEFAULT_PROJECT_ID, ListProjectMembersFilter, ListProjectsFilter, Project,
-    ProjectId,
+    ProjectId, UpdateProjectParams,
 };
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
@@ -660,6 +660,23 @@ fn delete_project(conn: &Connection, id: ProjectId) -> Result<()> {
         return Err(DomainError::ProjectNotFound.into());
     }
     Ok(())
+}
+
+fn update_project(
+    conn: &Connection,
+    id: ProjectId,
+    update: &UpdateProjectParams,
+) -> Result<Project> {
+    // Verify exists; bubbles up `ProjectNotFound` if missing.
+    let _existing = get_project(conn, id)?;
+
+    if let Some(ref description) = update.description {
+        conn.execute(
+            "UPDATE projects SET description = ?1 WHERE id = ?2",
+            params![description, id],
+        )?;
+    }
+    get_project(conn, id)
 }
 
 // --- User CRUD ---
@@ -2641,6 +2658,11 @@ impl ProjectRepository for SqliteBackend {
     async fn get_project_by_name(&self, name: &str) -> Result<Project> {
         let name = name.to_owned();
         blocking!(self, |conn: &Connection| get_project_by_name(conn, &name))
+    }
+
+    async fn update_project(&self, id: ProjectId, params: &UpdateProjectParams) -> Result<Project> {
+        let params = params.clone();
+        blocking!(self, |conn: &Connection| update_project(conn, id, &params))
     }
 
     async fn delete_project(&self, id: ProjectId) -> Result<()> {

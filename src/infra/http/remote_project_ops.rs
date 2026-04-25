@@ -7,7 +7,8 @@ use crate::application::port::ProjectOperations;
 use crate::domain::error::DomainError;
 use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::project::{
-    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+    CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectEvent,
+    ProjectId, UpdateProjectParams,
 };
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
@@ -74,7 +75,7 @@ impl ProjectOperations for RemoteProjectOperations {
         &self,
         params: &CreateProjectParams,
         _caller_user_id: Option<UserId>,
-    ) -> Result<Project> {
+    ) -> Result<(Project, Vec<ProjectEvent>)> {
         let resp = self
             .prepare(
                 self.client()
@@ -83,7 +84,8 @@ impl ProjectOperations for RemoteProjectOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let project: Project = read_json_or_error(resp).await?;
+        Ok((project, Vec::new()))
     }
 
     async fn get_project(&self, id: ProjectId) -> Result<Project> {
@@ -116,6 +118,30 @@ impl ProjectOperations for RemoteProjectOperations {
                 None => return Err(DomainError::ProjectNotFound.into()),
             }
         }
+    }
+
+    async fn update_project(
+        &self,
+        id: ProjectId,
+        params: &UpdateProjectParams,
+        _caller_user_id: Option<UserId>,
+    ) -> Result<(Project, Vec<ProjectEvent>)> {
+        // Mirror the API's `UpdateProjectBody` wire format: explicit clear flag.
+        let body = match &params.description {
+            Some(None) => json!({ "clear_description": true }),
+            Some(Some(text)) => json!({ "description": text }),
+            None => json!({}),
+        };
+        let resp = self
+            .prepare(
+                self.client()
+                    .put(self.url(&format!("/api/v1/projects/{id}")))
+                    .json(&body),
+            )
+            .send()
+            .await?;
+        let project: Project = read_json_or_error(resp).await?;
+        Ok((project, Vec::new()))
     }
 
     async fn delete_project(&self, id: ProjectId, _caller_user_id: Option<UserId>) -> Result<()> {
@@ -159,7 +185,7 @@ impl ProjectOperations for RemoteProjectOperations {
         project_id: ProjectId,
         params: &AddProjectMemberParams,
         _caller_user_id: Option<UserId>,
-    ) -> Result<ProjectMember> {
+    ) -> Result<(ProjectMember, Vec<ProjectEvent>)> {
         let resp = self
             .prepare(
                 self.client()
@@ -168,7 +194,8 @@ impl ProjectOperations for RemoteProjectOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let member: ProjectMember = read_json_or_error(resp).await?;
+        Ok((member, Vec::new()))
     }
 
     async fn remove_project_member(
@@ -176,7 +203,7 @@ impl ProjectOperations for RemoteProjectOperations {
         project_id: ProjectId,
         user_id: UserId,
         _caller_user_id: Option<UserId>,
-    ) -> Result<()> {
+    ) -> Result<Vec<ProjectEvent>> {
         let resp = self
             .prepare(
                 self.client()
@@ -184,7 +211,8 @@ impl ProjectOperations for RemoteProjectOperations {
             )
             .send()
             .await?;
-        check_success(resp).await
+        check_success(resp).await?;
+        Ok(Vec::new())
     }
 
     async fn get_project_member(
@@ -208,7 +236,7 @@ impl ProjectOperations for RemoteProjectOperations {
         user_id: UserId,
         role: Role,
         _caller_user_id: Option<UserId>,
-    ) -> Result<ProjectMember> {
+    ) -> Result<(ProjectMember, Vec<ProjectEvent>)> {
         let resp = self
             .prepare(
                 self.client()
@@ -217,6 +245,7 @@ impl ProjectOperations for RemoteProjectOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let member: ProjectMember = read_json_or_error(resp).await?;
+        Ok((member, Vec::new()))
     }
 }

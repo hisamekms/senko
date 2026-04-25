@@ -44,6 +44,7 @@ use crate::domain::metadata_field::{CreateMetadataFieldParams, ListMetadataField
 use crate::domain::pagination::Cursor;
 use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
+    UpdateProjectParams,
 };
 use crate::domain::task::{
     AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter,
@@ -703,7 +704,7 @@ async fn start_server(
         .route("/api/v1/projects", get(list_projects).post(create_project))
         .route(
             "/api/v1/projects/{project_id}",
-            get(get_project).delete(delete_project),
+            get(get_project).put(update_project).delete(delete_project),
         )
         // Project members
         .route(
@@ -923,7 +924,7 @@ async fn create_project(
 ) -> Result<(StatusCode, Json<ProjectResponse>), ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
-    let project = state
+    let (project, _events) = state
         .project_service
         .create_project(&params, caller_user_id)
         .await
@@ -941,6 +942,37 @@ async fn get_project(
     let project = state
         .project_service
         .get_project(project_id)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(ProjectResponse::from(project)))
+}
+
+#[derive(Deserialize)]
+struct UpdateProjectBody {
+    description: Option<String>,
+    #[serde(default)]
+    clear_description: bool,
+}
+
+// PUT /api/v1/projects/{project_id}
+async fn update_project(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path(project_id): Path<ProjectId>,
+    Json(body): Json<UpdateProjectBody>,
+) -> Result<Json<ProjectResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
+    let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
+    let params = UpdateProjectParams {
+        description: if body.clear_description {
+            Some(None)
+        } else {
+            body.description.map(Some)
+        },
+    };
+    let (project, _events) = state
+        .project_service
+        .update_project(project_id, &params, caller_user_id)
         .await
         .map_err(classify_error)?;
     Ok(Json(ProjectResponse::from(project)))
@@ -1935,7 +1967,7 @@ async fn add_member(
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
     let params = AddProjectMemberParams::new(body.user_id, body.role);
-    let member = state
+    let (member, _events) = state
         .project_service
         .add_project_member(project_id, &params, caller_user_id)
         .await
@@ -1975,7 +2007,7 @@ async fn update_member_role(
 ) -> Result<Json<ProjectMemberResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
-    let member = state
+    let (member, _events) = state
         .project_service
         .update_member_role(project_id, user_id, body.role, caller_user_id)
         .await
@@ -1995,7 +2027,7 @@ async fn remove_member(
 ) -> Result<StatusCode, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Admin).await?;
     let caller_user_id = auth.0.as_ref().map(|a| a.user.id());
-    state
+    let _events = state
         .project_service
         .remove_project_member(project_id, user_id, caller_user_id)
         .await

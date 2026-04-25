@@ -20,6 +20,7 @@ use crate::domain::metadata_field::{
 use crate::domain::pagination::{Cursor, ListPage, build_page};
 use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, Project, ProjectId,
+    UpdateProjectParams,
 };
 use crate::domain::task::{
     self, CreateTaskParams, DodItem, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
@@ -337,6 +338,24 @@ impl ProjectRepository for PostgresBackend {
             row.get("description"),
             row.get("created_at"),
         ))
+    }
+
+    async fn update_project(&self, id: ProjectId, params: &UpdateProjectParams) -> Result<Project> {
+        let pool = self.pool().await?;
+        if let Some(ref description) = params.description {
+            let result = sqlx::query("UPDATE projects SET description = $1 WHERE id = $2")
+                .bind(description)
+                .bind(id)
+                .execute(pool)
+                .await?;
+            if result.rows_affected() == 0 {
+                return Err(DomainError::ProjectNotFound.into());
+            }
+        } else {
+            // Existence check even when there is nothing to update.
+            self.get_project(id).await?;
+        }
+        self.get_project(id).await
     }
 
     async fn delete_project(&self, id: ProjectId) -> Result<()> {
