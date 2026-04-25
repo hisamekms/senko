@@ -108,6 +108,95 @@ fn parse_unblocked(items: Vec<UnblockedApiInfo>) -> Vec<UnblockedTask> {
         .collect()
 }
 
+/// Derive `senko.task.updated::changed_fields` from `UpdateTaskParams`.
+///
+/// Mirrors `Task::apply_update`'s push order in `src/domain/task.rs:519-632`,
+/// so the Remote-side `senko.task.updated` LogRecord uses the same field-name
+/// vocabulary and ordering as the Local-side emit (and therefore the same
+/// ordering produced by the upstream server's own emit). A field is reported
+/// as changed iff the caller supplied any value for it — prev fetch is
+/// intentionally avoided per Contract #8 B3 #354.
+fn updated_changed_fields(params: &UpdateTaskParams) -> Vec<String> {
+    let mut changed: Vec<String> = Vec::new();
+    if params.title.is_some() {
+        changed.push("title".into());
+    }
+    if params.background.is_some() {
+        changed.push("background".into());
+    }
+    if params.description.is_some() {
+        changed.push("description".into());
+    }
+    if params.plan.is_some() {
+        changed.push("plan".into());
+    }
+    if params.priority.is_some() {
+        changed.push("priority".into());
+    }
+    if params.assignee_session_id.is_some() {
+        changed.push("assignee_session_id".into());
+    }
+    if params.assignee_user_id.is_some() {
+        changed.push("assignee_user_id".into());
+    }
+    if params.started_at.is_some() {
+        changed.push("started_at".into());
+    }
+    if params.completed_at.is_some() {
+        changed.push("completed_at".into());
+    }
+    if params.canceled_at.is_some() {
+        changed.push("canceled_at".into());
+    }
+    if params.cancel_reason.is_some() {
+        changed.push("cancel_reason".into());
+    }
+    if params.branch.is_some() {
+        changed.push("branch".into());
+    }
+    if params.pr_url.is_some() {
+        changed.push("pr_url".into());
+    }
+    if params.contract_id.is_some() {
+        changed.push("contract_id".into());
+    }
+    if params.metadata.is_some() {
+        changed.push("metadata".into());
+    }
+    changed
+}
+
+/// Derive `senko.task.updated::changed_fields` from `UpdateTaskArrayParams`.
+///
+/// Mirrors `Task::apply_array_update` in `src/domain/task.rs:634-720`: a
+/// collection field is reported as changed iff the caller supplied any
+/// non-empty `set_/add_/remove_` for it.
+fn array_updated_changed_fields(params: &UpdateTaskArrayParams) -> Vec<String> {
+    let mut changed: Vec<String> = Vec::new();
+    if params.set_tags.is_some() || !params.add_tags.is_empty() || !params.remove_tags.is_empty() {
+        changed.push("tags".into());
+    }
+    if params.set_definition_of_done.is_some()
+        || !params.add_definition_of_done.is_empty()
+        || !params.remove_definition_of_done.is_empty()
+    {
+        changed.push("definition_of_done".into());
+    }
+    if params.set_in_scope.is_some()
+        || !params.add_in_scope.is_empty()
+        || !params.remove_in_scope.is_empty()
+    {
+        changed.push("in_scope".into());
+    }
+    if params.set_out_of_scope.is_some()
+        || !params.add_out_of_scope.is_empty()
+        || !params.remove_out_of_scope.is_empty()
+    {
+        changed.push("out_of_scope".into());
+    }
+    changed
+}
+
 #[async_trait]
 impl TaskOperations for RemoteTaskOperations {
     // --- State transitions ---
@@ -648,7 +737,24 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        // Derive `changed_fields` from the request params (mirrors
+        // `Task::apply_update`'s push order in src/domain/task.rs:519-632).
+        // Prev fetch is intentionally avoided per Contract #8 B3 #354 — the
+        // server-side authoritative diff lives in the upstream's own emit.
+        let changed_fields = updated_changed_fields(params);
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.task.updated",
+                senko.task.id = task.id().0,
+                senko.project.id = project_id.0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
+
+        Ok(task)
     }
 
     async fn edit_task_arrays(
@@ -666,7 +772,19 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        read_json_or_error::<Task>(resp).await?;
+        let task: Task = read_json_or_error(resp).await?;
+
+        let changed_fields = array_updated_changed_fields(params);
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.task.updated",
+                senko.task.id = task.id().0,
+                senko.project.id = project_id.0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
+
         Ok(())
     }
 
@@ -707,7 +825,16 @@ impl TaskOperations for RemoteTaskOperations {
             ))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.task.dod_checked",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            dod_index = index as i64,
+        );
+
+        Ok(task)
     }
 
     async fn uncheck_dod(
@@ -722,7 +849,16 @@ impl TaskOperations for RemoteTaskOperations {
             ))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.task.dod_unchecked",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            dod_index = index as i64,
+        );
+
+        Ok(task)
     }
 
     // --- Dependencies ---
@@ -741,7 +877,16 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.task.dependency_added",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            dep_id = dep_id.0,
+        );
+
+        Ok(task)
     }
 
     async fn remove_dependency(
@@ -758,7 +903,16 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.task.dependency_removed",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            dep_id = dep_id.0,
+        );
+
+        Ok(task)
     }
 
     async fn set_dependencies(
@@ -775,7 +929,18 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let task: Task = read_json_or_error(resp).await?;
+
+        let deps_json = serde_json::to_string(&dep_ids.iter().map(|d| d.0).collect::<Vec<_>>())
+            .unwrap_or_default();
+        crate::emit_business_event!(
+            "senko.task.dependencies_set",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            deps = deps_json.as_str(),
+        );
+
+        Ok(task)
     }
 
     async fn list_dependencies(
@@ -818,5 +983,328 @@ impl TaskOperations for RemoteTaskOperations {
     async fn ready_count(&self, project_id: ProjectId) -> Result<i64> {
         let tasks = self.list_ready_tasks(project_id).await?;
         Ok(tasks.len() as i64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::Arc;
+
+    use axum::Json;
+    use axum::Router;
+    use axum::routing::any;
+    use opentelemetry::logs::AnyValue;
+    use opentelemetry_sdk::logs::SdkLogRecord;
+    use serde_json::{Value, json};
+    use tokio::net::TcpListener;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use crate::application::port::TaskOperations;
+    use crate::application::port::hook_executor::NoOpHookExecutor;
+    use crate::application::telemetry::test_support::{
+        build_capture_provider, capture_layer, lookup_attr,
+    };
+    use crate::domain::project::ProjectId;
+    use crate::domain::task::{Priority, TaskId, UpdateTaskArrayParams, UpdateTaskParams};
+
+    use super::RemoteTaskOperations;
+
+    /// Fixed `Task` JSON returned by the mock upstream for every request.
+    /// Only `id` / `project_id` matter for assertions — they round-trip
+    /// through `read_json_or_error` into the captured LogRecord's attrs.
+    fn mock_task_json() -> Value {
+        json!({
+            "id": 1,
+            "project_id": 7,
+            "title": "mock",
+            "background": null,
+            "description": null,
+            "plan": null,
+            "priority": "P2",
+            "status": "todo",
+            "assignee_session_id": null,
+            "assignee_user_id": null,
+            "created_at": "2026-01-01T00:00:00Z",
+            "updated_at": "2026-01-01T00:00:00Z",
+            "started_at": null,
+            "completed_at": null,
+            "canceled_at": null,
+            "cancel_reason": null,
+            "branch": null,
+            "pr_url": null,
+            "contract_id": null,
+            "metadata": null,
+            "definition_of_done": [],
+            "in_scope": [],
+            "out_of_scope": [],
+            "tags": [],
+            "dependencies": []
+        })
+    }
+
+    /// Spawn a minimal upstream that returns `mock_task_json()` for every path
+    /// and method. Listening on a kernel-assigned port so tests can run in
+    /// parallel.
+    async fn spawn_mock_upstream() -> String {
+        let app: Router = Router::new().route("/{*rest}", any(|| async { Json(mock_task_json()) }));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        format!("http://{addr}")
+    }
+
+    fn make_remote_ops(base_url: &str) -> RemoteTaskOperations {
+        RemoteTaskOperations::new(base_url, None, BTreeMap::new(), Arc::new(NoOpHookExecutor))
+    }
+
+    /// Drive `body` under a tracing subscriber that bridges
+    /// `emit_business_event!` calls into an in-memory OTel exporter. Returns
+    /// every captured `LogRecord`. Uses a per-test current-thread runtime so
+    /// the `set_default` thread-local guard does not leak across parallel
+    /// tests.
+    fn with_business_records<F, Fut>(body: F) -> Vec<SdkLogRecord>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _g = tracing::subscriber::set_default(subscriber);
+            body().await;
+        });
+
+        provider.force_flush().ok();
+        exporter
+            .get_emitted_logs()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.record)
+            .collect()
+    }
+
+    fn one<'a>(records: &'a [SdkLogRecord], name: &str) -> &'a SdkLogRecord {
+        let matching: Vec<&SdkLogRecord> = records
+            .iter()
+            .filter(|r| r.event_name() == Some(name))
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "expected exactly one {name} record, got {}",
+            matching.len()
+        );
+        matching[0]
+    }
+
+    fn empty_update_params() -> UpdateTaskParams {
+        UpdateTaskParams {
+            title: None,
+            background: None,
+            description: None,
+            plan: None,
+            priority: None,
+            assignee_session_id: None,
+            assignee_user_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            pr_url: None,
+            contract_id: None,
+            metadata: None,
+        }
+    }
+
+    fn empty_array_params() -> UpdateTaskArrayParams {
+        UpdateTaskArrayParams {
+            set_tags: None,
+            add_tags: Vec::new(),
+            remove_tags: Vec::new(),
+            set_definition_of_done: None,
+            add_definition_of_done: Vec::new(),
+            remove_definition_of_done: Vec::new(),
+            set_in_scope: None,
+            add_in_scope: Vec::new(),
+            remove_in_scope: Vec::new(),
+            set_out_of_scope: None,
+            add_out_of_scope: Vec::new(),
+            remove_out_of_scope: Vec::new(),
+        }
+    }
+
+    // --- senko.task.updated -------------------------------------------------
+
+    #[test]
+    fn edit_task_emits_updated_with_changed_fields() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            let params = UpdateTaskParams {
+                description: Some(Some("x".into())),
+                priority: Some(Priority::P0),
+                ..empty_update_params()
+            };
+            ops.edit_task(ProjectId(7), TaskId(1), &params)
+                .await
+                .unwrap();
+        });
+
+        let r = one(&records, "senko.task.updated");
+        assert_eq!(lookup_attr(r, "senko.task.id"), Some(AnyValue::Int(1)));
+        assert_eq!(lookup_attr(r, "senko.project.id"), Some(AnyValue::Int(7)));
+        // Mirrors the push order of `Task::apply_update`.
+        assert_eq!(
+            lookup_attr(r, "changed_fields"),
+            Some(AnyValue::String("[\"description\",\"priority\"]".into())),
+        );
+    }
+
+    #[test]
+    fn edit_task_emits_nothing_when_params_are_all_none() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.edit_task(ProjectId(7), TaskId(1), &empty_update_params())
+                .await
+                .unwrap();
+        });
+
+        assert!(
+            !records
+                .iter()
+                .any(|r| r.event_name() == Some("senko.task.updated")),
+            "no senko.task.updated should be emitted when no fields changed"
+        );
+    }
+
+    #[test]
+    fn edit_task_arrays_emits_updated_with_array_changed_fields() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            let params = UpdateTaskArrayParams {
+                set_tags: Some(vec!["a".into()]),
+                add_definition_of_done: vec!["b".into()],
+                ..empty_array_params()
+            };
+            ops.edit_task_arrays(ProjectId(7), TaskId(1), &params)
+                .await
+                .unwrap();
+        });
+
+        let r = one(&records, "senko.task.updated");
+        assert_eq!(
+            lookup_attr(r, "changed_fields"),
+            Some(AnyValue::String("[\"tags\",\"definition_of_done\"]".into())),
+        );
+    }
+
+    #[test]
+    fn edit_task_arrays_emits_nothing_when_params_are_empty() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.edit_task_arrays(ProjectId(7), TaskId(1), &empty_array_params())
+                .await
+                .unwrap();
+        });
+
+        assert!(
+            !records
+                .iter()
+                .any(|r| r.event_name() == Some("senko.task.updated")),
+            "no senko.task.updated should be emitted when no arrays changed"
+        );
+    }
+
+    // --- senko.task.dod_checked / dod_unchecked -----------------------------
+
+    #[test]
+    fn check_dod_emits_dod_checked_with_index() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.check_dod(ProjectId(7), TaskId(1), 2).await.unwrap();
+        });
+
+        let r = one(&records, "senko.task.dod_checked");
+        assert_eq!(lookup_attr(r, "senko.task.id"), Some(AnyValue::Int(1)));
+        assert_eq!(lookup_attr(r, "senko.project.id"), Some(AnyValue::Int(7)));
+        assert_eq!(lookup_attr(r, "dod_index"), Some(AnyValue::Int(2)));
+    }
+
+    #[test]
+    fn uncheck_dod_emits_dod_unchecked_with_index() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.uncheck_dod(ProjectId(7), TaskId(1), 0).await.unwrap();
+        });
+
+        let r = one(&records, "senko.task.dod_unchecked");
+        assert_eq!(lookup_attr(r, "dod_index"), Some(AnyValue::Int(0)));
+    }
+
+    // --- senko.task.dependency_{added,removed} / dependencies_set ------------
+
+    #[test]
+    fn add_dependency_emits_dependency_added_with_dep_id() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.add_dependency(ProjectId(7), TaskId(1), TaskId(99))
+                .await
+                .unwrap();
+        });
+
+        let r = one(&records, "senko.task.dependency_added");
+        assert_eq!(lookup_attr(r, "senko.task.id"), Some(AnyValue::Int(1)));
+        assert_eq!(lookup_attr(r, "senko.project.id"), Some(AnyValue::Int(7)));
+        assert_eq!(lookup_attr(r, "dep_id"), Some(AnyValue::Int(99)));
+    }
+
+    #[test]
+    fn remove_dependency_emits_dependency_removed_with_dep_id() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.remove_dependency(ProjectId(7), TaskId(1), TaskId(88))
+                .await
+                .unwrap();
+        });
+
+        let r = one(&records, "senko.task.dependency_removed");
+        assert_eq!(lookup_attr(r, "dep_id"), Some(AnyValue::Int(88)));
+    }
+
+    #[test]
+    fn set_dependencies_emits_dependencies_set_with_json_deps() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream().await;
+            let ops = make_remote_ops(&base);
+            ops.set_dependencies(
+                ProjectId(7),
+                TaskId(1),
+                &[TaskId(10), TaskId(20), TaskId(30)],
+            )
+            .await
+            .unwrap();
+        });
+
+        let r = one(&records, "senko.task.dependencies_set");
+        assert_eq!(
+            lookup_attr(r, "deps"),
+            Some(AnyValue::String("[10,20,30]".into())),
+        );
     }
 }
