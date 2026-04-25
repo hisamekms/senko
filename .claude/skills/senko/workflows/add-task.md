@@ -229,7 +229,67 @@ senko task edit <id> \
         - `{{<name>:<opt1>|<opt2>|...}}` → enum variable. Infer the appropriate value from the task's title and description (e.g., new feature → `feat`, bug fix → `fix`, maintenance → `chore`). If unclear, use `AskUserQuestion` to present the options.
      3. Set it: `senko task edit <id> --branch <branch-name>`
 
-5. Transition to todo:
+5. **Pre-publication review (mandatory)**:
+
+   Before `senko task publish`, every draft task must pass a reviewer agent. The agent depends on the path:
+
+   - **Split path (Contract exists)** → use `task-contract-reviewer`. Reviews the Contract together with every linked sub-task and the terminal task.
+   - **Single-task path (no Contract)** → use `single-task-reviewer`. Reviews the single draft task in isolation.
+
+   ##### 5a. Split path
+
+   1. Collect the current state of the Contract and every draft task linked to it:
+
+      ```bash
+      senko contract get $CONTRACT_ID
+      senko contract note list $CONTRACT_ID
+      senko task get $SUB_ID_1
+      senko task get $SUB_ID_2
+      # ... and the terminal task
+      senko task get $TERMINAL_ID
+      ```
+
+   2. Invoke the `task-contract-reviewer` agent with a Review Packet containing:
+
+      1. **Original user intent** — the original task description from the user
+      2. **Decisions made during task registration** — the resolved questions/answers from Phase 1 and the split rationale
+      3. **Contract** — the JSON output of `senko contract get` plus existing notes
+      4. **Draft Task list** — the JSON output of `senko task get` for every sub-task and the terminal task
+      5. **Known constraints** — any cross-cutting constraints surfaced in Phase 1 (e.g., merge freeze, interface decisions)
+
+   3. Read the agent's verdict:
+
+      - **PASS** → proceed to step 6 (publish).
+      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`, `senko contract edit`, or `senko contract note add` as appropriate, then proceed to step 6.
+      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix before publication. Apply Contract additions via `senko contract edit --description …` or `--add-definition-of-done …`. Append decision-log entries via `senko contract note add`. Apply task-specific additions via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata …`. Apply dependency fixes via `senko task deps add/remove/set`. After applying fixes, **re-invoke the reviewer** with the updated Review Packet. Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES.
+
+   ##### 5b. Single-task path
+
+   1. Collect the current state of the draft task:
+
+      ```bash
+      senko task get <id>
+      ```
+
+   2. Invoke the `single-task-reviewer` agent with a Review Packet containing:
+
+      1. **Original user intent** — the original task description from the user
+      2. **Decisions made during task registration** — the resolved questions/answers from Phase 1 and the rationale for keeping the work as a single task
+      3. **Draft Task** — the JSON output of `senko task get`
+      4. **Known constraints** — any constraints surfaced in Phase 1 (e.g., merge freeze, interface decisions, environment requirements)
+
+   3. Read the agent's verdict:
+
+      - **PASS** → proceed to step 6 (publish).
+      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`, then proceed to step 6.
+      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata … / --add-tag … / --priority …`. Apply dependency fixes via `senko task deps add/remove`. After applying fixes, **re-invoke the reviewer** with the updated Review Packet. Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES.
+      - **SHOULD_SPLIT_TASK** → the reviewer judged that the work should not remain a single task. Present the proposed split to the user via `AskUserQuestion`. If the user agrees, abandon the single-task path and re-enter Phase 1.5 (Contract draft) and Phase 2 split path with the proposed sub-tasks; the existing draft task may be reused as one of the sub-tasks (re-link with `--contract`) or canceled with `senko task cancel <id> --reason "Restructured into split"`. If the user rejects the split, treat the verdict as PASS_WITH_MINOR_FIXES and continue.
+
+   ##### 5c. Common
+
+   Show the user a brief summary of the verdict and the changes applied (if any) before publishing.
+
+6. Transition to todo:
 
 ```bash
 senko task publish <id>
