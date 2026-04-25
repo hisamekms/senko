@@ -49,7 +49,7 @@ impl HookTrigger {
             HookTrigger::Task(TaskEvent::Canceled) => Some("task_cancel"),
             HookTrigger::TaskSelect { .. } => Some("task_select"),
             HookTrigger::Contract(ContractEvent::Created) => Some("contract_add"),
-            HookTrigger::Contract(ContractEvent::Updated) => Some("contract_edit"),
+            HookTrigger::Contract(ContractEvent::Updated { .. }) => Some("contract_edit"),
             HookTrigger::Contract(ContractEvent::Deleted) => Some("contract_delete"),
             HookTrigger::Contract(ContractEvent::DodChecked { .. }) => Some("contract_dod_check"),
             HookTrigger::Contract(ContractEvent::DodUnchecked { .. }) => {
@@ -107,7 +107,7 @@ impl HookTrigger {
             }),
             HookTrigger::Contract(ev) => Some(match ev {
                 ContractEvent::Created => "senko.contract.created",
-                ContractEvent::Updated => "senko.contract.updated",
+                ContractEvent::Updated { .. } => "senko.contract.updated",
                 ContractEvent::Deleted => "senko.contract.deleted",
                 ContractEvent::DodChecked { .. } => "senko.contract.dod_checked",
                 ContractEvent::DodUnchecked { .. } => "senko.contract.dod_unchecked",
@@ -190,7 +190,9 @@ impl HookTrigger {
                 result: SelectResult::Selected,
             }),
             "contract_add" => Some(HookTrigger::Contract(ContractEvent::Created)),
-            "contract_edit" => Some(HookTrigger::Contract(ContractEvent::Updated)),
+            "contract_edit" => Some(HookTrigger::Contract(ContractEvent::Updated {
+                changed_fields: Vec::new(),
+            })),
             "contract_delete" => Some(HookTrigger::Contract(ContractEvent::Deleted)),
             "contract_dod_check" => Some(HookTrigger::Contract(ContractEvent::DodChecked {
                 index: 0,
@@ -258,7 +260,12 @@ mod tests {
     fn contract_triggers_have_event_names() {
         let cases = [
             (ContractEvent::Created, "contract_add"),
-            (ContractEvent::Updated, "contract_edit"),
+            (
+                ContractEvent::Updated {
+                    changed_fields: vec!["title".into()],
+                },
+                "contract_edit",
+            ),
             (ContractEvent::Deleted, "contract_delete"),
             (ContractEvent::DodChecked { index: 0 }, "contract_dod_check"),
             (
@@ -380,7 +387,12 @@ mod tests {
         // Contract aggregate (6 events)
         let contract_cases: [(ContractEvent, &str); 6] = [
             (ContractEvent::Created, "senko.contract.created"),
-            (ContractEvent::Updated, "senko.contract.updated"),
+            (
+                ContractEvent::Updated {
+                    changed_fields: vec!["title".into()],
+                },
+                "senko.contract.updated",
+            ),
             (ContractEvent::Deleted, "senko.contract.deleted"),
             (
                 ContractEvent::DodChecked { index: 0 },

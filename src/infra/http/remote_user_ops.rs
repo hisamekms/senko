@@ -8,7 +8,7 @@ use crate::application::user_service::is_key_expired;
 use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::user::{
     ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter,
-    UpdateUserParams, User, UserCreationSource, UserEvent, UserId, Username,
+    SessionRevokeScope, UpdateUserParams, User, UserCreationSource, UserEvent, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -74,16 +74,24 @@ impl UserOperations for RemoteUserOperations {
     async fn create_user(
         &self,
         params: &CreateUserParams,
-        _source: UserCreationSource,
+        source: UserCreationSource,
     ) -> Result<(User, Vec<UserEvent>)> {
-        // Remote: events are emitted server-side, so the client returns an
-        // empty Vec. `_source` is intentionally ignored — the upstream auth
-        // path determines the actual creation source.
+        // Remote: the upstream Remote server emits its own
+        // `senko.user.created` with the authoritative source attribute. We
+        // also emit on the relay side so Aviary sees the event regardless of
+        // which leg of the call it observes (Contract #8 DoD #2).
         let resp = self
             .prepare(self.client().post(self.url("/api/v1/users")).json(params))
             .send()
             .await?;
         let user: User = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.user.created",
+            senko.user.id = user.id().0,
+            source = source.as_str(),
+        );
+
         Ok((user, vec![]))
     }
 
@@ -141,6 +149,24 @@ impl UserOperations for RemoteUserOperations {
             .send()
             .await?;
         let user: User = read_json_or_error(resp).await?;
+
+        // Mirror UserService::update_user semantics for changed_fields.
+        let mut changed_fields: Vec<String> = Vec::new();
+        if params.username.is_some() {
+            changed_fields.push("username".into());
+        }
+        if params.display_name.is_some() {
+            changed_fields.push("display_name".into());
+        }
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.user.updated",
+                senko.user.id = id.0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
+
         Ok((user, vec![]))
     }
 
@@ -172,6 +198,13 @@ impl UserOperations for RemoteUserOperations {
             .send()
             .await?;
         let key: ApiKeyWithSecret = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.user.api_key_issued",
+            senko.user.id = user_id.0,
+            api_key_id = key.id(),
+        );
+
         Ok((key, vec![]))
     }
 
@@ -195,6 +228,13 @@ impl UserOperations for RemoteUserOperations {
             .send()
             .await?;
         check_success(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.user.api_key_revoked",
+            senko.user.id = user_id.0,
+            api_key_id = key_id,
+        );
+
         Ok(vec![])
     }
 
@@ -289,13 +329,40 @@ impl UserOperations for RemoteUserOperations {
             .send()
             .await?;
         check_success(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.user.session_revoked",
+            senko.user.id = user_id.0,
+            session.id = key_id,
+            scope = SessionRevokeScope::Single.as_str(),
+        );
+
         Ok(vec![])
     }
 
     async fn revoke_all_sessions(&self, user_id: UserId) -> Result<Vec<UserEvent>> {
+        // Enumerate sessions before deletion so we can emit one
+        // `senko.user.session_revoked` event per session id (Contract #8 spec).
         let keys = self.list_api_keys(user_id).await?;
-        for key in keys {
-            self.revoke_session(key.id(), user_id).await?;
+        for key in &keys {
+            // Delete via direct HTTP rather than `revoke_session` to avoid
+            // emitting the per-session event with `scope=single`.
+            let resp = self
+                .prepare(
+                    self.client().delete(
+                        self.url(&format!("/api/v1/users/{user_id}/api-keys/{}", key.id())),
+                    ),
+                )
+                .send()
+                .await?;
+            check_success(resp).await?;
+
+            crate::emit_business_event!(
+                "senko.user.session_revoked",
+                senko.user.id = user_id.0,
+                session.id = key.id(),
+                scope = SessionRevokeScope::All.as_str(),
+            );
         }
         Ok(vec![])
     }

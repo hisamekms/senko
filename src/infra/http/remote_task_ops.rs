@@ -134,6 +134,12 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
+        crate::emit_business_event!(
+            "senko.task.created",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(task)
     }
 
@@ -159,6 +165,14 @@ impl TaskOperations for RemoteTaskOperations {
                 None,
             )
             .await;
+
+        crate::emit_business_event!(
+            "senko.task.published",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
 
         Ok(task)
     }
@@ -210,6 +224,14 @@ impl TaskOperations for RemoteTaskOperations {
                 None,
             )
             .await;
+
+        crate::emit_business_event!(
+            "senko.task.started",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
 
         Ok(task)
     }
@@ -297,6 +319,14 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
+        crate::emit_business_event!(
+            "senko.task.started",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %TaskStatus::Todo,
+            to_status = %task.status(),
+        );
+
         Ok(task)
     }
 
@@ -334,6 +364,14 @@ impl TaskOperations for RemoteTaskOperations {
                 Some(unblocked.clone()),
             )
             .await;
+
+        crate::emit_business_event!(
+            "senko.task.completed",
+            senko.task.id = api_resp.task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %api_resp.task.status(),
+        );
 
         Ok(CompleteResult {
             task: api_resp.task,
@@ -373,6 +411,16 @@ impl TaskOperations for RemoteTaskOperations {
                 None,
             )
             .await;
+
+        let cancel_reason = reason.unwrap_or_default();
+        crate::emit_business_event!(
+            "senko.task.canceled",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+            cancel_reason = cancel_reason.as_str(),
+        );
 
         Ok(task)
     }

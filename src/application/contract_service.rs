@@ -60,6 +60,12 @@ impl ContractOperations for LocalContractOperations {
             .fire_contract(&trigger, HookWhen::Post, Some(&contract))
             .await;
 
+        crate::emit_business_event!(
+            "senko.contract.created",
+            senko.contract.id = contract.id().0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(contract)
     }
 
@@ -86,7 +92,9 @@ impl ContractOperations for LocalContractOperations {
         array_params.validate()?;
 
         let prev = self.backend.get_contract(id).await?;
-        let trigger = HookTrigger::Contract(ContractEvent::Updated);
+        let trigger = HookTrigger::Contract(ContractEvent::Updated {
+            changed_fields: Vec::new(),
+        });
         if self
             .hooks
             .fire_contract(&trigger, HookWhen::Pre, Some(&prev))
@@ -99,6 +107,24 @@ impl ContractOperations for LocalContractOperations {
             .into());
         }
 
+        // Capture the per-field diff from the domain aggregate methods. The
+        // returned (Contract, _) pair is discarded: the persistence path goes
+        // through `backend.update_contract`; we only need the
+        // `ContractEvent::Updated { changed_fields }` payload to attribute the
+        // emit. Two clones (one per method) are intentional — the methods
+        // consume `self`, and merging them in-place would couple this site to
+        // the domain's internal ordering.
+        let (_, scalar_events) = prev.clone().update(params, String::new());
+        let (_, array_events) = prev.clone().apply_array_update(array_params, String::new());
+        let changed_fields: Vec<String> = scalar_events
+            .iter()
+            .chain(array_events.iter())
+            .flat_map(|ev| match ev {
+                ContractEvent::Updated { changed_fields } => changed_fields.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+
         let contract = self
             .backend
             .update_contract(id, params, array_params)
@@ -108,6 +134,16 @@ impl ContractOperations for LocalContractOperations {
             .hooks
             .fire_contract(&trigger, HookWhen::Post, Some(&contract))
             .await;
+
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.contract.updated",
+                senko.contract.id = contract.id().0,
+                senko.project.id = contract.project_id().0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
 
         Ok(contract)
     }
@@ -133,6 +169,12 @@ impl ContractOperations for LocalContractOperations {
             .hooks
             .fire_contract(&trigger, HookWhen::Post, Some(&prev))
             .await;
+
+        crate::emit_business_event!(
+            "senko.contract.deleted",
+            senko.contract.id = prev.id().0,
+            senko.project.id = prev.project_id().0,
+        );
 
         Ok(())
     }
@@ -164,6 +206,13 @@ impl ContractOperations for LocalContractOperations {
             .fire_contract(&trigger, HookWhen::Post, Some(&contract))
             .await;
 
+        crate::emit_business_event!(
+            "senko.contract.dod_checked",
+            senko.contract.id = contract.id().0,
+            senko.project.id = contract.project_id().0,
+            dod_index = index as i64,
+        );
+
         Ok(contract)
     }
 
@@ -193,6 +242,13 @@ impl ContractOperations for LocalContractOperations {
             .hooks
             .fire_contract(&trigger, HookWhen::Post, Some(&contract))
             .await;
+
+        crate::emit_business_event!(
+            "senko.contract.dod_unchecked",
+            senko.contract.id = contract.id().0,
+            senko.project.id = contract.project_id().0,
+            dod_index = index as i64,
+        );
 
         Ok(contract)
     }
@@ -228,6 +284,12 @@ impl ContractOperations for LocalContractOperations {
             .hooks
             .fire_contract(&trigger, HookWhen::Post, after.as_ref())
             .await;
+
+        crate::emit_business_event!(
+            "senko.contract.note_added",
+            senko.contract.id = contract_id.0,
+            senko.project.id = prev.project_id().0,
+        );
 
         Ok(created)
     }
@@ -445,5 +507,44 @@ mod tests {
         params.title = "x".repeat(10_000);
         let err = ops.create_contract(project_id, &params).await;
         assert!(err.is_err());
+    }
+
+    // --- Phase B3: business-event emission wire-up check ------------------
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_contract_emits_otel_log_record() {
+        use crate::application::telemetry::test_support::{
+            build_capture_provider, capture_layer, lookup_attr,
+        };
+        use opentelemetry::logs::AnyValue;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (_dir, backend, project_id) = new_backend().await;
+        let ops = LocalContractOperations::new(backend, noop_hooks());
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let created = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            ops.create_contract(project_id, &simple_params())
+                .await
+                .unwrap()
+        };
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let record = logs
+            .iter()
+            .find(|d| d.record.event_name() == Some("senko.contract.created"))
+            .expect("senko.contract.created should be emitted");
+
+        assert_eq!(
+            lookup_attr(&record.record, "senko.contract.id"),
+            Some(AnyValue::Int(created.id().0))
+        );
+        assert_eq!(
+            lookup_attr(&record.record, "senko.project.id"),
+            Some(AnyValue::Int(project_id.0))
+        );
     }
 }

@@ -13,6 +13,60 @@ use crate::domain::project::{
 use crate::domain::task::ListTasksFilter;
 use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 
+/// Emit Contract #8 business events for a `ProjectService` mutation.
+///
+/// Iterates the events vector returned by the mutation and dispatches one
+/// `senko.project.*` LogRecord per variant. Common attributes (enduser.*,
+/// senko.operation.id, baggage) are auto-attached by `BusinessAttributesProcessor`.
+fn emit_project_events(project_id: ProjectId, events: &[ProjectEvent]) {
+    for ev in events {
+        match ev {
+            ProjectEvent::Created => {
+                crate::emit_business_event!(
+                    "senko.project.created",
+                    senko.project.id = project_id.0,
+                );
+            }
+            ProjectEvent::Updated { changed_fields } => {
+                let changed_fields_json = serde_json::to_string(changed_fields).unwrap_or_default();
+                crate::emit_business_event!(
+                    "senko.project.updated",
+                    senko.project.id = project_id.0,
+                    changed_fields = changed_fields_json.as_str(),
+                );
+            }
+            ProjectEvent::MemberAdded { user_id, role } => {
+                crate::emit_business_event!(
+                    "senko.project.member_added",
+                    senko.project.id = project_id.0,
+                    senko.user.id = user_id.0,
+                    role = %role,
+                );
+            }
+            ProjectEvent::MemberRemoved { user_id } => {
+                crate::emit_business_event!(
+                    "senko.project.member_removed",
+                    senko.project.id = project_id.0,
+                    senko.user.id = user_id.0,
+                );
+            }
+            ProjectEvent::MemberRoleChanged {
+                user_id,
+                from_role,
+                to_role,
+            } => {
+                crate::emit_business_event!(
+                    "senko.project.member_role_changed",
+                    senko.project.id = project_id.0,
+                    senko.user.id = user_id.0,
+                    from_role = %from_role,
+                    to_role = %to_role,
+                );
+            }
+        }
+    }
+}
+
 pub struct ProjectService {
     backend: Arc<dyn TaskBackend>,
 }
@@ -47,6 +101,7 @@ impl ProjectOperations for ProjectService {
                 role: Role::Owner,
             });
         }
+        emit_project_events(project.id(), &events);
         Ok((project, events))
     }
 
@@ -75,6 +130,7 @@ impl ProjectOperations for ProjectService {
             return Ok((prev, events));
         }
         let updated = self.backend.update_project(id, params).await?;
+        emit_project_events(id, &events);
         Ok((updated, events))
     }
 
@@ -112,11 +168,12 @@ impl ProjectOperations for ProjectService {
             require_project_role(self.backend.as_ref(), uid, project_id, Permission::Admin).await?;
         }
         let member = self.backend.add_project_member(project_id, params).await?;
-        let event = ProjectEvent::MemberAdded {
+        let events = vec![ProjectEvent::MemberAdded {
             user_id: member.user_id(),
             role: member.role(),
-        };
-        Ok((member, vec![event]))
+        }];
+        emit_project_events(project_id, &events);
+        Ok((member, events))
     }
 
     async fn remove_project_member(
@@ -131,7 +188,9 @@ impl ProjectOperations for ProjectService {
         self.backend
             .remove_project_member(project_id, user_id)
             .await?;
-        Ok(vec![ProjectEvent::MemberRemoved { user_id }])
+        let events = vec![ProjectEvent::MemberRemoved { user_id }];
+        emit_project_events(project_id, &events);
+        Ok(events)
     }
 
     async fn get_project_member(
@@ -167,6 +226,7 @@ impl ProjectOperations for ProjectService {
                 to_role: role,
             }]
         };
+        emit_project_events(project_id, &events);
         Ok((member, events))
     }
 }
@@ -356,5 +416,54 @@ mod tests {
             .await
             .unwrap();
         assert!(events.is_empty(), "no-op role update should emit no event");
+    }
+
+    // --- Phase B3: business-event emission wire-up check ------------------
+    //
+    // Single end-to-end check that `update_project` through
+    // `BusinessAttributesProcessor` + `OpenTelemetryTracingBridge` produces
+    // a `senko.project.updated` LogRecord with the expected callsite
+    // attributes. The macro / processor / bridge interactions are covered
+    // exhaustively in `application::telemetry::tests`; this test guards the
+    // wire-up only and exercises the shared `test_support` helpers.
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn update_project_emits_otel_log_record() {
+        use crate::application::telemetry::test_support::{
+            build_capture_provider, capture_layer, lookup_attr,
+        };
+        use opentelemetry::logs::AnyValue;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let backend = new_backend();
+        let svc = ProjectService::new(backend);
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            let params = UpdateProjectParams {
+                description: Some(Some("emit-verification".to_string())),
+            };
+            svc.update_project(DEFAULT_PROJECT, &params, None)
+                .await
+                .unwrap();
+        }
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let updated = logs
+            .iter()
+            .find(|d| d.record.event_name() == Some("senko.project.updated"))
+            .expect("senko.project.updated should be emitted");
+
+        assert_eq!(
+            lookup_attr(&updated.record, "senko.project.id"),
+            Some(AnyValue::Int(DEFAULT_PROJECT.0))
+        );
+        assert_eq!(
+            lookup_attr(&updated.record, "changed_fields"),
+            Some(AnyValue::String("[\"description\"]".into())),
+        );
     }
 }

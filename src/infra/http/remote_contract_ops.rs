@@ -164,6 +164,13 @@ impl ContractOperations for RemoteContractOperations {
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
+
+        crate::emit_business_event!(
+            "senko.contract.created",
+            senko.contract.id = contract.id().0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(contract)
     }
 
@@ -209,7 +216,9 @@ impl ContractOperations for RemoteContractOperations {
         params: &UpdateContractParams,
         array_params: &UpdateContractArrayParams,
     ) -> Result<Contract> {
-        let trigger = HookTrigger::Contract(ContractEvent::Updated);
+        let trigger = HookTrigger::Contract(ContractEvent::Updated {
+            changed_fields: Vec::new(),
+        });
         self.fire_pre(&trigger, None).await?;
 
         let url = self.project_url(project_id, &format!("/contracts/{id}"));
@@ -221,6 +230,42 @@ impl ContractOperations for RemoteContractOperations {
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
+
+        // Derive `changed_fields` from the request params (mirrors the
+        // semantics of `Contract::update` / `apply_array_update`: a field is
+        // considered changed when the caller supplied any value for it).
+        let mut changed_fields: Vec<String> = Vec::new();
+        if params.title.is_some() {
+            changed_fields.push("title".into());
+        }
+        if params.description.is_some() {
+            changed_fields.push("description".into());
+        }
+        if params.metadata.is_some() {
+            changed_fields.push("metadata".into());
+        }
+        if array_params.set_tags.is_some()
+            || !array_params.add_tags.is_empty()
+            || !array_params.remove_tags.is_empty()
+        {
+            changed_fields.push("tags".into());
+        }
+        if array_params.set_definition_of_done.is_some()
+            || !array_params.add_definition_of_done.is_empty()
+            || !array_params.remove_definition_of_done.is_empty()
+        {
+            changed_fields.push("definition_of_done".into());
+        }
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.contract.updated",
+                senko.contract.id = contract.id().0,
+                senko.project.id = project_id.0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
+
         Ok(contract)
     }
 
@@ -233,6 +278,13 @@ impl ContractOperations for RemoteContractOperations {
         check_success(resp).await?;
 
         self.fire_post(&trigger, None).await;
+
+        crate::emit_business_event!(
+            "senko.contract.deleted",
+            senko.contract.id = id.0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(())
     }
 
@@ -253,6 +305,14 @@ impl ContractOperations for RemoteContractOperations {
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
+
+        crate::emit_business_event!(
+            "senko.contract.dod_checked",
+            senko.contract.id = contract.id().0,
+            senko.project.id = project_id.0,
+            dod_index = index as i64,
+        );
+
         Ok(contract)
     }
 
@@ -273,6 +333,14 @@ impl ContractOperations for RemoteContractOperations {
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;
+
+        crate::emit_business_event!(
+            "senko.contract.dod_unchecked",
+            senko.contract.id = contract.id().0,
+            senko.project.id = project_id.0,
+            dod_index = index as i64,
+        );
+
         Ok(contract)
     }
 
@@ -298,6 +366,13 @@ impl ContractOperations for RemoteContractOperations {
         let note: ContractNote = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, None).await;
+
+        crate::emit_business_event!(
+            "senko.contract.note_added",
+            senko.contract.id = contract_id.0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(note)
     }
 

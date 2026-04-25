@@ -12,6 +12,40 @@ use crate::domain::metadata_field::{
 use crate::domain::pagination::ListPage;
 use crate::domain::project::ProjectId;
 
+/// Emit Contract #8 business events for metadata field mutations. The
+/// project_id and per-event payload (`field_name`, `field_type`) supply all
+/// callsite attributes; common attributes are auto-attached.
+fn emit_metadata_field_events(project_id: ProjectId, events: &[MetadataFieldEvent]) {
+    for ev in events {
+        match ev {
+            MetadataFieldEvent::Defined {
+                field_name,
+                field_type,
+            } => {
+                let field_type_str = field_type.to_string();
+                crate::emit_business_event!(
+                    "senko.metadata_field.defined",
+                    senko.project.id = project_id.0,
+                    senko.metadata_field.name = field_name.as_str(),
+                    "senko.metadata_field.type" = field_type_str.as_str(),
+                );
+            }
+            MetadataFieldEvent::Removed {
+                field_name,
+                field_type,
+            } => {
+                let field_type_str = field_type.to_string();
+                crate::emit_business_event!(
+                    "senko.metadata_field.removed",
+                    senko.project.id = project_id.0,
+                    senko.metadata_field.name = field_name.as_str(),
+                    "senko.metadata_field.type" = field_type_str.as_str(),
+                );
+            }
+        }
+    }
+}
+
 pub struct MetadataFieldService {
     backend: Arc<dyn TaskBackend>,
 }
@@ -37,6 +71,7 @@ impl MetadataFieldService {
             field_name: field.name().to_string(),
             field_type: field.field_type(),
         }];
+        emit_metadata_field_events(project_id, &events);
         Ok((field, events))
     }
 
@@ -61,10 +96,12 @@ impl MetadataFieldService {
         self.backend
             .delete_metadata_field(project_id, field.id())
             .await?;
-        Ok(vec![MetadataFieldEvent::Removed {
+        let events = vec![MetadataFieldEvent::Removed {
             field_name: captured_name,
             field_type: captured_type,
-        }])
+        }];
+        emit_metadata_field_events(project_id, &events);
+        Ok(events)
     }
 }
 
@@ -181,6 +218,49 @@ mod tests {
             err.downcast_ref::<DomainError>()
                 .is_some_and(|e| matches!(e, DomainError::MetadataFieldNotFound)),
             "expected MetadataFieldNotFound, got: {err:?}"
+        );
+    }
+
+    // --- Phase B3: business-event emission wire-up check ------------------
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_with_events_emits_otel_log_record() {
+        use crate::application::telemetry::test_support::{
+            build_capture_provider, capture_layer, lookup_attr,
+        };
+        use opentelemetry::logs::AnyValue;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let (_dir, service, project_id) = new_service().await;
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            service
+                .create_with_events(project_id, &params("epic", MetadataFieldType::String))
+                .await
+                .unwrap();
+        }
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let record = logs
+            .iter()
+            .find(|d| d.record.event_name() == Some("senko.metadata_field.defined"))
+            .expect("senko.metadata_field.defined should be emitted");
+
+        assert_eq!(
+            lookup_attr(&record.record, "senko.project.id"),
+            Some(AnyValue::Int(project_id.0))
+        );
+        assert_eq!(
+            lookup_attr(&record.record, "senko.metadata_field.name"),
+            Some(AnyValue::String("epic".into()))
+        );
+        assert_eq!(
+            lookup_attr(&record.record, "senko.metadata_field.type"),
+            Some(AnyValue::String("string".into()))
         );
     }
 }

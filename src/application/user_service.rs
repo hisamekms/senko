@@ -14,6 +14,55 @@ use crate::domain::user::{
 };
 use crate::infra::config::SessionConfig;
 
+/// Emit Contract #8 business events for a `UserService` mutation.
+///
+/// The `target_user_id` is the user the operation acts on (the User aggregate
+/// identifier in OTel terms — `senko.user.id`). The actor (`enduser.*`) is
+/// auto-attached by `BusinessAttributesProcessor` and must NOT be passed here.
+fn emit_user_events(target_user_id: UserId, events: &[UserEvent]) {
+    for ev in events {
+        match ev {
+            UserEvent::Created { source } => {
+                crate::emit_business_event!(
+                    "senko.user.created",
+                    senko.user.id = target_user_id.0,
+                    source = source.as_str(),
+                );
+            }
+            UserEvent::Updated { changed_fields } => {
+                let changed_fields_json = serde_json::to_string(changed_fields).unwrap_or_default();
+                crate::emit_business_event!(
+                    "senko.user.updated",
+                    senko.user.id = target_user_id.0,
+                    changed_fields = changed_fields_json.as_str(),
+                );
+            }
+            UserEvent::ApiKeyIssued { api_key_id } => {
+                crate::emit_business_event!(
+                    "senko.user.api_key_issued",
+                    senko.user.id = target_user_id.0,
+                    api_key_id = api_key_id.0,
+                );
+            }
+            UserEvent::ApiKeyRevoked { api_key_id } => {
+                crate::emit_business_event!(
+                    "senko.user.api_key_revoked",
+                    senko.user.id = target_user_id.0,
+                    api_key_id = api_key_id.0,
+                );
+            }
+            UserEvent::SessionRevoked { session_id, scope } => {
+                crate::emit_business_event!(
+                    "senko.user.session_revoked",
+                    senko.user.id = target_user_id.0,
+                    session.id = session_id.0,
+                    scope = scope.as_str(),
+                );
+            }
+        }
+    }
+}
+
 pub struct UserService {
     backend: Arc<dyn TaskBackend>,
 }
@@ -39,7 +88,9 @@ impl UserOperations for UserService {
     ) -> Result<(User, Vec<UserEvent>)> {
         params.validate()?;
         let user = self.backend.create_user(params).await?;
-        Ok((user, vec![UserEvent::Created { source }]))
+        let events = vec![UserEvent::Created { source }];
+        emit_user_events(user.id(), &events);
+        Ok((user, events))
     }
 
     async fn get_user(&self, id: UserId) -> Result<User> {
@@ -72,6 +123,7 @@ impl UserOperations for UserService {
         } else {
             vec![UserEvent::Updated { changed_fields }]
         };
+        emit_user_events(id, &events);
         Ok((user, events))
     }
 
@@ -92,10 +144,11 @@ impl UserOperations for UserService {
             .backend
             .create_api_key(user_id, name, device_name, &new_key)
             .await?;
-        let event = UserEvent::ApiKeyIssued {
+        let events = vec![UserEvent::ApiKeyIssued {
             api_key_id: ApiKeyId(key.id()),
-        };
-        Ok((key, vec![event]))
+        }];
+        emit_user_events(user_id, &events);
+        Ok((key, events))
     }
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
@@ -106,9 +159,11 @@ impl UserOperations for UserService {
         self.backend
             .delete_api_key_for_user(key_id, user_id)
             .await?;
-        Ok(vec![UserEvent::ApiKeyRevoked {
+        let events = vec![UserEvent::ApiKeyRevoked {
             api_key_id: ApiKeyId(key_id),
-        }])
+        }];
+        emit_user_events(user_id, &events);
+        Ok(events)
     }
 
     // --- Session management ---
@@ -134,7 +189,9 @@ impl UserOperations for UserService {
                     email: email.map(String::from),
                 };
                 let user = self.backend.create_user(&params).await?;
-                Ok((user, vec![UserEvent::Created { source }]))
+                let events = vec![UserEvent::Created { source }];
+                emit_user_events(user.id(), &events);
+                Ok((user, events))
             }
         }
     }
@@ -196,10 +253,12 @@ impl UserOperations for UserService {
         self.backend
             .delete_api_key_for_user(key_id, user_id)
             .await?;
-        Ok(vec![UserEvent::SessionRevoked {
+        let events = vec![UserEvent::SessionRevoked {
             session_id: SessionId(key_id),
             scope: SessionRevokeScope::Single,
-        }])
+        }];
+        emit_user_events(user_id, &events);
+        Ok(events)
     }
 
     /// Revoke all sessions for a user. Lists existing keys, deletes them all
@@ -207,13 +266,14 @@ impl UserOperations for UserService {
     async fn revoke_all_sessions(&self, user_id: UserId) -> Result<Vec<UserEvent>> {
         let keys = self.backend.list_api_keys(user_id).await?;
         self.backend.delete_all_api_keys_for_user(user_id).await?;
-        let events = keys
+        let events: Vec<UserEvent> = keys
             .into_iter()
             .map(|k| UserEvent::SessionRevoked {
                 session_id: SessionId(k.id()),
                 scope: SessionRevokeScope::All,
             })
             .collect();
+        emit_user_events(user_id, &events);
         Ok(events)
     }
 
@@ -536,6 +596,49 @@ mod tests {
             vec![UserEvent::Created {
                 source: UserCreationSource::TrustedHeadersProvisioning
             }]
+        );
+    }
+
+    // --- Phase B3: business-event emission wire-up check ------------------
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn create_user_emits_otel_log_record_with_source() {
+        use crate::application::telemetry::test_support::{
+            build_capture_provider, capture_layer, lookup_attr,
+        };
+        use opentelemetry::logs::AnyValue;
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let svc = new_service();
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let user = {
+            let _guard = tracing::subscriber::set_default(subscriber);
+            let (user, _events) = svc
+                .create_user(
+                    &user_params("trace-target"),
+                    UserCreationSource::OidcProvisioning,
+                )
+                .await
+                .unwrap();
+            user
+        };
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let record = logs
+            .iter()
+            .find(|d| d.record.event_name() == Some("senko.user.created"))
+            .expect("senko.user.created should be emitted");
+
+        assert_eq!(
+            lookup_attr(&record.record, "senko.user.id"),
+            Some(AnyValue::Int(user.id().0))
+        );
+        assert_eq!(
+            lookup_attr(&record.record, "source"),
+            Some(AnyValue::String("oidc_provisioning".into()))
         );
     }
 }

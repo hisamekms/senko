@@ -143,6 +143,16 @@ pub enum UserCreationSource {
     TrustedHeadersProvisioning,
 }
 
+impl UserCreationSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Manual => "manual",
+            Self::OidcProvisioning => "oidc_provisioning",
+            Self::TrustedHeadersProvisioning => "trusted_headers_provisioning",
+        }
+    }
+}
+
 /// Granularity of a [`UserEvent::SessionRevoked`] event. `revoke_all_sessions`
 /// emits one event per session with `scope: All`; targeted single-session
 /// revocation uses `scope: Single`.
@@ -151,6 +161,15 @@ pub enum UserCreationSource {
 pub enum SessionRevokeScope {
     Single,
     All,
+}
+
+impl SessionRevokeScope {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Single => "single",
+            Self::All => "all",
+        }
+    }
 }
 
 /// Domain event emitted by `UserService` mutations.

@@ -85,6 +85,9 @@ impl ProjectOperations for RemoteProjectOperations {
             .send()
             .await?;
         let project: Project = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!("senko.project.created", senko.project.id = project.id().0,);
+
         Ok((project, Vec::new()))
     }
 
@@ -141,6 +144,22 @@ impl ProjectOperations for RemoteProjectOperations {
             .send()
             .await?;
         let project: Project = read_json_or_error(resp).await?;
+
+        // Mirror Project::update semantics: a field is "changed" when the
+        // caller supplied any value for it (no prev fetch on the relay).
+        let mut changed_fields: Vec<String> = Vec::new();
+        if params.description.is_some() {
+            changed_fields.push("description".into());
+        }
+        if !changed_fields.is_empty() {
+            let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
+            crate::emit_business_event!(
+                "senko.project.updated",
+                senko.project.id = id.0,
+                changed_fields = changed_fields_json.as_str(),
+            );
+        }
+
         Ok((project, Vec::new()))
     }
 
@@ -195,6 +214,14 @@ impl ProjectOperations for RemoteProjectOperations {
             .send()
             .await?;
         let member: ProjectMember = read_json_or_error(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.project.member_added",
+            senko.project.id = project_id.0,
+            senko.user.id = member.user_id().0,
+            role = %member.role(),
+        );
+
         Ok((member, Vec::new()))
     }
 
@@ -212,6 +239,13 @@ impl ProjectOperations for RemoteProjectOperations {
             .send()
             .await?;
         check_success(resp).await?;
+
+        crate::emit_business_event!(
+            "senko.project.member_removed",
+            senko.project.id = project_id.0,
+            senko.user.id = user_id.0,
+        );
+
         Ok(Vec::new())
     }
 
@@ -237,6 +271,12 @@ impl ProjectOperations for RemoteProjectOperations {
         role: Role,
         _caller_user_id: Option<UserId>,
     ) -> Result<(ProjectMember, Vec<ProjectEvent>)> {
+        // Fetch prev member so we can emit `from_role` (Contract #8 requires
+        // both from_role / to_role on member_role_changed). Mirrors the
+        // prev-fetch pattern in `RemoteTaskOperations` for `prev_status`.
+        let prev = self.get_project_member(project_id, user_id).await?;
+        let from_role = prev.role();
+
         let resp = self
             .prepare(
                 self.client()
@@ -246,6 +286,17 @@ impl ProjectOperations for RemoteProjectOperations {
             .send()
             .await?;
         let member: ProjectMember = read_json_or_error(resp).await?;
+
+        if from_role != role {
+            crate::emit_business_event!(
+                "senko.project.member_role_changed",
+                senko.project.id = project_id.0,
+                senko.user.id = user_id.0,
+                from_role = %from_role,
+                to_role = %role,
+            );
+        }
+
         Ok((member, Vec::new()))
     }
 }

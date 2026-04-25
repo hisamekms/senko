@@ -56,7 +56,17 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let field: MetadataField = read_json_or_error(resp).await?;
+
+        let field_type_str = field.field_type().to_string();
+        crate::emit_business_event!(
+            "senko.metadata_field.defined",
+            senko.project.id = project_id.0,
+            senko.metadata_field.name = field.name(),
+            "senko.metadata_field.type" = field_type_str.as_str(),
+        );
+
+        Ok(field)
     }
 
     async fn list_metadata_fields(
@@ -83,6 +93,15 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
     }
 
     async fn delete_metadata_field_by_name(&self, project_id: ProjectId, name: &str) -> Result<()> {
+        // Capture prev field_type before delete so the emit can include
+        // `senko.metadata_field.type` (Contract #8 spec).
+        let captured = self
+            .list_metadata_fields(project_id, &ListMetadataFieldsFilter::default())
+            .await?
+            .items
+            .into_iter()
+            .find(|f| f.name() == name);
+
         let resp = self
             .prepare(
                 self.client().delete(
@@ -92,6 +111,18 @@ impl MetadataFieldOperations for RemoteMetadataFieldOperations {
             )
             .send()
             .await?;
-        check_success(resp).await
+        check_success(resp).await?;
+
+        if let Some(field) = captured {
+            let field_type_str = field.field_type().to_string();
+            crate::emit_business_event!(
+                "senko.metadata_field.removed",
+                senko.project.id = project_id.0,
+                senko.metadata_field.name = field.name(),
+                "senko.metadata_field.type" = field_type_str.as_str(),
+            );
+        }
+
+        Ok(())
     }
 }

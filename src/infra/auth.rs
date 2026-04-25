@@ -385,7 +385,8 @@ impl AuthProvider for JwtAuthProvider {
                     .get("email")
                     .and_then(|v| v.as_str())
                     .map(String::from);
-                tracing::info!(sub = %sub, username = %username, "auto-provisioning user from OIDC claims");
+                // Contract #8 Phase B3: replaced by `senko.user.created`
+                // (source=oidc_provisioning) emitted from `UserService::create_user`.
                 let username = crate::domain::user::Username::try_from(username.to_string())
                     .map_err(|e| {
                         tracing::debug!(error = %e, "invalid username from OIDC claims");
@@ -530,7 +531,9 @@ impl TrustedHeadersAuthProvider {
         let user = match self.user_ops.get_user_by_sub(sub).await {
             Ok(user) => user,
             Err(_) => {
-                tracing::info!(sub = %sub, username = %username, "auto-provisioning user from trusted headers");
+                // Contract #8 Phase B3: replaced by `senko.user.created`
+                // (source=trusted_headers_provisioning) emitted from
+                // `UserService::create_user`.
                 let username = crate::domain::user::Username::try_from(username).map_err(|e| {
                     tracing::debug!(error = %e, "invalid username from trusted headers");
                     AuthError::InvalidToken

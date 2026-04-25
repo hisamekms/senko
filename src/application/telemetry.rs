@@ -140,6 +140,48 @@ impl LogProcessor for BusinessAttributesProcessor {
     }
 }
 
+/// Test-only utilities for verifying business-event emission. Used by every
+/// service-level unit test that needs to assert an `emit_business_event!`
+/// callsite was reached with the expected `event_name` and attributes.
+///
+/// Lives outside `mod tests` so other modules' test modules can reach it via
+/// `crate::application::telemetry::test_support::*` without re-declaring the
+/// SDK plumbing in each file.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::BusinessAttributesProcessor;
+    use opentelemetry::logs::AnyValue;
+    use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+    use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLogRecord, SdkLoggerProvider};
+
+    /// Build an in-memory logger provider wired with `BusinessAttributesProcessor`
+    /// (matches the production order in `bootstrap::build_logger_provider`).
+    pub(crate) fn build_capture_provider() -> (InMemoryLogExporter, SdkLoggerProvider) {
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_log_processor(BusinessAttributesProcessor)
+            .with_simple_exporter(exporter.clone())
+            .build();
+        (exporter, provider)
+    }
+
+    /// Build the tracing-subscriber `Layer` that bridges `tracing::event!` calls
+    /// to OTel `LogRecord` via `OpenTelemetryTracingBridge`.
+    pub(crate) fn capture_layer(
+        provider: &SdkLoggerProvider,
+    ) -> OpenTelemetryTracingBridge<SdkLoggerProvider, opentelemetry_sdk::logs::SdkLogger> {
+        OpenTelemetryTracingBridge::new(provider)
+    }
+
+    /// Look up a single attribute on an `SdkLogRecord` by key.
+    pub(crate) fn lookup_attr(record: &SdkLogRecord, key: &str) -> Option<AnyValue> {
+        record
+            .attributes_iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.clone())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use opentelemetry::logs::{AnyValue, Severity};

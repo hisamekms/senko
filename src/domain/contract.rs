@@ -62,7 +62,7 @@ impl From<ContractId> for i64 {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContractEvent {
     Created,
-    Updated,
+    Updated { changed_fields: Vec<String> },
     Deleted,
     DodChecked { index: usize },
     DodUnchecked { index: usize },
@@ -207,14 +207,14 @@ impl Contract {
         params: &UpdateContractParams,
         now: String,
     ) -> (Contract, Vec<ContractEvent>) {
-        let mut changed = false;
+        let mut changed_fields = Vec::new();
         if let Some(ref title) = params.title {
             self.title = title.clone();
-            changed = true;
+            changed_fields.push("title".to_string());
         }
         if let Some(ref description) = params.description {
             self.description = description.clone();
-            changed = true;
+            changed_fields.push("description".to_string());
         }
         if let Some(ref meta_update) = params.metadata {
             match meta_update {
@@ -228,11 +228,11 @@ impl Contract {
                     self.metadata = Some(value.clone());
                 }
             }
-            changed = true;
+            changed_fields.push("metadata".to_string());
         }
-        if changed {
+        if !changed_fields.is_empty() {
             self.updated_at = now;
-            (self, vec![ContractEvent::Updated])
+            (self, vec![ContractEvent::Updated { changed_fields }])
         } else {
             (self, vec![])
         }
@@ -244,11 +244,12 @@ impl Contract {
         params: &UpdateContractArrayParams,
         now: String,
     ) -> (Contract, Vec<ContractEvent>) {
-        let mut changed = false;
+        let mut tags_changed = false;
+        let mut dod_changed = false;
 
         if let Some(ref set_tags) = params.set_tags {
             self.tags = set_tags.clone();
-            changed = true;
+            tags_changed = true;
         }
         if !params.add_tags.is_empty() {
             for tag in &params.add_tags {
@@ -256,11 +257,11 @@ impl Contract {
                     self.tags.push(tag.clone());
                 }
             }
-            changed = true;
+            tags_changed = true;
         }
         if !params.remove_tags.is_empty() {
             self.tags.retain(|t| !params.remove_tags.contains(t));
-            changed = true;
+            tags_changed = true;
         }
 
         if let Some(ref set_dod) = params.set_definition_of_done {
@@ -268,14 +269,14 @@ impl Contract {
                 .iter()
                 .map(|c| DodItem::new(c.clone(), false))
                 .collect();
-            changed = true;
+            dod_changed = true;
         }
         if !params.add_definition_of_done.is_empty() {
             for content in &params.add_definition_of_done {
                 self.definition_of_done
                     .push(DodItem::new(content.clone(), false));
             }
-            changed = true;
+            dod_changed = true;
         }
         if !params.remove_definition_of_done.is_empty() {
             self.definition_of_done.retain(|d| {
@@ -283,12 +284,19 @@ impl Contract {
                     .remove_definition_of_done
                     .contains(&d.content().to_string())
             });
-            changed = true;
+            dod_changed = true;
         }
 
-        if changed {
+        let mut changed_fields = Vec::new();
+        if tags_changed {
+            changed_fields.push("tags".to_string());
+        }
+        if dod_changed {
+            changed_fields.push("definition_of_done".to_string());
+        }
+        if !changed_fields.is_empty() {
             self.updated_at = now;
-            (self, vec![ContractEvent::Updated])
+            (self, vec![ContractEvent::Updated { changed_fields }])
         } else {
             (self, vec![])
         }
@@ -652,7 +660,12 @@ mod tests {
             ..Default::default()
         };
         let (c, events) = c.update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(events, vec![ContractEvent::Updated]);
+        assert_eq!(
+            events,
+            vec![ContractEvent::Updated {
+                changed_fields: vec!["title".into()],
+            }]
+        );
         assert_eq!(c.title(), "new-title");
         assert_eq!(c.updated_at(), "2026-01-02T00:00:00Z");
     }
@@ -665,7 +678,12 @@ mod tests {
             ..Default::default()
         };
         let (c, events) = c.update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(events, vec![ContractEvent::Updated]);
+        assert_eq!(
+            events,
+            vec![ContractEvent::Updated {
+                changed_fields: vec!["description".into()],
+            }]
+        );
         assert_eq!(c.description(), None);
     }
 
@@ -687,7 +705,12 @@ mod tests {
             ..Default::default()
         };
         let (c, events) = c.update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(events, vec![ContractEvent::Updated]);
+        assert_eq!(
+            events,
+            vec![ContractEvent::Updated {
+                changed_fields: vec!["metadata".into()],
+            }]
+        );
         assert_eq!(
             c.metadata(),
             Some(&serde_json::json!({"a": 1, "b": 3, "c": 4}))
@@ -704,7 +727,12 @@ mod tests {
             ..Default::default()
         };
         let (c, events) = c.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(events, vec![ContractEvent::Updated]);
+        assert_eq!(
+            events,
+            vec![ContractEvent::Updated {
+                changed_fields: vec!["tags".into()],
+            }]
+        );
         assert_eq!(c.tags(), &["x".to_string(), "y".to_string()]);
     }
 
@@ -716,7 +744,12 @@ mod tests {
             ..Default::default()
         };
         let (c, events) = c.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
-        assert_eq!(events, vec![ContractEvent::Updated]);
+        assert_eq!(
+            events,
+            vec![ContractEvent::Updated {
+                changed_fields: vec!["definition_of_done".into()],
+            }]
+        );
         assert_eq!(c.definition_of_done().len(), 2);
         assert!(!c.definition_of_done()[0].checked());
         assert!(!c.definition_of_done()[1].checked());

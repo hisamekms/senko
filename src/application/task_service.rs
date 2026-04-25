@@ -23,6 +23,76 @@ use super::port::{CompleteResult, HookExecutor, PrVerifier, PreviewResult, TaskO
 use crate::infra::config::HookWhen;
 use crate::infra::hook::FireOutcome;
 
+/// Emit Contract #8 business events for a `LocalTaskOperations` mutation that
+/// returns a `Vec<TaskEvent>` (`edit_task`, `edit_task_arrays`, DoD ops, dep
+/// ops). State-transition events (Created/Published/Started/Completed/Canceled)
+/// are emitted inline by the caller so that `from_status` / `to_status` /
+/// `cancel_reason` can be sourced from the surrounding scope.
+fn emit_task_events(project_id: ProjectId, task_id: TaskId, events: &[TaskEvent]) {
+    for ev in events {
+        match ev {
+            TaskEvent::Updated { changed_fields } => {
+                let changed_fields_json = serde_json::to_string(changed_fields).unwrap_or_default();
+                crate::emit_business_event!(
+                    "senko.task.updated",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    changed_fields = changed_fields_json.as_str(),
+                );
+            }
+            TaskEvent::DodChecked { index } => {
+                crate::emit_business_event!(
+                    "senko.task.dod_checked",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    dod_index = *index as i64,
+                );
+            }
+            TaskEvent::DodUnchecked { index } => {
+                crate::emit_business_event!(
+                    "senko.task.dod_unchecked",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    dod_index = *index as i64,
+                );
+            }
+            TaskEvent::DependencyAdded { dep_id } => {
+                crate::emit_business_event!(
+                    "senko.task.dependency_added",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    dep_id = dep_id.0,
+                );
+            }
+            TaskEvent::DependencyRemoved { dep_id } => {
+                crate::emit_business_event!(
+                    "senko.task.dependency_removed",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    dep_id = dep_id.0,
+                );
+            }
+            TaskEvent::DependenciesSet { dep_ids } => {
+                let deps_json =
+                    serde_json::to_string(&dep_ids.iter().map(|d| d.0).collect::<Vec<_>>())
+                        .unwrap_or_default();
+                crate::emit_business_event!(
+                    "senko.task.dependencies_set",
+                    senko.task.id = task_id.0,
+                    senko.project.id = project_id.0,
+                    deps = deps_json.as_str(),
+                );
+            }
+            // State-transition events emitted inline at the mutation site.
+            TaskEvent::Created
+            | TaskEvent::Published
+            | TaskEvent::Started
+            | TaskEvent::Completed
+            | TaskEvent::Canceled => {}
+        }
+    }
+}
+
 pub struct LocalTaskOperations {
     backend: Arc<dyn TaskBackend>,
     hooks: Arc<dyn HookExecutor>,
@@ -117,6 +187,12 @@ impl TaskOperations for LocalTaskOperations {
             .fire(&trigger, HookWhen::Post, Some(&task), None, None)
             .await;
 
+        crate::emit_business_event!(
+            "senko.task.created",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+        );
+
         Ok(task)
     }
 
@@ -155,6 +231,14 @@ impl TaskOperations for LocalTaskOperations {
                 None,
             )
             .await;
+
+        crate::emit_business_event!(
+            "senko.task.published",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
 
         Ok(task)
     }
@@ -217,6 +301,14 @@ impl TaskOperations for LocalTaskOperations {
                 None,
             )
             .await;
+
+        crate::emit_business_event!(
+            "senko.task.started",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
 
         Ok(task)
     }
@@ -321,6 +413,19 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
+        // Only emit `senko.task.started` when the selection actually performed
+        // the transition. If the upstream already returned an InProgress task
+        // (Relay path), the corresponding emit happened on the upstream side.
+        if prev_status != TaskStatus::InProgress {
+            crate::emit_business_event!(
+                "senko.task.started",
+                senko.task.id = task.id().0,
+                senko.project.id = project_id.0,
+                from_status = %prev_status,
+                to_status = %task.status(),
+            );
+        }
+
         Ok(task)
     }
 
@@ -418,6 +523,14 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
+        crate::emit_business_event!(
+            "senko.task.completed",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
+
         Ok(CompleteResult { task, unblocked })
     }
 
@@ -456,7 +569,10 @@ impl TaskOperations for LocalTaskOperations {
             .into());
         }
 
-        let task = self.backend.cancel_task(project_id, id, reason).await?;
+        let task = self
+            .backend
+            .cancel_task(project_id, id, reason.clone())
+            .await?;
 
         let _ = self
             .hooks
@@ -468,6 +584,16 @@ impl TaskOperations for LocalTaskOperations {
                 None,
             )
             .await;
+
+        let cancel_reason = reason.unwrap_or_default();
+        crate::emit_business_event!(
+            "senko.task.canceled",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+            cancel_reason = cancel_reason.as_str(),
+        );
 
         Ok(task)
     }
@@ -670,9 +796,10 @@ impl TaskOperations for LocalTaskOperations {
         }
         let prev = self.backend.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (_aggregate_after, _events) = prev.apply_update(params, now);
-        // _events: TaskEvent::Updated { changed_fields } — emitted as senko.task.updated in B3
-        self.backend.update_task(project_id, id, params).await
+        let (_aggregate_after, events) = prev.apply_update(params, now);
+        let task = self.backend.update_task(project_id, id, params).await?;
+        emit_task_events(project_id, id, &events);
+        Ok(task)
     }
 
     async fn edit_task_arrays(
@@ -684,11 +811,12 @@ impl TaskOperations for LocalTaskOperations {
         params.validate()?;
         let prev = self.backend.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (_aggregate_after, _events) = prev.apply_array_update(params, now);
-        // _events: TaskEvent::Updated { changed_fields } — emitted as senko.task.updated in B3
+        let (_aggregate_after, events) = prev.apply_array_update(params, now);
         self.backend
             .update_task_arrays(project_id, id, params)
-            .await
+            .await?;
+        emit_task_events(project_id, id, &events);
+        Ok(())
     }
 
     async fn delete_task(&self, project_id: ProjectId, id: TaskId) -> Result<()> {
@@ -707,8 +835,9 @@ impl TaskOperations for LocalTaskOperations {
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.check_dod(index, now)?;
+        let (task, events) = task.check_dod(index, now)?;
         self.backend.save(&task).await?;
+        emit_task_events(project_id, task_id, &events);
         Ok(task)
     }
 
@@ -720,8 +849,9 @@ impl TaskOperations for LocalTaskOperations {
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.uncheck_dod(index, now)?;
+        let (task, events) = task.uncheck_dod(index, now)?;
         self.backend.save(&task).await?;
+        emit_task_events(project_id, task_id, &events);
         Ok(task)
     }
 
@@ -753,8 +883,9 @@ impl TaskOperations for LocalTaskOperations {
         }
 
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.add_dependency(dep_id, Some(now))?;
+        let (task, events) = task.add_dependency(dep_id, Some(now))?;
         self.backend.save(&task).await?;
+        emit_task_events(project_id, task_id, &events);
         self.backend.get_task(project_id, task_id).await
     }
 
@@ -766,8 +897,9 @@ impl TaskOperations for LocalTaskOperations {
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.remove_dependency(dep_id, Some(now))?;
+        let (task, events) = task.remove_dependency(dep_id, Some(now))?;
         self.backend.save(&task).await?;
+        emit_task_events(project_id, task_id, &events);
         self.backend.get_task(project_id, task_id).await
     }
 
@@ -804,8 +936,9 @@ impl TaskOperations for LocalTaskOperations {
         }
 
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, _events) = task.set_dependencies(dep_ids, Some(now))?;
+        let (task, events) = task.set_dependencies(dep_ids, Some(now))?;
         self.backend.save(&task).await?;
+        emit_task_events(project_id, task_id, &events);
         self.backend.get_task(project_id, task_id).await
     }
 
