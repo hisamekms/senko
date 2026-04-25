@@ -166,7 +166,20 @@ enum ApiError {
     Forbidden(String),
     Conflict(String),
     NotImplemented(String),
-    Internal(String),
+    /// Internal Server Error.
+    ///
+    /// `public_message` is rendered into the response body; `log_message` is
+    /// recorded as `error.message` on the `senko.api.error` LogRecord. The
+    /// fields differ for unclassified anyhow errors (Contract #8 / Phase C2):
+    /// the response stays at the static `"internal server error"` while the
+    /// log keeps the Display-formatted error chain so root-cause analysis is
+    /// still possible without leaking internals (file paths, connection
+    /// strings, etc.) to clients. For known-safe sources (upstream HTTP
+    /// errors, serde failures) both fields hold the same string.
+    Internal {
+        public_message: String,
+        log_message: String,
+    },
 }
 
 #[derive(Serialize)]
@@ -176,14 +189,23 @@ struct ErrorBody {
 
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
-        let (status, message) = match &self {
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone()),
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone()),
-            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone()),
-            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone()),
-            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone()),
-            ApiError::NotImplemented(msg) => (StatusCode::NOT_IMPLEMENTED, msg.clone()),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg.clone()),
+        let (status, public_message, log_message) = match &self {
+            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg.clone(), msg.clone()),
+            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg.clone(), msg.clone()),
+            ApiError::Unauthorized(msg) => (StatusCode::UNAUTHORIZED, msg.clone(), msg.clone()),
+            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, msg.clone(), msg.clone()),
+            ApiError::Conflict(msg) => (StatusCode::CONFLICT, msg.clone(), msg.clone()),
+            ApiError::NotImplemented(msg) => {
+                (StatusCode::NOT_IMPLEMENTED, msg.clone(), msg.clone())
+            }
+            ApiError::Internal {
+                public_message,
+                log_message,
+            } => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                public_message.clone(),
+                log_message.clone(),
+            ),
         };
         let error_type = match self {
             ApiError::NotFound(_) => "not_found",
@@ -192,15 +214,29 @@ impl IntoResponse for ApiError {
             ApiError::Forbidden(_) => "forbidden",
             ApiError::Conflict(_) => "conflict",
             ApiError::NotImplemented(_) => "not_implemented",
-            ApiError::Internal(_) => "internal",
+            ApiError::Internal { .. } => "internal",
         };
-        tracing::warn!(
-            status = status.as_u16(),
-            error_type,
-            error = %message,
-            "api_error"
+
+        // Contract #8 / Phase C2: replace the legacy `tracing::warn!("api_error", ...)`
+        // with one structured `senko.api.error` LogRecord per ApiError response.
+        // `senko.api.call` (C1) carries http.method / http.route / latency_ms;
+        // here we only attach the error-shaped attributes so the two records
+        // correlate via trace_id without duplicating fields.
+        crate::emit_business_event!(
+            "senko.api.error",
+            level: ERROR,
+            http.status_code = status.as_u16(),
+            error.type = error_type,
+            error.message = %log_message,
         );
-        (status, Json(ErrorBody { error: message })).into_response()
+
+        (
+            status,
+            Json(ErrorBody {
+                error: public_message,
+            }),
+        )
+            .into_response()
     }
 }
 
@@ -228,7 +264,13 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             403 => ApiError::Forbidden(ue.message.clone()),
             404 => ApiError::NotFound(ue.message.clone()),
             409 => ApiError::Conflict(ue.message.clone()),
-            _ => ApiError::Internal(format!("upstream error: {}", ue.message)),
+            _ => {
+                let msg = format!("upstream error: {}", ue.message);
+                ApiError::Internal {
+                    public_message: msg.clone(),
+                    log_message: msg,
+                }
+            }
         };
     }
     if let Some(de) = e.downcast_ref::<DomainError>() {
@@ -268,8 +310,19 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             DomainError::UnsupportedOperation { .. } => ApiError::NotImplemented(msg),
         };
     }
-    tracing::error!(error = ?e, "unclassified internal error");
-    ApiError::Internal("internal server error".into())
+    // Contract #8 / Phase C2: dropped the prior `tracing::error!(error = ?e, ...)`
+    // — `?e` Debug-formats the anyhow chain and leaks internals (file paths,
+    // connection strings) to log destinations. The detail now rides only on
+    // the `senko.api.error` LogRecord (Display-formatted, in `error.message`),
+    // while the response body keeps the static `"internal server error"`.
+    //
+    // `{:#}` (alternate Display) is anyhow's chain-flattening form
+    // ("outer: middle: inner") — `to_string()` would drop the middle and
+    // inner Context layers and lose root-cause info ops needs.
+    ApiError::Internal {
+        public_message: "internal server error".into(),
+        log_message: format!("{e:#}"),
+    }
 }
 
 // --- Proxy mode middleware ---
@@ -2221,9 +2274,13 @@ async fn get_me(
         user: UserResponse::from(auth.user),
         session,
     };
-    serde_json::to_value(me)
-        .map(Json)
-        .map_err(|e| ApiError::Internal(e.to_string()))
+    serde_json::to_value(me).map(Json).map_err(|e| {
+        let msg = e.to_string();
+        ApiError::Internal {
+            public_message: msg.clone(),
+            log_message: msg,
+        }
+    })
 }
 
 #[derive(Deserialize)]
@@ -2434,5 +2491,245 @@ mod tests {
         let mode = token_auth_mode();
         let config = default_trusted_headers_config();
         assert!(!has_auth_credentials(&headers, Some(&mode), &config));
+    }
+
+    // --- senko.api.error LogRecord emission (Contract #8 / Phase C2) -------
+
+    use opentelemetry::logs::{AnyValue, Severity};
+    use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+    use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLogRecord, SdkLoggerProvider};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// Run `body` under a fresh tracing subscriber bridged to an in-memory
+    /// OTel `LogRecord` exporter. Returns every emitted record. Each test
+    /// gets its own provider/exporter so parallel test runs cannot leak
+    /// records across cases (see Contract #8 note on B3 flakiness with
+    /// shared global subscribers).
+    fn capture_log_records<F: FnOnce()>(body: F) -> Vec<SdkLogRecord> {
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        tracing::subscriber::with_default(subscriber, body);
+
+        provider.force_flush().ok();
+        exporter
+            .get_emitted_logs()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.record)
+            .collect()
+    }
+
+    fn lookup_log_attr(record: &SdkLogRecord, key: &str) -> Option<AnyValue> {
+        record
+            .attributes_iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.clone())
+    }
+
+    fn only_api_error(records: &[SdkLogRecord]) -> &SdkLogRecord {
+        let matches: Vec<&SdkLogRecord> = records
+            .iter()
+            .filter(|r| r.event_name() == Some("senko.api.error"))
+            .collect();
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one senko.api.error record, got {}",
+            matches.len()
+        );
+        matches[0]
+    }
+
+    fn assert_emits_api_error(
+        err: ApiError,
+        expected_status: u16,
+        expected_error_type: &str,
+        expected_log_message: &str,
+    ) {
+        let records = capture_log_records(|| {
+            let resp = err.into_response();
+            assert_eq!(resp.status().as_u16(), expected_status);
+        });
+
+        let r = only_api_error(&records);
+        assert_eq!(
+            r.severity_number(),
+            Some(Severity::Error),
+            "senko.api.error must be emitted at ERROR severity (Contract #8)",
+        );
+        assert_eq!(
+            r.target().map(|c| c.as_ref()),
+            Some("senko_business"),
+            "target must be senko_business so BusinessAttributesProcessor enriches it",
+        );
+        assert_eq!(
+            lookup_log_attr(r, "http.status_code"),
+            Some(AnyValue::Int(i64::from(expected_status))),
+        );
+        assert_eq!(
+            lookup_log_attr(r, "error.type"),
+            Some(AnyValue::String(expected_error_type.to_string().into())),
+        );
+        assert_eq!(
+            lookup_log_attr(r, "error.message"),
+            Some(AnyValue::String(expected_log_message.to_string().into())),
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_not_found() {
+        assert_emits_api_error(
+            ApiError::NotFound("missing thing".into()),
+            404,
+            "not_found",
+            "missing thing",
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_bad_request() {
+        assert_emits_api_error(
+            ApiError::BadRequest("bad input".into()),
+            400,
+            "bad_request",
+            "bad input",
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_unauthorized() {
+        assert_emits_api_error(
+            ApiError::Unauthorized("missing token".into()),
+            401,
+            "unauthorized",
+            "missing token",
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_forbidden() {
+        assert_emits_api_error(ApiError::Forbidden("nope".into()), 403, "forbidden", "nope");
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_conflict() {
+        assert_emits_api_error(ApiError::Conflict("dup".into()), 409, "conflict", "dup");
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_not_implemented() {
+        assert_emits_api_error(
+            ApiError::NotImplemented("todo".into()),
+            501,
+            "not_implemented",
+            "todo",
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_error_for_internal_with_separate_messages() {
+        // Public/log split is the security-sensitive one — the response body
+        // must show the static "internal server error", but `error.message`
+        // on senko.api.error must carry the (Display-formatted) anyhow chain.
+        let err = ApiError::Internal {
+            public_message: "internal server error".into(),
+            log_message: "db timeout while loading config from /etc/senko/secret.toml".into(),
+        };
+        assert_emits_api_error(
+            err,
+            500,
+            "internal",
+            "db timeout while loading config from /etc/senko/secret.toml",
+        );
+    }
+
+    #[test]
+    fn unclassified_anyhow_does_not_leak_debug_format() {
+        // Anyhow chain with multiple Context layers — Debug-format would
+        // include `caused by:` / nested struct shapes. Display-format must be
+        // a flat message ("inner: middle: outer") with none of those tokens.
+        let err = anyhow::anyhow!("file path /var/secret/db.sock unreadable")
+            .context("loading shard config")
+            .context("starting up");
+
+        let records = capture_log_records(|| {
+            let api_err = classify_error(err);
+            // Verify the response body uses the static public message —
+            // anyhow detail must not reach the client.
+            let (_, body) = match &api_err {
+                ApiError::Internal {
+                    public_message,
+                    log_message,
+                } => (log_message.clone(), public_message.clone()),
+                _ => panic!("expected ApiError::Internal from unclassified anyhow"),
+            };
+            assert_eq!(body, "internal server error");
+            let resp = api_err.into_response();
+            assert_eq!(resp.status().as_u16(), 500);
+        });
+
+        // The dropped `tracing::error!("unclassified internal error", ...)`
+        // must not produce any record under any name (it's gone entirely).
+        assert!(
+            !records
+                .iter()
+                .any(|r| r.event_name() == Some("unclassified internal error")),
+            "tracing::error!(\"unclassified internal error\", ...) must be removed",
+        );
+
+        let r = only_api_error(&records);
+        let msg = match lookup_log_attr(r, "error.message").expect("error.message present") {
+            AnyValue::String(s) => s.to_string(),
+            other => panic!("expected String, got {other:?}"),
+        };
+
+        // Display-format includes all three Context layers separated by ": ".
+        assert!(
+            msg.contains("starting up"),
+            "Display chain must include outer context, got {msg:?}",
+        );
+        assert!(
+            msg.contains("loading shard config"),
+            "Display chain must include middle context, got {msg:?}",
+        );
+        assert!(
+            msg.contains("/var/secret/db.sock"),
+            "Display chain must include innermost message, got {msg:?}",
+        );
+
+        // Debug-format ("Error { ... }", "caused by", multi-line frames) must
+        // NOT appear — that was the pre-Phase-C2 leak.
+        assert!(
+            !msg.contains("caused by"),
+            "Debug-format token leaked into error.message: {msg:?}",
+        );
+        assert!(
+            !msg.contains("Error {"),
+            "Debug-format struct leaked into error.message: {msg:?}",
+        );
+    }
+
+    #[test]
+    fn legacy_api_error_warn_is_not_emitted() {
+        // The pre-Phase-C2 `tracing::warn!("api_error", ...)` is gone; only
+        // senko.api.error should remain.
+        let records = capture_log_records(|| {
+            let _ = ApiError::BadRequest("x".into()).into_response();
+        });
+        assert!(
+            !records.iter().any(|r| r.event_name() == Some("api_error")),
+            "legacy `api_error` warn must be removed",
+        );
+        assert!(
+            records
+                .iter()
+                .any(|r| r.event_name() == Some("senko.api.error")),
+            "senko.api.error must replace it",
+        );
     }
 }

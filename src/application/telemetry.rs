@@ -42,7 +42,10 @@
 /// structured fields, including dotted field names such as
 /// `senko.task.id = 42`.
 ///
-/// # Example
+/// Defaults to `Level::INFO`. For error-level events (currently only
+/// `senko.api.error`), prefix the field list with `level: ERROR`.
+///
+/// # Examples
 ///
 /// ```ignore
 /// emit_business_event!(
@@ -51,9 +54,37 @@
 ///     from_status = "todo",
 ///     to_status = "in_progress"
 /// );
+///
+/// emit_business_event!(
+///     "senko.api.error",
+///     level: ERROR,
+///     http.status_code = 500_u16,
+///     error.type = "internal",
+///     error.message = %err,
+/// );
 /// ```
 #[macro_export]
 macro_rules! emit_business_event {
+    // ERROR level, no fields (with optional trailing comma).
+    // Must precede the INFO arms — macro_rules! tries declarations top-down
+    // and the INFO `$($fields:tt)*` arm would otherwise greedily swallow
+    // `level: ERROR` as a field list.
+    ($otel_event_name:expr, level: ERROR $(,)?) => {
+        ::tracing::event!(
+            name: $otel_event_name,
+            target: "senko_business",
+            ::tracing::Level::ERROR,
+            {}
+        );
+    };
+    ($otel_event_name:expr, level: ERROR, $($fields:tt)*) => {
+        ::tracing::event!(
+            name: $otel_event_name,
+            target: "senko_business",
+            ::tracing::Level::ERROR,
+            $($fields)*
+        );
+    };
     ($otel_event_name:expr) => {
         ::tracing::event!(
             name: $otel_event_name,
