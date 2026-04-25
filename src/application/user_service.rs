@@ -8,8 +8,9 @@ use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
 use crate::domain::pagination::ListPage;
 use crate::domain::user::{
-    ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter, NewApiKey,
-    UpdateUserParams, User, UserId, Username,
+    ApiKey, ApiKeyId, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter,
+    NewApiKey, SessionId, SessionRevokeScope, UpdateUserParams, User, UserCreationSource,
+    UserEvent, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -31,9 +32,14 @@ impl UserOperations for UserService {
         self.backend.list_users(filter).await
     }
 
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+    async fn create_user(
+        &self,
+        params: &CreateUserParams,
+        source: UserCreationSource,
+    ) -> Result<(User, Vec<UserEvent>)> {
         params.validate()?;
-        self.backend.create_user(params).await
+        let user = self.backend.create_user(params).await?;
+        Ok((user, vec![UserEvent::Created { source }]))
     }
 
     async fn get_user(&self, id: UserId) -> Result<User> {
@@ -48,8 +54,25 @@ impl UserOperations for UserService {
         self.backend.get_user_by_sub(sub).await
     }
 
-    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
-        self.backend.update_user(id, params).await
+    async fn update_user(
+        &self,
+        id: UserId,
+        params: &UpdateUserParams,
+    ) -> Result<(User, Vec<UserEvent>)> {
+        let mut changed_fields: Vec<String> = Vec::new();
+        if params.username.is_some() {
+            changed_fields.push("username".to_string());
+        }
+        if params.display_name.is_some() {
+            changed_fields.push("display_name".to_string());
+        }
+        let user = self.backend.update_user(id, params).await?;
+        let events = if changed_fields.is_empty() {
+            vec![]
+        } else {
+            vec![UserEvent::Updated { changed_fields }]
+        };
+        Ok((user, events))
     }
 
     async fn delete_user(&self, id: UserId) -> Result<()> {
@@ -63,33 +86,46 @@ impl UserOperations for UserService {
         user_id: UserId,
         name: &str,
         device_name: Option<&str>,
-    ) -> Result<ApiKeyWithSecret> {
+    ) -> Result<(ApiKeyWithSecret, Vec<UserEvent>)> {
         let new_key = NewApiKey::generate();
-        self.backend
+        let key = self
+            .backend
             .create_api_key(user_id, name, device_name, &new_key)
-            .await
+            .await?;
+        let event = UserEvent::ApiKeyIssued {
+            api_key_id: ApiKeyId(key.id()),
+        };
+        Ok((key, vec![event]))
     }
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
         self.backend.list_api_keys(user_id).await
     }
 
-    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<()> {
-        self.backend.delete_api_key_for_user(key_id, user_id).await
+    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<Vec<UserEvent>> {
+        self.backend
+            .delete_api_key_for_user(key_id, user_id)
+            .await?;
+        Ok(vec![UserEvent::ApiKeyRevoked {
+            api_key_id: ApiKeyId(key_id),
+        }])
     }
 
     // --- Session management ---
 
-    /// Get a user by sub, creating them if they don't exist.
+    /// Get a user by sub, creating them if they don't exist. When a creation
+    /// happens, returns `[UserEvent::Created { source }]`; for an existing
+    /// user the event vec is empty.
     async fn get_or_create_user(
         &self,
         sub: &str,
         username: &Username,
         display_name: Option<&str>,
         email: Option<&str>,
-    ) -> Result<User> {
+        source: UserCreationSource,
+    ) -> Result<(User, Vec<UserEvent>)> {
         match self.backend.get_user_by_sub(sub).await {
-            Ok(user) => Ok(user),
+            Ok(user) => Ok((user, vec![])),
             Err(_) => {
                 let params = CreateUserParams {
                     username: username.clone(),
@@ -97,7 +133,8 @@ impl UserOperations for UserService {
                     display_name: display_name.map(String::from),
                     email: email.map(String::from),
                 };
-                self.backend.create_user(&params).await
+                let user = self.backend.create_user(&params).await?;
+                Ok((user, vec![UserEvent::Created { source }]))
             }
         }
     }
@@ -155,13 +192,29 @@ impl UserOperations for UserService {
     }
 
     /// Revoke a specific session, verifying ownership.
-    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {
-        self.backend.delete_api_key_for_user(key_id, user_id).await
+    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<Vec<UserEvent>> {
+        self.backend
+            .delete_api_key_for_user(key_id, user_id)
+            .await?;
+        Ok(vec![UserEvent::SessionRevoked {
+            session_id: SessionId(key_id),
+            scope: SessionRevokeScope::Single,
+        }])
     }
 
-    /// Revoke all sessions for a user.
-    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<()> {
-        self.backend.delete_all_api_keys_for_user(user_id).await
+    /// Revoke all sessions for a user. Lists existing keys, deletes them all
+    /// in one statement, and emits one `SessionRevoked` event per session id.
+    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<Vec<UserEvent>> {
+        let keys = self.backend.list_api_keys(user_id).await?;
+        self.backend.delete_all_api_keys_for_user(user_id).await?;
+        let events = keys
+            .into_iter()
+            .map(|k| UserEvent::SessionRevoked {
+                session_id: SessionId(k.id()),
+                scope: SessionRevokeScope::All,
+            })
+            .collect();
+        Ok(events)
     }
 
     async fn fetch_me(&self) -> Result<serde_json::Value> {
@@ -199,4 +252,290 @@ pub fn is_key_expired(
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::user::{CreateUserParams, UpdateUserParams, Username};
+    use crate::infra::sqlite::SqliteBackend;
+
+    fn new_service() -> UserService {
+        UserService::new(Arc::new(SqliteBackend::new_in_memory().unwrap()))
+    }
+
+    fn user_params(name: &str) -> CreateUserParams {
+        CreateUserParams {
+            username: Username(name.to_string()),
+            sub: Some(format!("sub-{name}")),
+            display_name: None,
+            email: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn create_user_emits_created_with_manual_source() {
+        let svc = new_service();
+        let (user, events) = svc
+            .create_user(&user_params("alice"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        assert_eq!(user.username(), "alice");
+        assert_eq!(
+            events,
+            vec![UserEvent::Created {
+                source: UserCreationSource::Manual
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_emits_created_with_oidc_source() {
+        let svc = new_service();
+        let (_user, events) = svc
+            .create_user(&user_params("bob"), UserCreationSource::OidcProvisioning)
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::Created {
+                source: UserCreationSource::OidcProvisioning
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn create_user_emits_created_with_trusted_headers_source() {
+        let svc = new_service();
+        let (_user, events) = svc
+            .create_user(
+                &user_params("carol"),
+                UserCreationSource::TrustedHeadersProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::Created {
+                source: UserCreationSource::TrustedHeadersProvisioning
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn update_user_emits_updated_with_changed_fields() {
+        let svc = new_service();
+        let (user, _) = svc
+            .create_user(&user_params("dave"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+
+        // Username only.
+        let (_, events) = svc
+            .update_user(
+                user.id(),
+                &UpdateUserParams {
+                    username: Some(Username("dave2".to_string())),
+                    display_name: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::Updated {
+                changed_fields: vec!["username".to_string()]
+            }]
+        );
+
+        // display_name only.
+        let (_, events) = svc
+            .update_user(
+                user.id(),
+                &UpdateUserParams {
+                    username: None,
+                    display_name: Some(Some("Dave".to_string())),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::Updated {
+                changed_fields: vec!["display_name".to_string()]
+            }]
+        );
+
+        // Both fields.
+        let (_, events) = svc
+            .update_user(
+                user.id(),
+                &UpdateUserParams {
+                    username: Some(Username("dave3".to_string())),
+                    display_name: Some(None),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::Updated {
+                changed_fields: vec!["username".to_string(), "display_name".to_string()]
+            }]
+        );
+
+        // No fields → empty events.
+        let (_, events) = svc
+            .update_user(
+                user.id(),
+                &UpdateUserParams {
+                    username: None,
+                    display_name: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_api_key_emits_api_key_issued() {
+        let svc = new_service();
+        let (user, _) = svc
+            .create_user(&user_params("erin"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        let (key, events) = svc
+            .create_api_key(user.id(), "key-1", Some("laptop"))
+            .await
+            .unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::ApiKeyIssued {
+                api_key_id: ApiKeyId(key.id())
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_api_key_emits_api_key_revoked() {
+        let svc = new_service();
+        let (user, _) = svc
+            .create_user(&user_params("frank"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        let (key, _) = svc.create_api_key(user.id(), "key-1", None).await.unwrap();
+        let events = svc.delete_api_key(key.id(), user.id()).await.unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::ApiKeyRevoked {
+                api_key_id: ApiKeyId(key.id())
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_session_emits_session_revoked_single() {
+        let svc = new_service();
+        let (user, _) = svc
+            .create_user(&user_params("gina"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        let (key, _) = svc
+            .create_api_key(user.id(), "session-1", None)
+            .await
+            .unwrap();
+        let events = svc.revoke_session(key.id(), user.id()).await.unwrap();
+        assert_eq!(
+            events,
+            vec![UserEvent::SessionRevoked {
+                session_id: SessionId(key.id()),
+                scope: SessionRevokeScope::Single
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_all_sessions_emits_per_session_with_all_scope() {
+        let svc = new_service();
+        let (user, _) = svc
+            .create_user(&user_params("henry"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        let mut session_ids = Vec::new();
+        for i in 0..3 {
+            let (k, _) = svc
+                .create_api_key(user.id(), &format!("s-{i}"), None)
+                .await
+                .unwrap();
+            session_ids.push(k.id());
+        }
+        let events = svc.revoke_all_sessions(user.id()).await.unwrap();
+        assert_eq!(events.len(), 3);
+        for ev in &events {
+            assert!(matches!(
+                ev,
+                UserEvent::SessionRevoked {
+                    scope: SessionRevokeScope::All,
+                    ..
+                }
+            ));
+        }
+        let observed: Vec<i64> = events
+            .iter()
+            .map(|ev| match ev {
+                UserEvent::SessionRevoked { session_id, .. } => session_id.0,
+                _ => unreachable!(),
+            })
+            .collect();
+        let mut expected = session_ids;
+        expected.sort();
+        let mut observed = observed;
+        observed.sort();
+        assert_eq!(observed, expected);
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_existing_user_returns_no_events() {
+        let svc = new_service();
+        let (created, _) = svc
+            .create_user(&user_params("ivy"), UserCreationSource::Manual)
+            .await
+            .unwrap();
+        let (fetched, events) = svc
+            .get_or_create_user(
+                "sub-ivy",
+                created.username(),
+                None,
+                None,
+                UserCreationSource::OidcProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(fetched.id(), created.id());
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_new_user_emits_created() {
+        let svc = new_service();
+        let username = Username("jane".to_string());
+        let (user, events) = svc
+            .get_or_create_user(
+                "sub-jane",
+                &username,
+                Some("Jane"),
+                Some("jane@example.com"),
+                UserCreationSource::TrustedHeadersProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(user.username(), "jane");
+        assert_eq!(
+            events,
+            vec![UserEvent::Created {
+                source: UserCreationSource::TrustedHeadersProvisioning
+            }]
+        );
+    }
 }

@@ -11,8 +11,9 @@ use zeroize::Zeroizing;
 
 use crate::application::port::TaskBackend;
 use crate::application::port::auth::{AuthError, AuthProvider, AuthResult};
+use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
-use crate::domain::user::{CreateUserParams, hash_api_key};
+use crate::domain::user::{CreateUserParams, UserCreationSource, hash_api_key};
 use crate::infra::config::SessionConfig;
 
 fn constant_time_key_eq(a: &str, b: &str) -> bool {
@@ -125,7 +126,7 @@ pub struct JwtAuthProvider {
     jwks_uri: OnceCell<String>,
     jwks_cache: RwLock<Option<JwksCache>>,
     last_force_refresh: RwLock<Option<Instant>>,
-    backend: Arc<dyn TaskBackend>,
+    user_ops: Arc<dyn UserOperations>,
 }
 
 impl JwtAuthProvider {
@@ -136,7 +137,7 @@ impl JwtAuthProvider {
         required_claims: HashMap<String, String>,
         groups_claim: String,
         master_group: Option<String>,
-        backend: Arc<dyn TaskBackend>,
+        user_ops: Arc<dyn UserOperations>,
     ) -> Self {
         Self {
             http_client: reqwest::Client::new(),
@@ -149,7 +150,7 @@ impl JwtAuthProvider {
             jwks_uri: OnceCell::new(),
             jwks_cache: RwLock::new(None),
             last_force_refresh: RwLock::new(None),
-            backend,
+            user_ops,
         }
     }
 
@@ -371,7 +372,7 @@ impl AuthProvider for JwtAuthProvider {
         });
 
         // Try to find existing user by sub; auto-create if not found (standard OIDC provisioning)
-        let user = match self.backend.get_user_by_sub(sub).await {
+        let user = match self.user_ops.get_user_by_sub(sub).await {
             Ok(user) => user,
             Err(_) => {
                 let display_name = token_data
@@ -390,18 +391,23 @@ impl AuthProvider for JwtAuthProvider {
                         tracing::debug!(error = %e, "invalid username from OIDC claims");
                         AuthError::InvalidToken
                     })?;
-                self.backend
-                    .create_user(&CreateUserParams {
-                        username,
-                        sub: Some(sub.to_string()),
-                        display_name,
-                        email,
-                    })
+                let (user, _events) = self
+                    .user_ops
+                    .create_user(
+                        &CreateUserParams {
+                            username,
+                            sub: Some(sub.to_string()),
+                            display_name,
+                            email,
+                        },
+                        UserCreationSource::OidcProvisioning,
+                    )
                     .await
                     .map_err(|e| {
                         tracing::warn!(error = %e, "failed to auto-provision OIDC user");
                         AuthError::InvalidToken
-                    })?
+                    })?;
+                user
             }
         };
 
@@ -419,7 +425,7 @@ pub struct TrustedHeadersAuthResult {
 }
 
 pub struct TrustedHeadersAuthProvider {
-    backend: Arc<dyn TaskBackend>,
+    user_ops: Arc<dyn UserOperations>,
     subject_header: String,
     name_header: Option<String>,
     display_name_header: Option<String>,
@@ -432,7 +438,7 @@ pub struct TrustedHeadersAuthProvider {
 impl TrustedHeadersAuthProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        backend: Arc<dyn TaskBackend>,
+        user_ops: Arc<dyn UserOperations>,
         subject_header: String,
         name_header: Option<String>,
         display_name_header: Option<String>,
@@ -442,7 +448,7 @@ impl TrustedHeadersAuthProvider {
         master_group: Option<String>,
     ) -> Self {
         Self {
-            backend,
+            user_ops,
             subject_header,
             name_header,
             display_name_header,
@@ -521,7 +527,7 @@ impl TrustedHeadersAuthProvider {
             })
             .unwrap_or_default();
 
-        let user = match self.backend.get_user_by_sub(sub).await {
+        let user = match self.user_ops.get_user_by_sub(sub).await {
             Ok(user) => user,
             Err(_) => {
                 tracing::info!(sub = %sub, username = %username, "auto-provisioning user from trusted headers");
@@ -529,18 +535,23 @@ impl TrustedHeadersAuthProvider {
                     tracing::debug!(error = %e, "invalid username from trusted headers");
                     AuthError::InvalidToken
                 })?;
-                self.backend
-                    .create_user(&CreateUserParams {
-                        username,
-                        sub: Some(sub.to_string()),
-                        display_name,
-                        email,
-                    })
+                let (user, _events) = self
+                    .user_ops
+                    .create_user(
+                        &CreateUserParams {
+                            username,
+                            sub: Some(sub.to_string()),
+                            display_name,
+                            email,
+                        },
+                        UserCreationSource::TrustedHeadersProvisioning,
+                    )
                     .await
                     .map_err(|e| {
                         tracing::warn!(error = %e, "failed to auto-provision trusted-headers user");
                         AuthError::InvalidToken
-                    })?
+                    })?;
+                user
             }
         };
 
@@ -561,10 +572,19 @@ impl TrustedHeadersAuthProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::UserService;
     use crate::domain::user::{
         ApiKeyRepository, CreateUserParams, NewApiKey, UserRepository, Username,
     };
     use crate::infra::sqlite::SqliteBackend;
+
+    /// Wrap a backend in `UserService` and erase to `Arc<dyn UserOperations>`
+    /// for OIDC / trusted-headers provider constructors that no longer take a
+    /// raw backend. Accepts `Arc<SqliteBackend>` via unsized coercion at the
+    /// call site or an explicit `Arc<dyn TaskBackend>`.
+    fn make_user_ops(backend: Arc<dyn TaskBackend>) -> Arc<dyn UserOperations> {
+        Arc::new(UserService::new(backend))
+    }
 
     async fn setup_backend_with_api_key() -> (Arc<SqliteBackend>, String) {
         let backend = SqliteBackend::new_in_memory().unwrap();
@@ -658,7 +678,7 @@ mod tests {
     async fn trusted_headers_valid_subject() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -682,7 +702,7 @@ mod tests {
     async fn trusted_headers_missing_subject() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -701,7 +721,7 @@ mod tests {
     async fn trusted_headers_with_name_and_email() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             Some("x-senko-user-name".to_string()),
             None,
@@ -735,7 +755,7 @@ mod tests {
             .unwrap();
 
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -756,7 +776,7 @@ mod tests {
     async fn trusted_headers_with_groups_and_scope() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -782,7 +802,7 @@ mod tests {
     async fn trusted_headers_master_group_sets_is_master() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -804,7 +824,7 @@ mod tests {
     async fn trusted_headers_master_group_absent_stays_false() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -826,7 +846,7 @@ mod tests {
     async fn trusted_headers_empty_groups_and_scope() {
         let backend = Arc::new(SqliteBackend::new_in_memory().unwrap());
         let provider = TrustedHeadersAuthProvider::new(
-            backend,
+            make_user_ops(backend),
             "x-senko-user-sub".to_string(),
             None,
             None,
@@ -935,7 +955,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         // Pre-populate JWKS cache
@@ -973,7 +993,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1009,7 +1029,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1045,7 +1065,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1081,7 +1101,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1116,7 +1136,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1169,7 +1189,7 @@ mod tests {
             required,
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1218,7 +1238,7 @@ mod tests {
             required,
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1258,7 +1278,7 @@ mod tests {
             required,
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1298,7 +1318,7 @@ mod tests {
             required,
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1338,7 +1358,7 @@ mod tests {
             required,
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1375,7 +1395,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1413,7 +1433,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1450,7 +1470,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1486,7 +1506,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1524,7 +1544,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1561,7 +1581,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             Some("senko-admin".to_string()),
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1598,7 +1618,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             Some("senko-admin".to_string()),
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1635,7 +1655,7 @@ mod tests {
             HashMap::new(),
             "cognito:groups".to_string(),
             Some("admin".to_string()),
-            backend,
+            make_user_ops(backend),
         );
 
         {
@@ -1672,7 +1692,7 @@ mod tests {
             HashMap::new(),
             "groups".to_string(),
             None,
-            backend,
+            make_user_ops(backend),
         );
 
         {

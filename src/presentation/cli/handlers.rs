@@ -1968,7 +1968,9 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 display_name: display_name.clone(),
                 email: email.clone(),
             };
-            let user = user_service.create_user(&params).await?;
+            let (user, _events) = user_service
+                .create_user(&params, crate::domain::user::UserCreationSource::Manual)
+                .await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&user)?);
@@ -1987,7 +1989,7 @@ pub async fn cmd_user(cli: &Cli, action: &UserAction) -> Result<()> {
                 username: username.clone(),
                 display_name: display_name.as_ref().map(|v| Some(v.clone())),
             };
-            let user = user_service.update_user(*id, &params).await?;
+            let (user, _events) = user_service.update_user(*id, &params).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&user)?);

@@ -1854,9 +1854,9 @@ async fn create_user(
     Json(params): Json<CreateUserParams>,
 ) -> Result<(StatusCode, Json<UserResponse>), ApiError> {
     require_master(&auth, state.auth_enabled())?;
-    let user = state
+    let (user, _events) = state
         .user_service
-        .create_user(&params)
+        .create_user(&params, crate::domain::user::UserCreationSource::Manual)
         .await
         .map_err(classify_error)?;
     Ok((StatusCode::CREATED, Json(UserResponse::from(user))))
@@ -1895,7 +1895,7 @@ async fn update_user(
         username: body.username,
         display_name: body.display_name,
     };
-    let user = state
+    let (user, _events) = state
         .user_service
         .update_user(user_id, &params)
         .await
@@ -2133,7 +2133,7 @@ async fn create_api_key(
         Some(Json(b)) => (b.name.unwrap_or_default(), b.device_name),
         None => (String::new(), None),
     };
-    let key = state
+    let (key, _events) = state
         .user_service
         .create_api_key(user_id, &name, device_name.as_deref())
         .await
@@ -2159,7 +2159,7 @@ async fn delete_api_key(
             "can only delete your own api keys".into(),
         ));
     }
-    state
+    let _events = state
         .user_service
         .delete_api_key(key_id, user_id)
         .await
@@ -2239,13 +2239,17 @@ async fn create_token(
 ) -> Result<(StatusCode, Json<TokenResponse>), ApiError> {
     let device_name = body.and_then(|b| b.0.device_name);
     // Ensure user exists in DB (auto-created by JwtAuthProvider if OIDC)
-    let user = state
+    // Auto-create runs only when the JWT path didn't already provision the
+    // user. The provisioning source for that fallback is OIDC (the only
+    // create_token caller is the JWT → API-key exchange).
+    let (user, _events) = state
         .user_service
         .get_or_create_user(
             auth.user.sub(),
             auth.user.username(),
             auth.user.display_name(),
             auth.user.email(),
+            crate::domain::user::UserCreationSource::OidcProvisioning,
         )
         .await
         .map_err(classify_error)?;
@@ -2305,7 +2309,7 @@ async fn revoke_session(
     auth: AuthUser,
     Path(key_id): Path<i64>,
 ) -> Result<StatusCode, ApiError> {
-    state
+    let _events = state
         .user_service
         .revoke_session(key_id, auth.user.id())
         .await
@@ -2318,7 +2322,7 @@ async fn revoke_all_sessions(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<StatusCode, ApiError> {
-    state
+    let _events = state
         .user_service
         .revoke_all_sessions(auth.user.id())
         .await

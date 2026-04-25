@@ -8,7 +8,7 @@ use crate::application::user_service::is_key_expired;
 use crate::domain::pagination::{Cursor, ListPage};
 use crate::domain::user::{
     ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter, ListUsersFilter,
-    UpdateUserParams, User, UserId, Username,
+    UpdateUserParams, User, UserCreationSource, UserEvent, UserId, Username,
 };
 use crate::infra::config::SessionConfig;
 
@@ -71,12 +71,20 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn create_user(&self, params: &CreateUserParams) -> Result<User> {
+    async fn create_user(
+        &self,
+        params: &CreateUserParams,
+        _source: UserCreationSource,
+    ) -> Result<(User, Vec<UserEvent>)> {
+        // Remote: events are emitted server-side, so the client returns an
+        // empty Vec. `_source` is intentionally ignored — the upstream auth
+        // path determines the actual creation source.
         let resp = self
             .prepare(self.client().post(self.url("/api/v1/users")).json(params))
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let user: User = read_json_or_error(resp).await?;
+        Ok((user, vec![]))
     }
 
     async fn get_user(&self, id: UserId) -> Result<User> {
@@ -119,7 +127,11 @@ impl UserOperations for RemoteUserOperations {
         }
     }
 
-    async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
+    async fn update_user(
+        &self,
+        id: UserId,
+        params: &UpdateUserParams,
+    ) -> Result<(User, Vec<UserEvent>)> {
         let resp = self
             .prepare(
                 self.client()
@@ -128,7 +140,8 @@ impl UserOperations for RemoteUserOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let user: User = read_json_or_error(resp).await?;
+        Ok((user, vec![]))
     }
 
     async fn delete_user(&self, id: UserId) -> Result<()> {
@@ -149,7 +162,7 @@ impl UserOperations for RemoteUserOperations {
         user_id: UserId,
         name: &str,
         device_name: Option<&str>,
-    ) -> Result<ApiKeyWithSecret> {
+    ) -> Result<(ApiKeyWithSecret, Vec<UserEvent>)> {
         let resp = self
             .prepare(
                 self.client()
@@ -158,7 +171,8 @@ impl UserOperations for RemoteUserOperations {
             )
             .send()
             .await?;
-        read_json_or_error(resp).await
+        let key: ApiKeyWithSecret = read_json_or_error(resp).await?;
+        Ok((key, vec![]))
     }
 
     async fn list_api_keys(&self, user_id: UserId) -> Result<Vec<ApiKey>> {
@@ -172,7 +186,7 @@ impl UserOperations for RemoteUserOperations {
         read_json_or_error(resp).await
     }
 
-    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<()> {
+    async fn delete_api_key(&self, key_id: i64, user_id: UserId) -> Result<Vec<UserEvent>> {
         let resp = self
             .prepare(
                 self.client()
@@ -180,7 +194,8 @@ impl UserOperations for RemoteUserOperations {
             )
             .send()
             .await?;
-        check_success(resp).await
+        check_success(resp).await?;
+        Ok(vec![])
     }
 
     // --- Session management ---
@@ -191,9 +206,10 @@ impl UserOperations for RemoteUserOperations {
         username: &Username,
         display_name: Option<&str>,
         email: Option<&str>,
-    ) -> Result<User> {
+        source: UserCreationSource,
+    ) -> Result<(User, Vec<UserEvent>)> {
         match self.get_user_by_sub(sub).await {
-            Ok(user) => Ok(user),
+            Ok(user) => Ok((user, vec![])),
             Err(_) => {
                 let params = CreateUserParams {
                     username: username.clone(),
@@ -201,7 +217,7 @@ impl UserOperations for RemoteUserOperations {
                     display_name: display_name.map(String::from),
                     email: email.map(String::from),
                 };
-                self.create_user(&params).await
+                self.create_user(&params, source).await
             }
         }
     }
@@ -224,7 +240,8 @@ impl UserOperations for RemoteUserOperations {
             }
         }
 
-        self.create_api_key(user_id, "", device_name).await
+        let (key, _events) = self.create_api_key(user_id, "", device_name).await?;
+        Ok(key)
     }
 
     async fn list_active_sessions(
@@ -263,7 +280,7 @@ impl UserOperations for RemoteUserOperations {
         })
     }
 
-    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<()> {
+    async fn revoke_session(&self, key_id: i64, user_id: UserId) -> Result<Vec<UserEvent>> {
         let resp = self
             .prepare(
                 self.client()
@@ -271,15 +288,16 @@ impl UserOperations for RemoteUserOperations {
             )
             .send()
             .await?;
-        check_success(resp).await
+        check_success(resp).await?;
+        Ok(vec![])
     }
 
-    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<()> {
+    async fn revoke_all_sessions(&self, user_id: UserId) -> Result<Vec<UserEvent>> {
         let keys = self.list_api_keys(user_id).await?;
         for key in keys {
             self.revoke_session(key.id(), user_id).await?;
         }
-        Ok(())
+        Ok(vec![])
     }
 
     async fn fetch_me(&self) -> Result<serde_json::Value> {

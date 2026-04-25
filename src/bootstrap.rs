@@ -227,6 +227,8 @@ pub fn create_auth_mode(
         let groups_claim = auth.oidc.groups_claim.clone();
         let master_group = auth.oidc.master_group.clone();
         tracing::info!(issuer = %issuer_url, "OIDC JWT authentication enabled");
+        let user_ops: Arc<dyn crate::application::UserOperations> =
+            Arc::new(UserService::new(backend.clone()));
         return Ok(Some(AuthMode::Token(Arc::new(JwtAuthProvider::new(
             issuer_url,
             client_id,
@@ -234,7 +236,7 @@ pub fn create_auth_mode(
             required_claims,
             groups_claim,
             master_group,
-            backend,
+            user_ops,
         )))));
     }
 
@@ -250,9 +252,11 @@ pub fn create_auth_mode(
     if auth.trusted_headers.is_configured() {
         let subject_header = auth.trusted_headers.subject_header.clone().unwrap();
         tracing::info!(header = %subject_header, "trusted headers authentication enabled");
+        let user_ops: Arc<dyn crate::application::UserOperations> =
+            Arc::new(UserService::new(backend));
         return Ok(Some(AuthMode::TrustedHeaders(Arc::new(
             TrustedHeadersAuthProvider::new(
-                backend,
+                user_ops,
                 subject_header,
                 auth.trusted_headers.name_header.clone(),
                 auth.trusted_headers.display_name_header.clone(),

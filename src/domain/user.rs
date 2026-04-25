@@ -54,6 +54,132 @@ impl From<UserId> for i64 {
     }
 }
 
+/// Newtype wrapper around an API key's database id.
+///
+/// Wraps `i64` with `#[serde(transparent)]` so the JSON wire format stays a
+/// bare integer. Compile-time safety: an `ApiKeyId` cannot be accidentally
+/// mixed with a `UserId`, `SessionId`, or other `i64` row id. The DB layer
+/// keeps using `i64` for backwards compatibility — `ApiKeyId` is constructed
+/// at the domain edge when emitting [`UserEvent`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ApiKeyId(pub i64);
+
+impl fmt::Display for ApiKeyId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for ApiKeyId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(ApiKeyId)
+    }
+}
+
+impl From<i64> for ApiKeyId {
+    fn from(n: i64) -> Self {
+        ApiKeyId(n)
+    }
+}
+
+impl From<ApiKeyId> for i64 {
+    fn from(id: ApiKeyId) -> i64 {
+        id.0
+    }
+}
+
+/// Newtype wrapper around a session token's database id.
+///
+/// Sessions are persisted in the same `api_keys` table as long-lived API keys,
+/// but the domain models them as a distinct concept. Keeping `SessionId` and
+/// [`ApiKeyId`] as separate newtypes lets [`UserEvent`] carry the right
+/// identifier kind without callers having to remember which `i64` is which.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct SessionId(pub i64);
+
+impl fmt::Display for SessionId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl FromStr for SessionId {
+    type Err = std::num::ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<i64>().map(SessionId)
+    }
+}
+
+impl From<i64> for SessionId {
+    fn from(n: i64) -> Self {
+        SessionId(n)
+    }
+}
+
+impl From<SessionId> for i64 {
+    fn from(id: SessionId) -> i64 {
+        id.0
+    }
+}
+
+// --- Domain events ---
+
+/// How a user record came into existence. Carried by
+/// [`UserEvent::Created`] so observability (Phase B3) can distinguish manual
+/// creation from JIT auto-provisioning paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UserCreationSource {
+    /// Explicit `POST /users` (or CLI `user create`).
+    Manual,
+    /// JIT auto-provisioning from OIDC claims.
+    OidcProvisioning,
+    /// JIT auto-provisioning from trusted-headers auth.
+    TrustedHeadersProvisioning,
+}
+
+/// Granularity of a [`UserEvent::SessionRevoked`] event. `revoke_all_sessions`
+/// emits one event per session with `scope: All`; targeted single-session
+/// revocation uses `scope: Single`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionRevokeScope {
+    Single,
+    All,
+}
+
+/// Domain event emitted by `UserService` mutations.
+///
+/// `Deleted` is intentionally absent (Contract #8 design decision —
+/// `delete_user` is an admin / cleanup path that does not need observability
+/// today and can be added later without breaking emission). API key issue /
+/// revoke and session revoke are first-class events because the auth surface
+/// is a primary security signal.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum UserEvent {
+    Created {
+        source: UserCreationSource,
+    },
+    Updated {
+        changed_fields: Vec<String>,
+    },
+    ApiKeyIssued {
+        api_key_id: ApiKeyId,
+    },
+    ApiKeyRevoked {
+        api_key_id: ApiKeyId,
+    },
+    SessionRevoked {
+        session_id: SessionId,
+        scope: SessionRevokeScope,
+    },
+}
+
 /// Newtype wrapper around a user's login name.
 ///
 /// Wraps `String` with `#[serde(transparent)]` so the JSON wire format stays a
