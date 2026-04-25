@@ -6,6 +6,7 @@ pub mod metadata_field_service;
 pub mod port;
 pub mod project_service;
 pub mod task_service;
+pub mod telemetry;
 pub mod user_service;
 
 pub use crate::domain::task::ListTasksFilter;
