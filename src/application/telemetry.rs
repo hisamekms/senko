@@ -16,10 +16,24 @@
 //! - `Level::INFO` — fixed; errors are emitted separately as
 //!   `senko.api.error` (Phase C2).
 //!
-//! Common attributes (`senko.operation.id`, `enduser.*`, Resource attrs)
-//! are NOT taken here — Phase B2 will auto-attach them via baggage,
-//! task-locals, or span attributes. Only callsite-specific attributes go
-//! into the macro.
+//! Common attributes (`senko.operation.id`, `enduser.*`, caller-supplied
+//! baggage like `aviary.session.id`) are auto-attached by
+//! [`BusinessAttributesProcessor`] — a [`LogProcessor`] that reads two
+//! task-locals on `emit`:
+//! - [`RESOLVED_USER`] — set by Phase C3's auth middleware after the
+//!   inbound principal is resolved; supplies `enduser.id` / `enduser.name`.
+//! - `crate::infra::http::INBOUND_BAGGAGE` — set by `propagate_trace_context`
+//!   middleware from the W3C `baggage` header; supplies `senko.operation.id`
+//!   and any caller-supplied attributes verbatim (no `baggage.` prefix).
+//!
+//! The processor is wired into [`crate::bootstrap::init_telemetry`] **before**
+//! the export processor; tests plug it in the same way. Resource attributes
+//! (`service.name` / `service.version` / `senko.version`) are attached by
+//! the SDK at `Resource` level, not here.
+//!
+//! Callsites pass only the event-specific attributes (e.g. `senko.task.id`,
+//! `from_status`); the processor enriches every `senko_business` record with
+//! the per-request common attributes above.
 
 /// Emit one Contract #8 business event as an OTel `LogRecord`.
 ///
@@ -56,6 +70,74 @@ macro_rules! emit_business_event {
             $($fields)*
         );
     };
+}
+
+use std::time::Duration;
+
+use opentelemetry::InstrumentationScope;
+use opentelemetry::logs::LogRecord as _;
+use opentelemetry_sdk::error::OTelSdkResult;
+use opentelemetry_sdk::logs::{LogProcessor, SdkLogRecord};
+
+/// Auth-resolved enduser identity for the in-flight request.
+///
+/// Populated by Phase C3's auth middleware via
+/// `RESOLVED_USER.scope(user, fut).await` once the inbound principal is
+/// known; consumed by [`BusinessAttributesProcessor`] to auto-attach
+/// `enduser.id` / `enduser.name` to every `senko_business` LogRecord
+/// emitted under that scope.
+#[derive(Debug, Clone)]
+pub struct ResolvedUser {
+    pub id: i64,
+    pub username: String,
+}
+
+tokio::task_local! {
+    /// Per-request resolved user. Outside the scope `try_with` returns
+    /// `Err(AccessError)` and the processor silently skips `enduser.*`
+    /// attribution — emit paths that bypass auth (CLI, tests) won't crash.
+    pub static RESOLVED_USER: ResolvedUser;
+}
+
+/// LogProcessor that enriches Contract #8 business-event records with
+/// per-request common attributes pulled from task-locals.
+///
+/// Wired BEFORE the export processor in `SdkLoggerProvider::builder()` so
+/// the exporter sees the enriched record; mirrors the
+/// `EnrichWithBaggageProcessor` pattern in the OpenTelemetry SDK 0.31
+/// docs (`opentelemetry_sdk::logs::tests::log_and_baggage`).
+///
+/// Records whose `target` is not `"senko_business"` (i.e. infrastructure
+/// `tracing::info!` / `warn!` calls) pass through untouched.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct BusinessAttributesProcessor;
+
+impl LogProcessor for BusinessAttributesProcessor {
+    fn emit(&self, record: &mut SdkLogRecord, _scope: &InstrumentationScope) {
+        let is_business = matches!(record.target().map(|c| c.as_ref()), Some("senko_business"));
+        if !is_business {
+            return;
+        }
+
+        let _ = RESOLVED_USER.try_with(|u| {
+            record.add_attribute("enduser.id", u.id);
+            record.add_attribute("enduser.name", u.username.clone());
+        });
+
+        let _ = crate::infra::http::INBOUND_BAGGAGE.try_with(|map| {
+            for (k, v) in map.iter() {
+                record.add_attribute(k.clone(), v.clone());
+            }
+        });
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        Ok(())
+    }
+
+    fn shutdown_with_timeout(&self, _timeout: Duration) -> OTelSdkResult {
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -140,5 +222,179 @@ mod tests {
             logs[0].record.target().map(|c| c.as_ref()),
             Some("senko_business")
         );
+    }
+
+    // --- BusinessAttributesProcessor enrichment ---------------------------
+
+    use std::collections::BTreeMap;
+
+    use super::{BusinessAttributesProcessor, RESOLVED_USER, ResolvedUser};
+    use crate::infra::http::INBOUND_BAGGAGE;
+
+    /// Build a logger provider wired with the enricher BEFORE the simple
+    /// exporter — the production order from `bootstrap::build_logger_provider`.
+    fn provider_with_enricher() -> (InMemoryLogExporter, SdkLoggerProvider) {
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_log_processor(BusinessAttributesProcessor)
+            .with_simple_exporter(exporter.clone())
+            .build();
+        (exporter, provider)
+    }
+
+    #[test]
+    fn enricher_attaches_enduser_from_resolved_user_task_local() {
+        let (exporter, provider) = provider_with_enricher();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let user = ResolvedUser {
+                id: 7,
+                username: "alice".into(),
+            };
+            RESOLVED_USER
+                .scope(user, async {
+                    let _g = tracing::subscriber::set_default(subscriber);
+                    crate::emit_business_event!("senko.task.published", senko.task.id = 1_i64);
+                })
+                .await;
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        assert_eq!(lookup_attr(record, "enduser.id"), Some(AnyValue::Int(7)));
+        assert_eq!(
+            lookup_attr(record, "enduser.name"),
+            Some(AnyValue::String("alice".into()))
+        );
+        // callsite attribute survives alongside auto-attached ones
+        assert_eq!(lookup_attr(record, "senko.task.id"), Some(AnyValue::Int(1)));
+    }
+
+    #[test]
+    fn enricher_attaches_inbound_baggage_with_raw_keys() {
+        let (exporter, provider) = provider_with_enricher();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut baggage = BTreeMap::new();
+            baggage.insert("senko.operation.id".to_string(), "op-xyz".to_string());
+            baggage.insert("aviary.session.id".to_string(), "ses-1".to_string());
+            INBOUND_BAGGAGE
+                .scope(baggage, async {
+                    let _g = tracing::subscriber::set_default(subscriber);
+                    crate::emit_business_event!("senko.contract.created");
+                })
+                .await;
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        // Raw keys, no `baggage.` prefix — Contract #8 common-attribute names
+        assert_eq!(
+            lookup_attr(record, "senko.operation.id"),
+            Some(AnyValue::String("op-xyz".into()))
+        );
+        assert_eq!(
+            lookup_attr(record, "aviary.session.id"),
+            Some(AnyValue::String("ses-1".into()))
+        );
+        // Defensive: prefix form must NOT appear
+        assert!(lookup_attr(record, "baggage.senko.operation.id").is_none());
+    }
+
+    #[test]
+    fn enricher_no_crash_when_task_locals_unset() {
+        let (exporter, provider) = provider_with_enricher();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        // No RESOLVED_USER / INBOUND_BAGGAGE scope around the emit — emulates
+        // a CLI / test path where neither auth nor inbound HTTP middleware ran.
+        tracing::subscriber::with_default(subscriber, || {
+            crate::emit_business_event!(
+                "senko.task.canceled",
+                senko.task.id = 2_i64,
+                from_status = "in_progress"
+            );
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        // Auto-attached attrs absent — neither task-local was scoped
+        assert!(lookup_attr(record, "enduser.id").is_none());
+        assert!(lookup_attr(record, "enduser.name").is_none());
+        assert!(lookup_attr(record, "senko.operation.id").is_none());
+        // Callsite attrs preserved
+        assert_eq!(lookup_attr(record, "senko.task.id"), Some(AnyValue::Int(2)));
+        assert_eq!(
+            lookup_attr(record, "from_status"),
+            Some(AnyValue::String("in_progress".into()))
+        );
+    }
+
+    #[test]
+    fn enricher_skips_records_with_non_business_target() {
+        // Wire enricher + exporter, then emit a non-business tracing event
+        // (target = module path, not "senko_business") under populated
+        // task-locals. The enricher must NOT inject auto-attrs for this record.
+        let (exporter, provider) = provider_with_enricher();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let user = ResolvedUser {
+                id: 7,
+                username: "alice".into(),
+            };
+            let mut baggage = BTreeMap::new();
+            baggage.insert("senko.operation.id".to_string(), "op-xyz".to_string());
+
+            RESOLVED_USER
+                .scope(
+                    user,
+                    INBOUND_BAGGAGE.scope(baggage, async {
+                        let _g = tracing::subscriber::set_default(subscriber);
+                        // Non-business tracing event: default target = module path.
+                        tracing::info!(unrelated_field = 1, "infrastructure log");
+                    }),
+                )
+                .await;
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        // Sanity: this is not a business record
+        assert_ne!(record.target().map(|c| c.as_ref()), Some("senko_business"));
+        // Enricher did not inject any auto-attrs
+        assert!(lookup_attr(record, "enduser.id").is_none());
+        assert!(lookup_attr(record, "enduser.name").is_none());
+        assert!(lookup_attr(record, "senko.operation.id").is_none());
     }
 }

@@ -773,6 +773,7 @@ fn build_logger_provider(
         {
             Ok(exporter) => Some(
                 opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                    .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
                     .with_batch_exporter(exporter)
                     .with_resource(resource)
                     .build(),
@@ -784,6 +785,7 @@ fn build_logger_provider(
         },
         "console" => Some(
             opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
                 .with_simple_exporter(opentelemetry_stdout::LogExporter::default())
                 .with_resource(resource)
                 .build(),
