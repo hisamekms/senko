@@ -33,6 +33,18 @@ use crate::infra::http::trace_propagation::is_reserved_namespace;
 /// case, so bytes ≈ chars; truncation snaps to a UTF-8 boundary regardless.
 pub const BAGGAGE_VALUE_MAX_LEN: usize = 256;
 
+/// Maximum number of baggage keys retained per inbound request. Excess keys
+/// are dropped in alphabetical order — the head 32 are kept. Defends against
+/// a malicious CLI spamming arbitrary keys to inflate per-span attribute
+/// count and downstream collector / APM cost.
+pub const BAGGAGE_MAX_KEYS: usize = 32;
+
+/// Maximum total UTF-8 byte budget across all retained entries
+/// (`Σ key.len() + value.len()`). Once exceeded after per-value truncation,
+/// keys are dropped from the tail (reverse-alphabetical) until the running
+/// total fits.
+pub const BAGGAGE_MAX_TOTAL_BYTES: usize = 8 * 1024;
+
 /// Adapter so `TextMapPropagator::extract` can read from axum's `HeaderMap`.
 struct HeaderMapExtractor<'a>(&'a HeaderMap);
 
@@ -67,9 +79,8 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     );
     let _ = span.set_parent(parent_cx.clone());
 
-    let baggage = parent_cx.baggage();
-    promote_baggage_to_span(&span, baggage, BAGGAGE_VALUE_MAX_LEN);
-    let inbound_baggage = collect_inbound_baggage(baggage);
+    let inbound_baggage = apply_baggage_limits(parent_cx.baggage());
+    promote_baggage_to_span(&span, &inbound_baggage);
 
     let start = Instant::now();
     let response = INBOUND_BAGGAGE
@@ -100,15 +111,74 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     response
 }
 
-/// Collect baggage entries into a flat `BTreeMap` for re-emission by relay
-/// mode. No reserved-namespace filtering here — the CLI already filters, and
-/// relay is a passthrough (re-filtering would drop entries the CLI explicitly
-/// permitted via `--attr` / `SENKO_TRACE_ATTRIBUTES`).
-fn collect_inbound_baggage(baggage: &Baggage) -> BTreeMap<String, String> {
-    baggage
+/// Normalize inbound baggage with three sequential limits, returning a flat
+/// `BTreeMap` suitable for both span-attribute promotion and relay-side
+/// re-emission. No reserved-namespace filtering here — the CLI already
+/// filters outbound, and relay is a passthrough (re-filtering would drop
+/// entries the CLI explicitly permitted via `--attr` / `SENKO_TRACE_ATTRIBUTES`).
+///
+/// Order matters:
+///   1. Drop excess keys past `BAGGAGE_MAX_KEYS` in alphabetical order
+///      (head 32 retained).
+///   2. Truncate each value to `BAGGAGE_VALUE_MAX_LEN` at a UTF-8 boundary.
+///   3. Drop trailing keys (reverse-alphabetical) until total UTF-8 bytes
+///      ≤ `BAGGAGE_MAX_TOTAL_BYTES`.
+///
+/// Each overflow emits a single `tracing::warn!` so DoS / cost-inflation
+/// patterns are visible without log spam.
+fn apply_baggage_limits(baggage: &Baggage) -> BTreeMap<String, String> {
+    let mut map: BTreeMap<String, String> = baggage
         .iter()
         .map(|(key, (value, _metadata))| (key.as_str().to_string(), value.as_str().to_string()))
-        .collect()
+        .collect();
+
+    if map.len() > BAGGAGE_MAX_KEYS {
+        let original_count = map.len();
+        let to_drop: Vec<String> = map.keys().skip(BAGGAGE_MAX_KEYS).cloned().collect();
+        for k in to_drop {
+            map.remove(&k);
+        }
+        tracing::warn!(
+            count = original_count,
+            max = BAGGAGE_MAX_KEYS,
+            "baggage key count exceeded",
+        );
+    }
+
+    for (key, value) in map.iter_mut() {
+        let original_len = value.len();
+        let (truncated, was_truncated) = truncate_baggage_value(value, BAGGAGE_VALUE_MAX_LEN);
+        if was_truncated {
+            tracing::warn!(
+                key = key.as_str(),
+                original_len,
+                max = BAGGAGE_VALUE_MAX_LEN,
+                "baggage value truncated",
+            );
+            *value = truncated;
+        }
+    }
+
+    let mut total: usize = map.iter().map(|(k, v)| k.len() + v.len()).sum();
+    if total > BAGGAGE_MAX_TOTAL_BYTES {
+        let original_total = total;
+        let keys_desc: Vec<String> = map.keys().rev().cloned().collect();
+        for k in keys_desc {
+            if total <= BAGGAGE_MAX_TOTAL_BYTES {
+                break;
+            }
+            if let Some(v) = map.remove(&k) {
+                total -= k.len() + v.len();
+            }
+        }
+        tracing::warn!(
+            total_bytes = original_total,
+            max = BAGGAGE_MAX_TOTAL_BYTES,
+            "baggage total length exceeded",
+        );
+    }
+
+    map
 }
 
 /// Attach each non-reserved baggage entry as a `baggage.<key>` span attribute.
@@ -116,23 +186,12 @@ fn collect_inbound_baggage(baggage: &Baggage) -> BTreeMap<String, String> {
 /// dropped defensively: the CLI already filters them, but a mis-configured
 /// client or proxy could still send them, and we never want them to overwrite
 /// server-side OTel Resource attributes of the same name.
-fn promote_baggage_to_span(span: &tracing::Span, baggage: &Baggage, max_len: usize) {
-    for (key, (value, _metadata)) in baggage.iter() {
-        let key_str = key.as_str();
-        if is_reserved_namespace(key_str) {
+fn promote_baggage_to_span(span: &tracing::Span, baggage: &BTreeMap<String, String>) {
+    for (key, value) in baggage {
+        if is_reserved_namespace(key) {
             continue;
         }
-        let raw = value.as_str();
-        let (truncated, was_truncated) = truncate_baggage_value(raw, max_len);
-        if was_truncated {
-            tracing::warn!(
-                key = key_str,
-                original_len = raw.len(),
-                max = max_len,
-                "baggage value truncated",
-            );
-        }
-        span.set_attribute(format!("baggage.{key_str}"), truncated);
+        span.set_attribute(format!("baggage.{key}"), value.clone());
     }
 }
 
@@ -427,14 +486,16 @@ mod tests {
             tracing_subscriber::registry().with(tracing_opentelemetry::layer().with_tracer(tracer));
         let _g = tracing::subscriber::set_default(subscriber);
 
-        let baggage = Baggage::from_iter([
-            KeyValue::new("run.id", "r1"),
-            KeyValue::new("service.name", "nope"),
-        ]);
+        let map: BTreeMap<String, String> = [
+            ("run.id".to_string(), "r1".to_string()),
+            ("service.name".to_string(), "nope".to_string()),
+        ]
+        .into_iter()
+        .collect();
 
         {
             let span = tracing::info_span!("manual");
-            promote_baggage_to_span(&span, &baggage, BAGGAGE_VALUE_MAX_LEN);
+            promote_baggage_to_span(&span, &map);
             drop(span);
         }
 
@@ -451,6 +512,88 @@ mod tests {
                 .attributes
                 .iter()
                 .any(|kv| kv.key.as_str() == "baggage.service.name"),
+        );
+    }
+
+    // --- apply_baggage_limits (DoS / cost-inflation guards) -----------------
+
+    #[test]
+    fn apply_baggage_limits_drops_excess_keys() {
+        // 100 keys. Names are "k000".."k099" — alphabetical order matches
+        // numeric order, so the head 32 retained should be "k000".."k031".
+        let pairs: Vec<KeyValue> = (0..100)
+            .map(|i| KeyValue::new(format!("k{i:03}"), format!("v{i}")))
+            .collect();
+        let baggage = Baggage::from_iter(pairs);
+
+        let result = apply_baggage_limits(&baggage);
+
+        assert_eq!(result.len(), BAGGAGE_MAX_KEYS, "must cap at 32");
+        assert!(result.contains_key("k000"));
+        assert!(result.contains_key("k031"));
+        assert!(
+            !result.contains_key("k032"),
+            "k032 must be dropped (alphabetical tail)",
+        );
+        assert!(!result.contains_key("k099"));
+    }
+
+    #[test]
+    fn apply_baggage_limits_truncates_oversized_value_within_total_budget() {
+        // 1 key whose value exceeds BAGGAGE_VALUE_MAX_LEN. Per-value
+        // truncation kicks in, total stays well under 8 KB so the key is
+        // NOT dropped. (We can't construct a 10 KB value via Baggage::from_iter
+        // because the OTel SDK enforces a per-pair byte cap; 1024 bytes is
+        // well above BAGGAGE_VALUE_MAX_LEN=256 and still accepted.)
+        let oversized = "a".repeat(1024);
+        let baggage = Baggage::from_iter([KeyValue::new("big", oversized)]);
+
+        let result = apply_baggage_limits(&baggage);
+
+        assert_eq!(result.len(), 1, "single key must survive");
+        let value = result.get("big").expect("'big' must remain");
+        assert_eq!(
+            value.len(),
+            BAGGAGE_VALUE_MAX_LEN,
+            "value must be truncated to BAGGAGE_VALUE_MAX_LEN",
+        );
+        let total: usize = result.iter().map(|(k, v)| k.len() + v.len()).sum();
+        assert!(
+            total <= BAGGAGE_MAX_TOTAL_BYTES,
+            "total {total} must fit budget after truncation",
+        );
+    }
+
+    #[test]
+    fn apply_baggage_limits_drops_tail_when_total_bytes_exceeded() {
+        // 20 keys × 500-byte values = ~10 KB, well over the 8 KB budget but
+        // under the 32-key count limit. Must drop from the alphabetical
+        // tail until total ≤ 8 KB while retaining head keys.
+        let value_len = 500;
+        let pairs: Vec<KeyValue> = (0..20)
+            .map(|i| KeyValue::new(format!("k{i:02}"), "x".repeat(value_len)))
+            .collect();
+        let baggage = Baggage::from_iter(pairs);
+
+        let result = apply_baggage_limits(&baggage);
+
+        let total: usize = result.iter().map(|(k, v)| k.len() + v.len()).sum();
+        assert!(
+            total <= BAGGAGE_MAX_TOTAL_BYTES,
+            "total {total} must fit BAGGAGE_MAX_TOTAL_BYTES",
+        );
+        // At least one key must have been dropped (we sent ~10 KB).
+        assert!(
+            result.len() < 20,
+            "expected tail drops, got len = {}",
+            result.len(),
+        );
+        // Head retention: alphabetical-smallest keys survive. "k00" must be
+        // present; the last key ("k19") must be gone.
+        assert!(result.contains_key("k00"), "head key must survive");
+        assert!(
+            !result.contains_key("k19"),
+            "tail key must be dropped first",
         );
     }
 
