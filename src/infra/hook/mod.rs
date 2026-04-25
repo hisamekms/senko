@@ -2,9 +2,10 @@ pub mod executor;
 pub mod test_executor;
 
 use std::collections::HashMap;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
@@ -222,6 +223,20 @@ impl HookLogEntry {
         self.backend = serde_json::to_value(v).ok();
         self
     }
+
+    fn with_optional_stdout(mut self, bytes: &[u8]) -> Self {
+        if !bytes.is_empty() {
+            self.stdout = Some(truncate_output(bytes));
+        }
+        self
+    }
+
+    fn with_optional_stderr(mut self, bytes: &[u8]) -> Self {
+        if !bytes.is_empty() {
+            self.stderr = Some(truncate_output(bytes));
+        }
+        self
+    }
 }
 
 /// Truncate byte output to at most `MAX_OUTPUT_BYTES`, keeping the tail.
@@ -353,9 +368,244 @@ fn write_hook_log(target: &HookLogTarget, entry: &HookLogEntry) {
     }
 }
 
+/// Maximum bytes of stderr to attach to `senko.hook.failed` events.
+/// Contract #8 D1 spec.
+const STDERR_EXCERPT_BYTES: usize = 1024;
+
+/// Outcome of a single hook command execution. Used to drive both the
+/// `senko.hook.fired` / `senko.hook.failed` business event and the
+/// per-line JSONL `HookLogEntry` in one place.
+enum WaitOutcome {
+    Exited {
+        status: std::process::ExitStatus,
+        stdout: Vec<u8>,
+        stderr: Vec<u8>,
+    },
+    /// `child.try_wait()` returned `Ok(None)` past the timeout window;
+    /// the child was sent `Child::kill()`. `stdout` / `stderr` are whatever
+    /// the drain threads collected before the kill landed.
+    Timeout { stdout: Vec<u8>, stderr: Vec<u8> },
+    /// `child.try_wait()` itself returned `Err`. Defensive — in practice
+    /// only reachable via OS-level malfunctions (e.g., reaped externally).
+    WaitError(String),
+}
+
+/// Drive a child process to completion or timeout. Drains stdout/stderr on
+/// dedicated threads so a long-running command cannot block on a full pipe
+/// buffer. Polls `try_wait()` every 50ms; on timeout sends `kill()` and
+/// reaps via `wait()`.
+fn wait_with_timeout(mut child: std::process::Child, timeout: Duration) -> WaitOutcome {
+    let stdout = child.stdout.take().expect("stdout piped");
+    let stderr = child.stderr.take().expect("stderr piped");
+    let stdout_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::BufReader::new(stdout).read_to_end(&mut buf);
+        buf
+    });
+    let stderr_h = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::BufReader::new(stderr).read_to_end(&mut buf);
+        buf
+    });
+
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_h.join().unwrap_or_default();
+                let stderr = stderr_h.join().unwrap_or_default();
+                return WaitOutcome::Exited {
+                    status,
+                    stdout,
+                    stderr,
+                };
+            }
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let stdout = stdout_h.join().unwrap_or_default();
+                    let stderr = stderr_h.join().unwrap_or_default();
+                    return WaitOutcome::Timeout { stdout, stderr };
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_h.join();
+                let _ = stderr_h.join();
+                return WaitOutcome::WaitError(format!("{e:#}"));
+            }
+        }
+    }
+}
+
+/// Truncate stderr bytes to at most `STDERR_EXCERPT_BYTES` for the
+/// `stderr_excerpt` attribute on `senko.hook.failed`.
+fn stderr_excerpt(stderr: &[u8]) -> String {
+    let end = stderr.len().min(STDERR_EXCERPT_BYTES);
+    String::from_utf8_lossy(&stderr[..end]).into_owned()
+}
+
+/// Emit `senko.hook.fired` / `senko.hook.failed` for one completed hook
+/// invocation. Common attributes (`enduser.id`, `senko.operation.id`, ...)
+/// are auto-attached by [`crate::application::telemetry::BusinessAttributesProcessor`]
+/// when the macro fires under populated task-locals.
+fn emit_hook_outcome_event(
+    hook_name: &str,
+    trigger: &str,
+    outcome: &WaitOutcome,
+    elapsed: Duration,
+) {
+    let elapsed_ms = elapsed.as_millis() as i64;
+    match outcome {
+        WaitOutcome::Exited { status, .. } if status.success() => {
+            crate::emit_business_event!(
+                "senko.hook.fired",
+                hook.name = hook_name,
+                hook.trigger = trigger,
+                exit_status = 0_i64,
+                duration_ms = elapsed_ms,
+            );
+        }
+        WaitOutcome::Exited { status, stderr, .. } => {
+            let exit_code = status.code().map(i64::from).unwrap_or(-1);
+            let excerpt = stderr_excerpt(stderr);
+            crate::emit_business_event!(
+                "senko.hook.failed",
+                level: WARN,
+                hook.name = hook_name,
+                hook.trigger = trigger,
+                failure.reason = "non_zero_exit",
+                exit_status = exit_code,
+                duration_ms = elapsed_ms,
+                stderr_excerpt = excerpt,
+            );
+        }
+        WaitOutcome::Timeout { stderr, .. } => {
+            let excerpt = stderr_excerpt(stderr);
+            crate::emit_business_event!(
+                "senko.hook.failed",
+                level: WARN,
+                hook.name = hook_name,
+                hook.trigger = trigger,
+                failure.reason = "timeout",
+                duration_ms = elapsed_ms,
+                stderr_excerpt = excerpt,
+            );
+        }
+        WaitOutcome::WaitError(msg) => {
+            crate::emit_business_event!(
+                "senko.hook.failed",
+                level: WARN,
+                hook.name = hook_name,
+                hook.trigger = trigger,
+                failure.reason = "wait_error",
+                duration_ms = elapsed_ms,
+                error.message = msg.as_str(),
+            );
+        }
+    }
+}
+
+/// Emit a pre-spawn / pre-wait failure (`spawn_error`, `stdin_error`).
+/// Stays separate from `emit_hook_outcome_event` because no `WaitOutcome`
+/// exists yet — the child either failed to launch or never received stdin.
+fn emit_hook_pre_wait_failure(
+    hook_name: &str,
+    trigger: &str,
+    reason: &str,
+    elapsed: Duration,
+    error_message: &str,
+) {
+    let elapsed_ms = elapsed.as_millis() as i64;
+    crate::emit_business_event!(
+        "senko.hook.failed",
+        level: WARN,
+        hook.name = hook_name,
+        hook.trigger = trigger,
+        failure.reason = reason,
+        duration_ms = elapsed_ms,
+        error.message = error_message,
+    );
+}
+
+/// Write the per-line `HookLogEntry` (file/stdout JSONL) for a completed hook.
+/// Replaces the old `log_hook_outcome` and consolidates the failure paths
+/// (`Timeout` / `WaitError`) into the same JSONL stream.
+fn log_hook_outcome_entry(
+    log_target: Option<&HookLogTarget>,
+    event_name: &str,
+    event_id: &str,
+    hook_name: &str,
+    command: &str,
+    task_id: Option<i64>,
+    outcome: &WaitOutcome,
+) {
+    let Some(t) = log_target else {
+        return;
+    };
+    let entry = match outcome {
+        WaitOutcome::Exited {
+            status,
+            stdout,
+            stderr,
+        } if status.success() => HookLogEntry::new("INFO", "hook_ok")
+            .with_event_id(event_id)
+            .with_event(event_name)
+            .with_hook(hook_name)
+            .with_command(command)
+            .with_task_id(task_id)
+            .with_exit_code(status.code())
+            .with_optional_stdout(stdout)
+            .with_optional_stderr(stderr),
+        WaitOutcome::Exited {
+            status,
+            stdout,
+            stderr,
+        } => HookLogEntry::new("WARN", "hook_failed")
+            .with_event_id(event_id)
+            .with_event(event_name)
+            .with_hook(hook_name)
+            .with_command(command)
+            .with_task_id(task_id)
+            .with_exit_code(status.code())
+            .with_optional_stdout(stdout)
+            .with_optional_stderr(stderr),
+        WaitOutcome::Timeout { stdout, stderr } => HookLogEntry::new("WARN", "hook_failed")
+            .with_event_id(event_id)
+            .with_event(event_name)
+            .with_hook(hook_name)
+            .with_command(command)
+            .with_task_id(task_id)
+            .with_message("hook killed: timeout")
+            .with_optional_stdout(stdout)
+            .with_optional_stderr(stderr),
+        WaitOutcome::WaitError(msg) => HookLogEntry::new("ERROR", "hook_error")
+            .with_event_id(event_id)
+            .with_event(event_name)
+            .with_hook(hook_name)
+            .with_command(command)
+            .with_task_id(task_id)
+            .with_message(&format!("hook wait error: {msg}")),
+    };
+    write_hook_log(t, &entry);
+}
+
 /// Run a hook command with the given env map and JSON stdin.
-/// When `sync` is true, wait for the child and return the exit status.
-/// When false, spawn a background thread that logs the outcome and return `None`.
+///
+/// On every invocation emits exactly one Contract #8 business event:
+/// `senko.hook.fired` (success) or `senko.hook.failed` (any of
+/// `failure.reason ∈ { spawn_error, stdin_error, non_zero_exit, timeout, wait_error }`).
+///
+/// When `sync` is true, waits up to `timeout` and returns the exit status
+/// (or `None` if the run failed before producing one). When false, spawns
+/// a worker thread that performs the same wait + emit and immediately
+/// returns `None`. Note that `std::thread::spawn` does not propagate
+/// tokio task-locals (`RESOLVED_USER`, `INBOUND_BAGGAGE`), so async-mode
+/// hook events lose `enduser.*` / `senko.operation.id` auto-attach — to
+/// be revisited in Contract #8 Phase E1 / V1.
 #[allow(clippy::too_many_arguments)]
 fn run_hook_command(
     command: &str,
@@ -367,7 +617,9 @@ fn run_hook_command(
     env_vars: &HashMap<String, String>,
     sync: bool,
     log_target: Option<&HookLogTarget>,
+    timeout: Duration,
 ) -> Option<std::process::ExitStatus> {
+    let start = Instant::now();
     let mut cmd = std::process::Command::new("sh");
     cmd.arg("-c").arg(command);
     for (k, v) in env_vars {
@@ -380,8 +632,8 @@ fn run_hook_command(
     let mut child = match cmd.spawn() {
         Ok(c) => c,
         Err(e) => {
-            let msg = format!("hook spawn error ({}): {}: {:#}", event_name, command, e);
-            eprintln!("{msg}");
+            let err = format!("{e:#}");
+            emit_hook_pre_wait_failure(hook_name, event_name, "spawn_error", start.elapsed(), &err);
             if let Some(t) = log_target {
                 let entry = HookLogEntry::new("ERROR", "hook_error")
                     .with_event_id(event_id)
@@ -389,7 +641,7 @@ fn run_hook_command(
                     .with_hook(hook_name)
                     .with_command(command)
                     .with_task_id(task_id)
-                    .with_message(&msg);
+                    .with_message(&format!("hook spawn error: {err}"));
                 write_hook_log(t, &entry);
             }
             return None;
@@ -399,8 +651,11 @@ fn run_hook_command(
     if let Some(mut stdin) = child.stdin.take()
         && let Err(e) = stdin.write_all(json.as_bytes())
     {
-        let msg = format!("hook stdin error ({}): {}: {:#}", event_name, command, e);
-        eprintln!("{msg}");
+        let err = format!("{e:#}");
+        // Drop the child cleanly so the kernel reaps it.
+        let _ = child.kill();
+        let _ = child.wait();
+        emit_hook_pre_wait_failure(hook_name, event_name, "stdin_error", start.elapsed(), &err);
         if let Some(t) = log_target {
             let entry = HookLogEntry::new("ERROR", "hook_error")
                 .with_event_id(event_id)
@@ -408,36 +663,23 @@ fn run_hook_command(
                 .with_hook(hook_name)
                 .with_command(command)
                 .with_task_id(task_id)
-                .with_message(&msg);
+                .with_message(&format!("hook stdin error: {err}"));
             write_hook_log(t, &entry);
         }
         return None;
     }
 
     if sync {
-        match child.wait_with_output() {
-            Ok(output) => {
-                log_hook_outcome(
-                    log_target, event_name, event_id, hook_name, command, task_id, &output,
-                );
-                Some(output.status)
-            }
-            Err(e) => {
-                let msg = format!("hook wait error ({}): {}: {:#}", event_name, command, e);
-                eprintln!("{msg}");
-                if let Some(t) = log_target {
-                    let entry = HookLogEntry::new("ERROR", "hook_error")
-                        .with_event_id(event_id)
-                        .with_event(event_name)
-                        .with_hook(hook_name)
-                        .with_command(command)
-                        .with_task_id(task_id)
-                        .with_message(&msg);
-                    write_hook_log(t, &entry);
-                }
-                None
-            }
-        }
+        let outcome = wait_with_timeout(child, timeout);
+        let returned = match &outcome {
+            WaitOutcome::Exited { status, .. } => Some(*status),
+            _ => None,
+        };
+        emit_hook_outcome_event(hook_name, event_name, &outcome, start.elapsed());
+        log_hook_outcome_entry(
+            log_target, event_name, event_id, hook_name, command, task_id, &outcome,
+        );
+        returned
     } else {
         let cmd_s = command.to_owned();
         let evt = event_name.to_owned();
@@ -445,76 +687,12 @@ fn run_hook_command(
         let hname = hook_name.to_owned();
         let tid = task_id;
         let log = log_target.cloned();
-        std::thread::spawn(move || match child.wait_with_output() {
-            Ok(output) => {
-                log_hook_outcome(log.as_ref(), &evt, &eid, &hname, &cmd_s, tid, &output);
-            }
-            Err(e) => {
-                let msg = format!("hook wait error ({}): {}: {:#}", evt, cmd_s, e);
-                eprintln!("{msg}");
-                if let Some(ref t) = log {
-                    let entry = HookLogEntry::new("ERROR", "hook_error")
-                        .with_event_id(&eid)
-                        .with_event(&evt)
-                        .with_hook(&hname)
-                        .with_command(&cmd_s)
-                        .with_task_id(tid)
-                        .with_message(&msg);
-                    write_hook_log(t, &entry);
-                }
-            }
+        std::thread::spawn(move || {
+            let outcome = wait_with_timeout(child, timeout);
+            emit_hook_outcome_event(&hname, &evt, &outcome, start.elapsed());
+            log_hook_outcome_entry(log.as_ref(), &evt, &eid, &hname, &cmd_s, tid, &outcome);
         });
         None
-    }
-}
-
-fn log_hook_outcome(
-    log_target: Option<&HookLogTarget>,
-    event_name: &str,
-    event_id: &str,
-    hook_name: &str,
-    command: &str,
-    task_id: Option<i64>,
-    output: &std::process::Output,
-) {
-    if output.status.success() {
-        if let Some(t) = log_target {
-            let entry = HookLogEntry::new("INFO", "hook_ok")
-                .with_event_id(event_id)
-                .with_event(event_name)
-                .with_hook(hook_name)
-                .with_command(command)
-                .with_task_id(task_id)
-                .with_exit_code(output.status.code());
-            write_hook_log(t, &entry);
-        }
-    } else {
-        let msg = format!(
-            "hook failed ({}): {} (exit: {})",
-            event_name,
-            command,
-            output
-                .status
-                .code()
-                .map_or("signal".to_string(), |c| c.to_string())
-        );
-        eprintln!("{msg}");
-        if let Some(t) = log_target {
-            let mut entry = HookLogEntry::new("WARN", "hook_failed")
-                .with_event_id(event_id)
-                .with_event(event_name)
-                .with_hook(hook_name)
-                .with_command(command)
-                .with_task_id(task_id)
-                .with_exit_code(output.status.code());
-            if !output.stdout.is_empty() {
-                entry.stdout = Some(truncate_output(&output.stdout));
-            }
-            if !output.stderr.is_empty() {
-                entry.stderr = Some(truncate_output(&output.stderr));
-            }
-            write_hook_log(t, &entry);
-        }
     }
 }
 
@@ -688,6 +866,7 @@ fn execute_hook_batch(
         };
 
         let sync = hook.mode == HookMode::Sync;
+        let timeout = Duration::from_secs(hook.timeout_secs);
         let status = run_hook_command(
             &hook.command,
             event_name,
@@ -698,38 +877,20 @@ fn execute_hook_batch(
             &env_map,
             sync,
             Some(log_target),
+            timeout,
         );
 
         if sync {
             let failed = status.map(|s| !s.success()).unwrap_or(true);
-            if failed {
-                match hook.on_failure {
-                    OnFailure::Abort => {
-                        if when == HookWhen::Pre {
-                            outcome = FireOutcome::Abort;
-                            tracing::warn!(
-                                hook = %name,
-                                event = %event_name,
-                                "hook failed with on_failure=abort; aborting transition"
-                            );
-                            return outcome;
-                        } else {
-                            tracing::warn!(
-                                hook = %name,
-                                event = %event_name,
-                                "post-hook failed with on_failure=abort (no-op; abort only applies to sync+pre)"
-                            );
-                        }
-                    }
-                    OnFailure::Warn => {
-                        tracing::warn!(
-                            hook = %name,
-                            event = %event_name,
-                            "hook failed (on_failure=warn, continuing)"
-                        );
-                    }
-                    OnFailure::Ignore => {}
-                }
+            if failed && hook.on_failure == OnFailure::Abort && when == HookWhen::Pre {
+                // `senko.hook.failed` is already emitted from `run_hook_command`;
+                // here we only honor the on_failure=abort + sync+pre semantics
+                // by signaling FireOutcome::Abort to the caller. Other branches
+                // (post / on_failure=warn / ignore) used to emit duplicate
+                // `tracing::warn!` lines that were superseded by the new
+                // business event in Contract #8 D1.
+                outcome = FireOutcome::Abort;
+                return outcome;
             }
         }
     }
@@ -1258,6 +1419,7 @@ mod tests {
             env_vars: vec![],
             on_result: None,
             prompt: None,
+            timeout_secs: 30,
         };
         assert!(!hook_applies(&def, HookWhen::Post, None));
 
@@ -1300,6 +1462,7 @@ mod tests {
             }],
             on_result: None,
             prompt: None,
+            timeout_secs: 30,
         };
         let res = resolve_env_vars(&def);
         assert!(matches!(res, Err(ref s) if s == "DEFINITELY_NOT_SET_XYZ_123"));
@@ -1321,6 +1484,7 @@ mod tests {
             }],
             on_result: None,
             prompt: None,
+            timeout_secs: 30,
         };
         // SAFETY: serialized via ENV_MUTEX with other env-touching tests.
         let _guard = ENV_MUTEX.lock().unwrap();
@@ -1350,6 +1514,7 @@ mod tests {
             }],
             on_result: None,
             prompt: None,
+            timeout_secs: 30,
         };
         let _guard = ENV_MUTEX.lock().unwrap();
         unsafe {
@@ -1373,6 +1538,7 @@ mod tests {
                 env_vars: vec![],
                 on_result: None,
                 prompt: None,
+                timeout_secs: 30,
             },
         );
         // Running as CLI — the relay section is mismatched. Warning is emitted
@@ -1394,6 +1560,7 @@ mod tests {
                 env_vars: vec![],
                 on_result: None,
                 prompt: None,
+                timeout_secs: 30,
             },
         );
         // Should not panic even when hook config has warnings / is fine.
@@ -1407,5 +1574,130 @@ mod tests {
         assert!(hooks_for_runtime(&config, &RuntimeMode::Cli).is_empty());
         assert!(hooks_for_runtime(&config, &RuntimeMode::ServerRelay).is_empty());
         assert!(hooks_for_runtime(&config, &RuntimeMode::ServerRemote).is_empty());
+    }
+
+    // --- Contract #8 D1: senko.hook.fired / senko.hook.failed -----------
+
+    use crate::application::telemetry::test_support::{
+        build_capture_provider, capture_layer, lookup_attr,
+    };
+    use opentelemetry::logs::{AnyValue, Severity};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// Helper: run `run_hook_command` under a capture-only subscriber and
+    /// return the emitted business-event LogRecords.
+    fn run_and_capture(
+        command: &str,
+        timeout: Duration,
+    ) -> Vec<opentelemetry_sdk::logs::SdkLogRecord> {
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+        tracing::subscriber::with_default(subscriber, || {
+            run_hook_command(
+                command,
+                "task_complete",
+                "evt-1",
+                "h1",
+                None,
+                "{}",
+                &HashMap::new(),
+                true,
+                None,
+                timeout,
+            );
+        });
+        provider.force_flush().expect("flush ok");
+        exporter
+            .get_emitted_logs()
+            .expect("logs exported")
+            .into_iter()
+            .map(|l| l.record)
+            .collect()
+    }
+
+    #[test]
+    fn run_hook_command_emits_senko_hook_fired_on_success() {
+        let records = run_and_capture("true", Duration::from_secs(5));
+        let fired = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.fired"))
+            .expect("expected senko.hook.fired");
+
+        assert_eq!(
+            lookup_attr(fired, "hook.name"),
+            Some(AnyValue::String("h1".into()))
+        );
+        assert_eq!(
+            lookup_attr(fired, "hook.trigger"),
+            Some(AnyValue::String("task_complete".into()))
+        );
+        assert_eq!(lookup_attr(fired, "exit_status"), Some(AnyValue::Int(0)));
+        assert!(matches!(
+            lookup_attr(fired, "duration_ms"),
+            Some(AnyValue::Int(_))
+        ));
+        assert_eq!(fired.severity_number(), Some(Severity::Info));
+        assert_eq!(fired.target().map(|c| c.as_ref()), Some("senko_business"));
+
+        // No senko.hook.failed alongside senko.hook.fired
+        assert!(
+            records
+                .iter()
+                .all(|r| r.event_name() != Some("senko.hook.failed")),
+            "did not expect senko.hook.failed on success path",
+        );
+    }
+
+    #[test]
+    fn run_hook_command_emits_senko_hook_failed_on_non_zero_exit() {
+        let records = run_and_capture("exit 1", Duration::from_secs(5));
+        let failed = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.failed"))
+            .expect("expected senko.hook.failed");
+
+        assert_eq!(
+            lookup_attr(failed, "failure.reason"),
+            Some(AnyValue::String("non_zero_exit".into()))
+        );
+        assert_eq!(lookup_attr(failed, "exit_status"), Some(AnyValue::Int(1)));
+        assert_eq!(
+            lookup_attr(failed, "hook.trigger"),
+            Some(AnyValue::String("task_complete".into()))
+        );
+        assert_eq!(failed.severity_number(), Some(Severity::Warn));
+
+        // No senko.hook.fired on a failed run
+        assert!(
+            records
+                .iter()
+                .all(|r| r.event_name() != Some("senko.hook.fired")),
+            "did not expect senko.hook.fired on failure path",
+        );
+    }
+
+    #[test]
+    fn run_hook_command_emits_senko_hook_failed_on_timeout() {
+        // 150ms timeout against a `sleep 5` command; child gets killed and
+        // the outcome is surfaced as failure.reason=timeout.
+        let records = run_and_capture("sleep 5", Duration::from_millis(150));
+        let failed = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.failed"))
+            .expect("expected senko.hook.failed");
+
+        assert_eq!(
+            lookup_attr(failed, "failure.reason"),
+            Some(AnyValue::String("timeout".into()))
+        );
+        // Timeout path does not carry exit_status (no exit happened)
+        assert!(lookup_attr(failed, "exit_status").is_none());
+
+        // duration_ms must be ≥ the configured timeout
+        let dur_ms = match lookup_attr(failed, "duration_ms") {
+            Some(AnyValue::Int(v)) => v,
+            other => panic!("expected duration_ms Int, got {other:?}"),
+        };
+        assert!(dur_ms >= 150, "expected duration_ms ≥ 150, got {dur_ms}");
     }
 }

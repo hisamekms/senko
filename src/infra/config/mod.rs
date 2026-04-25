@@ -93,6 +93,12 @@ pub struct HookDef {
     pub on_result: Option<OnResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// Per-hook timeout in seconds. Defaults to 30s. When the child process
+    /// has not exited within this window, `run_hook_command` calls
+    /// `Child::kill()` and emits `senko.hook.failed` with
+    /// `failure.reason = "timeout"`.
+    #[serde(default = "default_hook_timeout_secs")]
+    pub timeout_secs: u64,
 }
 
 /// Map of hook name -> hook definition, used under each action / stage.
@@ -644,6 +650,16 @@ pub struct WorkflowConfig {
 
 fn default_true() -> bool {
     true
+}
+
+/// Default `HookDef.timeout_secs` value: 30 seconds.
+///
+/// Picked so configs that pre-date the field continue to work, while
+/// guaranteeing every hook has a bounded lifetime (Contract #8 D1 added
+/// the timeout machinery; before it `run_hook_command` waited forever).
+/// Hooks that need a longer ceiling can set `timeout_secs` explicitly.
+fn default_hook_timeout_secs() -> u64 {
+    30
 }
 
 impl Default for WorkflowConfig {
@@ -2104,6 +2120,7 @@ mod tests {
                 env_vars: vec![],
                 on_result: None,
                 prompt: None,
+                timeout_secs: 30,
             },
         );
         assert!(!hooks.is_empty());
@@ -2269,6 +2286,7 @@ mod tests {
         assert!(hook.env_vars.is_empty());
         assert!(hook.on_result.is_none());
         assert!(hook.prompt.is_none());
+        assert_eq!(hook.timeout_secs, 30);
     }
 
     #[test]
@@ -2281,6 +2299,7 @@ mod tests {
             enabled = false
             on_result = "none"
             prompt = "Confirm?"
+            timeout_secs = 60
 
             [[env_vars]]
             name = "WEBHOOK_URL"
@@ -2300,6 +2319,7 @@ mod tests {
         assert!(!hook.enabled);
         assert_eq!(hook.on_result, Some(OnResult::None));
         assert_eq!(hook.prompt.as_deref(), Some("Confirm?"));
+        assert_eq!(hook.timeout_secs, 60);
         assert_eq!(hook.env_vars.len(), 2);
         assert_eq!(hook.env_vars[0].name, "WEBHOOK_URL");
         assert!(hook.env_vars[0].required);

@@ -3495,6 +3495,7 @@ mod tests {
                 .collect(),
             on_result: None,
             prompt: None,
+            timeout_secs: 30,
         }
     }
 

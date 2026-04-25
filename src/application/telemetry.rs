@@ -85,6 +85,22 @@ macro_rules! emit_business_event {
             $($fields)*
         );
     };
+    ($otel_event_name:expr, level: WARN $(,)?) => {
+        ::tracing::event!(
+            name: $otel_event_name,
+            target: "senko_business",
+            ::tracing::Level::WARN,
+            {}
+        );
+    };
+    ($otel_event_name:expr, level: WARN, $($fields:tt)*) => {
+        ::tracing::event!(
+            name: $otel_event_name,
+            target: "senko_business",
+            ::tracing::Level::WARN,
+            $($fields)*
+        );
+    };
     ($otel_event_name:expr) => {
         ::tracing::event!(
             name: $otel_event_name,
