@@ -109,6 +109,7 @@ pub enum TaskEvent {
     Created,
     Published,
     Started,
+    Updated { changed_fields: Vec<String> },
     Completed,
     Canceled,
     DependencyAdded { dep_id: TaskId },
@@ -515,171 +516,207 @@ impl Task {
 
     // --- Update methods ---
 
-    pub fn apply_update(mut self, params: &UpdateTaskParams, now: String) -> Self {
-        let mut changed = false;
-        if let Some(ref title) = params.title {
+    pub fn apply_update(
+        mut self,
+        params: &UpdateTaskParams,
+        now: String,
+    ) -> (Task, Vec<TaskEvent>) {
+        let mut changed_fields: Vec<String> = Vec::new();
+        if let Some(ref title) = params.title
+            && self.title != *title
+        {
             self.title = title.clone();
-            changed = true;
+            changed_fields.push("title".to_string());
         }
-        if let Some(ref background) = params.background {
+        if let Some(ref background) = params.background
+            && self.background != *background
+        {
             self.background = background.clone();
-            changed = true;
+            changed_fields.push("background".to_string());
         }
-        if let Some(ref description) = params.description {
+        if let Some(ref description) = params.description
+            && self.description != *description
+        {
             self.description = description.clone();
-            changed = true;
+            changed_fields.push("description".to_string());
         }
-        if let Some(ref plan) = params.plan {
+        if let Some(ref plan) = params.plan
+            && self.plan != *plan
+        {
             self.plan = plan.clone();
-            changed = true;
+            changed_fields.push("plan".to_string());
         }
-        if let Some(priority) = params.priority {
+        if let Some(priority) = params.priority
+            && self.priority != priority
+        {
             self.priority = priority;
-            changed = true;
+            changed_fields.push("priority".to_string());
         }
-        if let Some(ref assignee_session_id) = params.assignee_session_id {
+        if let Some(ref assignee_session_id) = params.assignee_session_id
+            && self.assignee_session_id != *assignee_session_id
+        {
             self.assignee_session_id = assignee_session_id.clone();
-            changed = true;
+            changed_fields.push("assignee_session_id".to_string());
         }
         if let Some(ref assignee_user_id) = params.assignee_user_id {
-            self.assignee_user_id = assignee_user_id.as_ref().map(|a| {
+            let resolved: Option<UserId> = assignee_user_id.as_ref().map(|a| {
                 a.as_id()
                     .expect("AssigneeUserId::SelfUser must be resolved before apply_update")
             });
-            changed = true;
+            if self.assignee_user_id != resolved {
+                self.assignee_user_id = resolved;
+                changed_fields.push("assignee_user_id".to_string());
+            }
         }
-        if let Some(ref started_at) = params.started_at {
+        if let Some(ref started_at) = params.started_at
+            && self.started_at != *started_at
+        {
             self.started_at = started_at.clone();
-            changed = true;
+            changed_fields.push("started_at".to_string());
         }
-        if let Some(ref completed_at) = params.completed_at {
+        if let Some(ref completed_at) = params.completed_at
+            && self.completed_at != *completed_at
+        {
             self.completed_at = completed_at.clone();
-            changed = true;
+            changed_fields.push("completed_at".to_string());
         }
-        if let Some(ref canceled_at) = params.canceled_at {
+        if let Some(ref canceled_at) = params.canceled_at
+            && self.canceled_at != *canceled_at
+        {
             self.canceled_at = canceled_at.clone();
-            changed = true;
+            changed_fields.push("canceled_at".to_string());
         }
-        if let Some(ref cancel_reason) = params.cancel_reason {
+        if let Some(ref cancel_reason) = params.cancel_reason
+            && self.cancel_reason != *cancel_reason
+        {
             self.cancel_reason = cancel_reason.clone();
-            changed = true;
+            changed_fields.push("cancel_reason".to_string());
         }
-        if let Some(ref branch) = params.branch {
+        if let Some(ref branch) = params.branch
+            && self.branch != *branch
+        {
             self.branch = branch.clone();
-            changed = true;
+            changed_fields.push("branch".to_string());
         }
-        if let Some(ref pr_url) = params.pr_url {
+        if let Some(ref pr_url) = params.pr_url
+            && self.pr_url != *pr_url
+        {
             self.pr_url = pr_url.clone();
-            changed = true;
+            changed_fields.push("pr_url".to_string());
         }
-        if let Some(ref contract_id) = params.contract_id {
+        if let Some(ref contract_id) = params.contract_id
+            && self.contract_id != *contract_id
+        {
             self.contract_id = *contract_id;
-            changed = true;
+            changed_fields.push("contract_id".to_string());
         }
         if let Some(ref meta_update) = params.metadata {
-            match meta_update {
-                MetadataUpdate::Clear => {
-                    self.metadata = None;
-                }
+            let new_metadata: Option<serde_json::Value> = match meta_update {
+                MetadataUpdate::Clear => None,
                 MetadataUpdate::Merge(patch) => {
-                    self.metadata = shallow_merge_metadata(self.metadata.as_ref(), patch);
+                    shallow_merge_metadata(self.metadata.as_ref(), patch)
                 }
-                MetadataUpdate::Replace(value) => {
-                    self.metadata = Some(value.clone());
-                }
+                MetadataUpdate::Replace(value) => Some(value.clone()),
+            };
+            if self.metadata != new_metadata {
+                self.metadata = new_metadata;
+                changed_fields.push("metadata".to_string());
             }
-            changed = true;
         }
-        if changed {
+        if changed_fields.is_empty() {
+            (self, vec![])
+        } else {
             self.updated_at = now;
+            (self, vec![TaskEvent::Updated { changed_fields }])
         }
-        self
     }
 
-    pub fn apply_array_update(mut self, params: &UpdateTaskArrayParams, now: String) -> Self {
-        let mut changed = false;
+    pub fn apply_array_update(
+        mut self,
+        params: &UpdateTaskArrayParams,
+        now: String,
+    ) -> (Task, Vec<TaskEvent>) {
+        let mut changed_fields: Vec<String> = Vec::new();
 
         // Tags
+        let prev_tags = self.tags.clone();
         if let Some(ref set_tags) = params.set_tags {
             self.tags = set_tags.clone();
-            changed = true;
         }
-        if !params.add_tags.is_empty() {
-            for tag in &params.add_tags {
-                if !self.tags.contains(tag) {
-                    self.tags.push(tag.clone());
-                }
+        for tag in &params.add_tags {
+            if !self.tags.contains(tag) {
+                self.tags.push(tag.clone());
             }
-            changed = true;
         }
         if !params.remove_tags.is_empty() {
             self.tags.retain(|t| !params.remove_tags.contains(t));
-            changed = true;
+        }
+        if self.tags != prev_tags {
+            changed_fields.push("tags".to_string());
         }
 
         // Definition of Done
+        let prev_dod = self.definition_of_done.clone();
         if let Some(ref set_dod) = params.set_definition_of_done {
             self.definition_of_done = set_dod
                 .iter()
                 .map(|c| DodItem::new(c.clone(), false))
                 .collect();
-            changed = true;
         }
-        if !params.add_definition_of_done.is_empty() {
-            for content in &params.add_definition_of_done {
-                self.definition_of_done
-                    .push(DodItem::new(content.clone(), false));
-            }
-            changed = true;
+        for content in &params.add_definition_of_done {
+            self.definition_of_done
+                .push(DodItem::new(content.clone(), false));
         }
         if !params.remove_definition_of_done.is_empty() {
             self.definition_of_done
                 .retain(|d| !params.remove_definition_of_done.contains(&d.content));
-            changed = true;
+        }
+        if self.definition_of_done != prev_dod {
+            changed_fields.push("definition_of_done".to_string());
         }
 
         // In scope
+        let prev_in_scope = self.in_scope.clone();
         if let Some(ref set_in_scope) = params.set_in_scope {
             self.in_scope = set_in_scope.clone();
-            changed = true;
         }
-        if !params.add_in_scope.is_empty() {
-            for item in &params.add_in_scope {
-                if !self.in_scope.contains(item) {
-                    self.in_scope.push(item.clone());
-                }
+        for item in &params.add_in_scope {
+            if !self.in_scope.contains(item) {
+                self.in_scope.push(item.clone());
             }
-            changed = true;
         }
         if !params.remove_in_scope.is_empty() {
             self.in_scope
                 .retain(|i| !params.remove_in_scope.contains(i));
-            changed = true;
+        }
+        if self.in_scope != prev_in_scope {
+            changed_fields.push("in_scope".to_string());
         }
 
         // Out of scope
+        let prev_out_of_scope = self.out_of_scope.clone();
         if let Some(ref set_out_of_scope) = params.set_out_of_scope {
             self.out_of_scope = set_out_of_scope.clone();
-            changed = true;
         }
-        if !params.add_out_of_scope.is_empty() {
-            for item in &params.add_out_of_scope {
-                if !self.out_of_scope.contains(item) {
-                    self.out_of_scope.push(item.clone());
-                }
+        for item in &params.add_out_of_scope {
+            if !self.out_of_scope.contains(item) {
+                self.out_of_scope.push(item.clone());
             }
-            changed = true;
         }
         if !params.remove_out_of_scope.is_empty() {
             self.out_of_scope
                 .retain(|i| !params.remove_out_of_scope.contains(i));
-            changed = true;
+        }
+        if self.out_of_scope != prev_out_of_scope {
+            changed_fields.push("out_of_scope".to_string());
         }
 
-        if changed {
+        if changed_fields.is_empty() {
+            (self, vec![])
+        } else {
             self.updated_at = now;
+            (self, vec![TaskEvent::Updated { changed_fields }])
         }
-        self
     }
 
     // --- Aggregate methods ---
@@ -1674,8 +1711,14 @@ mod tests {
             metadata: Some(MetadataUpdate::Clear),
             ..default_update_params()
         };
-        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
         assert_eq!(task.metadata(), None);
+        assert_eq!(
+            events,
+            vec![TaskEvent::Updated {
+                changed_fields: vec!["metadata".to_string()]
+            }]
+        );
     }
 
     #[test]
@@ -1687,8 +1730,14 @@ mod tests {
             metadata: Some(MetadataUpdate::Replace(new_meta.clone())),
             ..default_update_params()
         };
-        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
         assert_eq!(task.metadata(), Some(&new_meta));
+        assert_eq!(
+            events,
+            vec![TaskEvent::Updated {
+                changed_fields: vec!["metadata".to_string()]
+            }]
+        );
     }
 
     #[test]
@@ -1699,11 +1748,166 @@ mod tests {
             metadata: Some(MetadataUpdate::Merge(serde_json::json!({"b": 3, "c": 4}))),
             ..default_update_params()
         };
-        let task = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
         assert_eq!(
             task.metadata(),
             Some(&serde_json::json!({"a": 1, "b": 3, "c": 4}))
         );
+        assert_eq!(
+            events,
+            vec![TaskEvent::Updated {
+                changed_fields: vec!["metadata".to_string()]
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_update_emits_updated_with_single_field() {
+        let task = make_task(TaskStatus::Todo);
+        let params = UpdateTaskParams {
+            title: Some("new-title".to_string()),
+            ..default_update_params()
+        };
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.title(), "new-title");
+        assert_eq!(task.updated_at(), "2026-01-02T00:00:00Z");
+        assert_eq!(
+            events,
+            vec![TaskEvent::Updated {
+                changed_fields: vec!["title".to_string()]
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_update_emits_updated_with_multiple_fields() {
+        let task = make_task(TaskStatus::Todo);
+        let params = UpdateTaskParams {
+            title: Some("new-title".to_string()),
+            description: Some(Some("new-desc".to_string())),
+            priority: Some(Priority::P0),
+            ..default_update_params()
+        };
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.title(), "new-title");
+        assert_eq!(task.description(), Some("new-desc"));
+        assert_eq!(task.priority(), Priority::P0);
+        match &events[..] {
+            [TaskEvent::Updated { changed_fields }] => {
+                assert_eq!(changed_fields.len(), 3);
+                assert!(changed_fields.contains(&"title".to_string()));
+                assert!(changed_fields.contains(&"description".to_string()));
+                assert!(changed_fields.contains(&"priority".to_string()));
+            }
+            other => panic!("expected single Updated event, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_update_no_op_returns_empty_events() {
+        // Case 1: all params None
+        let task = make_task(TaskStatus::Todo);
+        let original_updated_at = task.updated_at().to_string();
+        let params = default_update_params();
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert!(events.is_empty());
+        assert_eq!(task.updated_at(), original_updated_at);
+
+        // Case 2: Some(現在値) — values unchanged
+        let task = make_task(TaskStatus::Todo);
+        let original_updated_at = task.updated_at().to_string();
+        let params = UpdateTaskParams {
+            title: Some(task.title().to_string()),
+            priority: Some(task.priority()),
+            description: Some(task.description().map(|s| s.to_string())),
+            ..default_update_params()
+        };
+        let (task, events) = task.apply_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert!(events.is_empty());
+        assert_eq!(task.updated_at(), original_updated_at);
+    }
+
+    fn default_update_array_params() -> UpdateTaskArrayParams {
+        UpdateTaskArrayParams {
+            set_tags: None,
+            add_tags: vec![],
+            remove_tags: vec![],
+            set_definition_of_done: None,
+            add_definition_of_done: vec![],
+            remove_definition_of_done: vec![],
+            set_in_scope: None,
+            add_in_scope: vec![],
+            remove_in_scope: vec![],
+            set_out_of_scope: None,
+            add_out_of_scope: vec![],
+            remove_out_of_scope: vec![],
+        }
+    }
+
+    #[test]
+    fn apply_array_update_emits_updated_with_single_field() {
+        let task = make_task(TaskStatus::Todo);
+        let params = UpdateTaskArrayParams {
+            add_tags: vec!["backend".to_string()],
+            ..default_update_array_params()
+        };
+        let (task, events) = task.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.tags(), &["backend".to_string()]);
+        assert_eq!(
+            events,
+            vec![TaskEvent::Updated {
+                changed_fields: vec!["tags".to_string()]
+            }]
+        );
+    }
+
+    #[test]
+    fn apply_array_update_emits_updated_with_multiple_fields() {
+        let task = make_task(TaskStatus::Todo);
+        let params = UpdateTaskArrayParams {
+            add_tags: vec!["backend".to_string()],
+            add_definition_of_done: vec!["unit test".to_string()],
+            set_in_scope: Some(vec!["domain".to_string()]),
+            ..default_update_array_params()
+        };
+        let (task, events) = task.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert_eq!(task.tags(), &["backend".to_string()]);
+        assert_eq!(task.definition_of_done().len(), 1);
+        assert_eq!(task.in_scope(), &["domain".to_string()]);
+        match &events[..] {
+            [TaskEvent::Updated { changed_fields }] => {
+                assert_eq!(changed_fields.len(), 3);
+                assert!(changed_fields.contains(&"tags".to_string()));
+                assert!(changed_fields.contains(&"definition_of_done".to_string()));
+                assert!(changed_fields.contains(&"in_scope".to_string()));
+            }
+            other => panic!("expected single Updated event, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn apply_array_update_no_op_returns_empty_events() {
+        // Case 1: all params empty / None
+        let task = make_task(TaskStatus::Todo);
+        let original_updated_at = task.updated_at().to_string();
+        let params = default_update_array_params();
+        let (task, events) = task.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert!(events.is_empty());
+        assert_eq!(task.updated_at(), original_updated_at);
+
+        // Case 2: set_tags / add_tags resulting in identical state
+        let mut task = make_task(TaskStatus::Todo);
+        task.tags = vec!["a".to_string(), "b".to_string()];
+        let original_updated_at = task.updated_at().to_string();
+        let params = UpdateTaskArrayParams {
+            set_tags: Some(vec!["a".to_string(), "b".to_string()]),
+            add_tags: vec!["a".to_string()],
+            ..default_update_array_params()
+        };
+        let (task, events) = task.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
+        assert!(events.is_empty());
+        assert_eq!(task.updated_at(), original_updated_at);
+        assert_eq!(task.tags(), &["a".to_string(), "b".to_string()]);
     }
 
     #[test]

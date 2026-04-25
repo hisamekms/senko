@@ -668,6 +668,10 @@ impl TaskOperations for LocalTaskOperations {
             }
             _ => {}
         }
+        let prev = self.backend.get_task(project_id, id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (_aggregate_after, _events) = prev.apply_update(params, now);
+        // _events: TaskEvent::Updated { changed_fields } — emitted as senko.task.updated in B3
         self.backend.update_task(project_id, id, params).await
     }
 
@@ -678,6 +682,10 @@ impl TaskOperations for LocalTaskOperations {
         params: &UpdateTaskArrayParams,
     ) -> Result<()> {
         params.validate()?;
+        let prev = self.backend.get_task(project_id, id).await?;
+        let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+        let (_aggregate_after, _events) = prev.apply_array_update(params, now);
+        // _events: TaskEvent::Updated { changed_fields } — emitted as senko.task.updated in B3
         self.backend
             .update_task_arrays(project_id, id, params)
             .await
