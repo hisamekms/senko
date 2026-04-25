@@ -85,6 +85,6 @@ echo "[8] Server logs do not contain Bearer header value"
 assert_not_contains "$SERVER_LOGS" "Bearer $TEST_TOKEN" "logs: no Bearer token"
 
 echo "[9] Server logs contain expected entries (sanity check)"
-assert_contains "$SERVER_LOGS" "response" "logs: contain response entries"
+assert_contains "$SERVER_LOGS" "http_request" "logs: contain http_request entries"
 
 test_summary
