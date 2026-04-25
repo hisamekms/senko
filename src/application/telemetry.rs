@@ -268,10 +268,33 @@ pub(crate) mod test_support {
     use opentelemetry::logs::AnyValue;
     use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
     use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLogRecord, SdkLoggerProvider};
+    use std::sync::OnceLock;
+
+    /// Permanent second `Dispatch` registered into `tracing-core`'s global
+    /// dispatcher list, kept alive forever by `OnceLock`.
+    ///
+    /// Why: `tracing-core 0.1.x`'s `Dispatchers::rebuilder()` short-circuits to
+    /// `Rebuilder::JustOne` when it observes only one registered dispatcher,
+    /// and `JustOne::for_each` then queries the **calling thread's**
+    /// `dispatcher::get_default()` instead of the actual dispatcher list.
+    /// Concretely: when this test's `set_default(subscriber)` is the only
+    /// active dispatcher and a *different* test thread (with no subscriber)
+    /// triggers a first-time `emit_business_event!` callsite registration,
+    /// the JustOne path reads that thread's `NoSubscriber` and caches
+    /// `Interest::Never` on the static callsite — permanently suppressing the
+    /// emit on this thread too. Holding a second always-live `Dispatch` keeps
+    /// the dispatcher count >= 2 and forces `Rebuilder::Read(vec)`, which
+    /// iterates the real dispatcher list and queries this test's subscriber
+    /// correctly.
+    fn ensure_dispatch_anchor() {
+        static ANCHOR: OnceLock<tracing::Dispatch> = OnceLock::new();
+        ANCHOR.get_or_init(|| tracing::Dispatch::new(tracing_subscriber::Registry::default()));
+    }
 
     /// Build an in-memory logger provider wired with `BusinessAttributesProcessor`
     /// (matches the production order in `bootstrap::build_logger_provider`).
     pub(crate) fn build_capture_provider() -> (InMemoryLogExporter, SdkLoggerProvider) {
+        ensure_dispatch_anchor();
         let exporter = InMemoryLogExporter::default();
         let provider = SdkLoggerProvider::builder()
             .with_log_processor(BusinessAttributesProcessor)
