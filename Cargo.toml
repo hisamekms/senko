@@ -49,6 +49,7 @@ opentelemetry-otlp = { version = "0.31", default-features = false, features = ["
 opentelemetry-stdout = { version = "0.31", features = ["trace", "logs"] }
 opentelemetry-appender-tracing = "0.31"
 tracing-opentelemetry = "0.32"
+lru = "0.12"
 
 [dev-dependencies]
 tempfile = "3"

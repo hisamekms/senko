@@ -13,9 +13,11 @@ use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
 
 mod auth;
+mod relay_auth;
 mod telemetry;
 
 use self::auth::{AuthUser, HasAuth, OptionalAuthUser};
+use self::relay_auth::{HasRelayResolver, RelayEnduserResolver};
 use super::dto::{
     ApiKeyResponse, ApiKeyWithSecretResponse, AuthConfigOidc, AuthConfigResponse,
     CompleteTaskResponse, ConfigResponse, ContractNoteResponse, ContractResponse,
@@ -75,11 +77,21 @@ struct AppState {
     session_config: crate::infra::config::SessionConfig,
     oidc_config: crate::infra::config::OidcConfig,
     trusted_headers_config: crate::infra::config::TrustedHeadersConfig,
+    /// Relay-only: resolves the inbound principal via upstream `/auth/me`
+    /// and scopes it into `RESOLVED_USER`. `None` outside proxy mode.
+    /// See `relay_auth` and Contract #8 / Phase E1.
+    relay_resolver: Option<Arc<RelayEnduserResolver>>,
 }
 
 impl HasAuth for AppState {
     fn auth_mode(&self) -> Option<&AuthMode> {
         self.auth_mode.as_deref()
+    }
+}
+
+impl HasRelayResolver for AppState {
+    fn relay_resolver(&self) -> Option<&Arc<RelayEnduserResolver>> {
+        self.relay_resolver.as_ref()
     }
 }
 
@@ -653,6 +665,7 @@ pub async fn serve(
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
         trusted_headers_config: config.server.auth.trusted_headers.clone(),
+        relay_resolver: None,
     };
 
     start_server(state, config, port, port_is_explicit, telemetry).await
@@ -690,6 +703,16 @@ pub async fn serve_proxy(
     // re-emitted by `HttpClient.propagate`, so the static attrs stay empty.
     let proxy_attrs: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
 
+    let trusted_for_relay = if config.server.auth.trusted_headers.is_configured() {
+        Some(Arc::new(config.server.auth.trusted_headers.clone()))
+    } else {
+        None
+    };
+    let relay_resolver = Some(Arc::new(RelayEnduserResolver::http(
+        remote_url.clone(),
+        trusted_for_relay,
+    )?));
+
     let state = AppState {
         project_root: Arc::new(project_root),
         config_path: config_path.map(Arc::new),
@@ -725,6 +748,7 @@ pub async fn serve_proxy(
         session_config: config.server.auth.oidc.session.clone(),
         oidc_config: config.server.auth.oidc.clone(),
         trusted_headers_config: config.server.auth.trusted_headers.clone(),
+        relay_resolver,
     };
 
     start_server(state, config, port, port_is_explicit, telemetry).await
@@ -886,12 +910,20 @@ async fn start_server(
         .layer(axum::middleware::from_fn(
             self::telemetry::propagate_trace_context,
         ))
+        // Phase E1: relay-side enduser resolver. Calls upstream `/auth/me`
+        // with an LRU + TTL cache. Active only when `state.relay_resolver`
+        // is `Some(_)` (= `serve_proxy`); no-op otherwise.
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            self::relay_auth::relay_resolve_enduser_middleware::<AppState>,
+        ))
         // Outermost layer: resolve the inbound principal and scope the
         // `RESOLVED_USER` task-local for the entire request, so
         // `propagate_trace_context` can both stamp `enduser.*` on the
         // `http_request` span and emit `senko.api.call` with the auth
         // context populated. See `auth::resolve_enduser_middleware` and
-        // Contract #8 / Phase C3.
+        // Contract #8 / Phase C3. Active only when `auth_mode` is
+        // `Some(_)`; in proxy mode the relay layer above takes over.
         .layer(axum::middleware::from_fn_with_state(
             state,
             self::auth::resolve_enduser_middleware::<AppState>,
