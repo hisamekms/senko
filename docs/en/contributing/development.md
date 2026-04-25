@@ -81,7 +81,7 @@ Details: [Worktree Workflow](worktree.md).
 
 ```bash
 mise test           # unit + doc tests
-mise test-e2e       # end-to-end (bash scripts)
+mise run e2e        # end-to-end (bash scripts)
 ```
 
 Details: [Testing](testing.md).

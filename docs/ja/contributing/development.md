@@ -81,7 +81,7 @@ cd worktrees/my-feature
 
 ```bash
 mise test           # unit + doc test
-mise test-e2e       # end-to-end (bash スクリプト)
+mise run e2e        # end-to-end (bash スクリプト)
 ```
 
 詳細: [テスト](testing.md)

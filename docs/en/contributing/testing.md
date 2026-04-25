@@ -9,7 +9,7 @@ senko has two layers of tests:
 
 ```bash
 mise test          # unit + doc tests
-mise test-e2e      # end-to-end
+mise run e2e       # end-to-end
 ```
 
 > **Rule**: don't use `cargo test` / `bash tests/e2e/run.sh` directly — always go through the `mise` tasks. mise sets up env vars, the embedded PostgreSQL, etc.
@@ -21,7 +21,7 @@ mise tasks forward extra args:
 ```bash
 mise test task::tests::                    # a specific module
 mise test -- --nocapture                   # show println! output
-mise test-e2e test_contract_crud.sh        # a single e2e file
+mise run e2e:sqlite -- --fast              # skip watch_* tests for a faster run
 ```
 
 ## Writing Unit Tests
@@ -84,18 +84,19 @@ assert_json "$out" '.[] | select(.title=="hello")'
 ### E2E against PostgreSQL
 
 ```bash
-mise test-e2e -- --postgres    # runs tests against an embedded Postgres
+mise run e2e:postgres          # runs the suite against an embedded Postgres only
 ```
 
 `postgresql_embedded` dev-dependency downloads a JVM and spins up a temporary Postgres. Slow — use selectively locally.
 
 ### E2E against the HTTP backend
 
-```bash
-# test_http_* launches serve internally and drives the CLI over HTTP
-mise test-e2e test_http_backend.sh
-mise test-e2e test_serve_api.sh
-mise test-e2e test_http_hooks.sh
+These tests launch `serve` internally and drive the CLI over HTTP. They are part of the regular `mise run e2e` run:
+
+```
+test_http_backend.sh
+test_serve_api.sh
+test_http_hooks.sh
 ```
 
 ### Auth-related E2E
@@ -115,7 +116,7 @@ GitHub Actions runs:
 - `cargo fmt --check`
 - `cargo clippy --all-features --all-targets -- -D warnings`
 - `cargo test --all-features`
-- `mise test-e2e` (SQLite + HTTP)
+- `mise run e2e` (SQLite + HTTP)
 
 PRs trigger these automatically. Reproduce and fix locally on failure.
 

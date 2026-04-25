@@ -9,7 +9,7 @@ senko は 2 層のテストを持ちます:
 
 ```bash
 mise test          # unit test + doc test
-mise test-e2e      # end-to-end
+mise run e2e       # end-to-end
 ```
 
 > **ルール**: 直接 `cargo test` / `bash tests/e2e/run.sh` を使わず、必ず `mise` タスク経由で。mise が環境変数・PostgreSQL embedded 等をセットアップする。
@@ -21,7 +21,7 @@ mise タスクに追加引数を渡せる:
 ```bash
 mise test task::tests::                    # 特定モジュール
 mise test -- --nocapture                   # println! を出す
-mise test-e2e test_contract_crud.sh        # 個別の e2e ファイル
+mise run e2e:sqlite -- --fast              # watch 系を除外して高速実行
 ```
 
 ## Unit test の書き方
@@ -84,18 +84,19 @@ assert_json "$out" '.[] | select(.title=="hello")'
 ### PostgreSQL を相手にする e2e
 
 ```bash
-mise test-e2e -- --postgres    # postgresql_embedded を使って Postgres 相手にも走る
+mise run e2e:postgres          # postgresql_embedded を使って Postgres 相手だけを走らせる
 ```
 
 `postgresql_embedded` dev-dependency が JVM を落としてきて一時 Postgres を立てます。時間がかかるのでローカルでは選択的に。
 
 ### HTTP backend を相手にする e2e
 
-```bash
-# 個別の test_http_* は内部で serve を起動→CLI から HTTP 経由でアクセス
-mise test-e2e test_http_backend.sh
-mise test-e2e test_serve_api.sh
-mise test-e2e test_http_hooks.sh
+これらのテストは内部で `serve` を起動し、CLI から HTTP 経由でアクセスする。`mise run e2e` の通常実行に含まれる:
+
+```
+test_http_backend.sh
+test_serve_api.sh
+test_http_hooks.sh
 ```
 
 ### 認証系の e2e
@@ -115,7 +116,7 @@ GitHub Actions で:
 - `cargo fmt --check`
 - `cargo clippy --all-features --all-targets -- -D warnings`
 - `cargo test --all-features`
-- `mise test-e2e` (SQLite + HTTP)
+- `mise run e2e` (SQLite + HTTP)
 
 PR を作ると自動実行。失敗した場合はローカルで再現して修正。
 

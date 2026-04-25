@@ -12,7 +12,7 @@ Claude Code で:
 
 skill が自動で以下を実行:
 
-1. `mise test-e2e` を実行
+1. `mise run e2e` を実行
 2. コミット差分からバージョンアップ種別を判定 (patch / minor / major)
 3. `Cargo.toml` の version を更新
 4. `chore: bump version to X.Y.Z` で commit
@@ -25,7 +25,7 @@ push をトリガに `.github/workflows/release.yml` が起動してビルド + 
 
 ```bash
 # 1. e2e が通ることを確認
-mise test-e2e
+mise run e2e
 
 # 2. バージョンを上げる
 vim Cargo.toml     # version = "1.0.0" に更新
@@ -98,7 +98,7 @@ Conventional Commits に寄せると分類が綺麗になります。
 ## リリース前チェックリスト
 
 - [ ] `mise test` 通る
-- [ ] `mise test-e2e` 通る
+- [ ] `mise run e2e` 通る
 - [ ] `cargo clippy --all-features --all-targets -- -D warnings` 通る
 - [ ] `cargo fmt --check` 通る
 - [ ] 破壊的変更がある場合、ドキュメント (特に migration) を更新

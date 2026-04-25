@@ -12,7 +12,7 @@ In Claude Code:
 
 The skill runs:
 
-1. `mise test-e2e`.
+1. `mise run e2e`.
 2. Decide bump type (patch / minor / major) from the commit delta.
 3. Update `Cargo.toml` version.
 4. Commit with `chore: bump version to X.Y.Z`.
@@ -25,7 +25,7 @@ The push triggers `.github/workflows/release.yml`, which builds and publishes th
 
 ```bash
 # 1. Confirm e2e passes
-mise test-e2e
+mise run e2e
 
 # 2. Bump the version
 vim Cargo.toml     # update: version = "1.0.0"
@@ -98,7 +98,7 @@ Following Conventional Commits gives the cleanest categorization.
 ## Pre-Release Checklist
 
 - [ ] `mise test` passes
-- [ ] `mise test-e2e` passes
+- [ ] `mise run e2e` passes
 - [ ] `cargo clippy --all-features --all-targets -- -D warnings` passes
 - [ ] `cargo fmt --check` passes
 - [ ] Update docs (especially migrations) if there are breaking changes
