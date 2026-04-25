@@ -15,7 +15,7 @@
 use std::collections::BTreeMap;
 use std::time::Instant;
 
-use axum::extract::Request;
+use axum::extract::{MatchedPath, Request};
 use axum::http::HeaderMap;
 use axum::middleware::Next;
 use axum::response::Response;
@@ -58,9 +58,16 @@ impl<'a> Extractor for HeaderMapExtractor<'a> {
     }
 }
 
-/// Axum middleware — extract inbound trace context, open a server span, and
-/// promote baggage to span attributes. Replaces the older `tower_http::trace::TraceLayer`:
-/// status + latency are recorded on the span here.
+/// Axum middleware — extract inbound trace context, open a server span,
+/// promote baggage to span attributes, and emit one Contract #8
+/// `senko.api.call` LogRecord per request (200 and 5xx alike). Replaces the
+/// older `tower_http::trace::TraceLayer`: status + latency are recorded on
+/// the span here, and the response/request-failed `tracing` lines have been
+/// folded into the single business event.
+///
+/// `http.route` is the matched axum template (e.g.
+/// `/api/v1/projects/{project_id}/tasks/{id}`), not the raw URI — query
+/// strings are intentionally never recorded.
 pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     let parent_cx = opentelemetry::global::get_text_map_propagator(|propagator| {
         propagator.extract(&HeaderMapExtractor(req.headers()))
@@ -68,12 +75,19 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
 
     let method = req.method().clone();
     let uri = req.uri().clone();
+    let route: String = req
+        .extensions()
+        .get::<MatchedPath>()
+        .map(|mp| mp.as_str().to_string())
+        .unwrap_or_else(|| uri.path().to_string());
+    let project_id = extract_path_param_i64(&route, uri.path(), "project_id");
+
     let span = tracing::info_span!(
         "http_request",
-        otel.name = %format!("{} {}", method, uri.path()),
+        otel.name = %format!("{} {}", method, route),
         otel.kind = "server",
         http.method = %method,
-        http.target = %uri,
+        http.route = %route,
         http.status_code = tracing::field::Empty,
         latency_ms = tracing::field::Empty,
     );
@@ -89,26 +103,59 @@ pub async fn propagate_trace_context(req: Request, next: Next) -> Response {
     let latency = start.elapsed();
 
     let status = response.status();
-    span.record("http.status_code", status.as_u16());
-    span.record("latency_ms", latency.as_millis() as u64);
+    let status_u16 = status.as_u16();
+    let latency_ms = latency.as_millis() as u64;
+    span.record("http.status_code", status_u16);
+    span.record("latency_ms", latency_ms);
 
-    if status.is_server_error() {
-        tracing::error!(
-            parent: &span,
-            status = status.as_u16(),
-            latency_ms = latency.as_millis() as u64,
-            "request failed",
-        );
-    } else {
-        tracing::info!(
-            parent: &span,
-            status = status.as_u16(),
-            latency_ms = latency.as_millis() as u64,
-            "response",
-        );
+    // emit_business_event! expands to `tracing::event!(...);` with a trailing
+    // semicolon, so each match arm must be a block expression (otherwise the
+    // semicolon lands in expression position and triggers `future_incompatible`
+    // / `semicolon_in_expressions_from_macros`).
+    let _enter = span.enter();
+    match project_id {
+        Some(pid) => {
+            crate::emit_business_event!(
+                "senko.api.call",
+                http.method = %method,
+                http.route = %route,
+                http.status_code = status_u16,
+                latency_ms = latency_ms,
+                senko.project.id = pid,
+            );
+        }
+        None => {
+            crate::emit_business_event!(
+                "senko.api.call",
+                http.method = %method,
+                http.route = %route,
+                http.status_code = status_u16,
+                latency_ms = latency_ms,
+            );
+        }
     }
+    drop(_enter);
 
     response
+}
+
+/// Extract a `{name}` path-parameter value from `path` using `template` as
+/// the matching shape. Returns `None` when:
+/// - `template` does not contain a `{name}` segment;
+/// - `template` and `path` segment counts disagree (defensive — should not
+///   happen when both come from the same matched route);
+/// - the captured value does not parse as `i64`.
+///
+/// Used by `propagate_trace_context` to attach `senko.project.id` to
+/// `senko.api.call` records when the route shape includes `{project_id}`.
+fn extract_path_param_i64(template: &str, path: &str, name: &str) -> Option<i64> {
+    let placeholder = format!("{{{name}}}");
+    let template_segs = template.split('/');
+    let path_segs = path.split('/');
+    template_segs
+        .zip(path_segs)
+        .find_map(|(t, p)| (t == placeholder).then_some(p))
+        .and_then(|v| v.parse::<i64>().ok())
 }
 
 /// Normalize inbound baggage with three sequential limits, returning a flat
@@ -810,5 +857,300 @@ mod tests {
             .expect("upstream did not receive a request");
         // NON_ALPHANUMERIC encodes `.` as %2E; BTreeMap sorts keys.
         assert_eq!(forwarded, "run%2Eid=xyz,session%2Eid=abc");
+    }
+
+    // --- senko.api.call LogRecord emission (Contract #8 / C1) ---------------
+
+    use opentelemetry::logs::AnyValue;
+    use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+    use opentelemetry_sdk::logs::{InMemoryLogExporter, SdkLoggerProvider};
+
+    /// Drive the middleware under a tracing subscriber that bridges
+    /// `tracing::event!` calls (including `emit_business_event!`) into an
+    /// in-memory OTel `LogRecord` exporter. Returns every emitted record.
+    ///
+    /// Intentionally does NOT install a global `TextMapPropagator` — these
+    /// tests only assert middleware-emitted `senko.api.call` records and the
+    /// middleware tolerates a noop propagator (empty `parent_cx` ⇒ empty
+    /// inbound baggage). Avoiding the global side effect keeps the test from
+    /// stepping on parallel tests in this file.
+    fn with_log_subscriber<F, Fut>(body: F) -> Vec<opentelemetry_sdk::logs::SdkLogRecord>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _g = tracing::subscriber::set_default(subscriber);
+            body().await;
+        });
+
+        provider.force_flush().ok();
+        exporter
+            .get_emitted_logs()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.record)
+            .collect()
+    }
+
+    fn lookup_log_attr(
+        record: &opentelemetry_sdk::logs::SdkLogRecord,
+        key: &str,
+    ) -> Option<AnyValue> {
+        record
+            .attributes_iter()
+            .find(|(k, _)| k.as_str() == key)
+            .map(|(_, v)| v.clone())
+    }
+
+    fn business_calls(
+        records: &[opentelemetry_sdk::logs::SdkLogRecord],
+    ) -> Vec<&opentelemetry_sdk::logs::SdkLogRecord> {
+        records
+            .iter()
+            .filter(|r| r.event_name() == Some("senko.api.call"))
+            .collect()
+    }
+
+    fn request(uri: &str) -> HttpRequest<Body> {
+        HttpRequest::builder()
+            .uri(uri)
+            .method("GET")
+            .body(Body::empty())
+            .unwrap()
+    }
+
+    #[test]
+    fn emits_senko_api_call_on_success_with_matched_route() {
+        let records = with_log_subscriber(|| async {
+            let app: Router = Router::new()
+                .route(
+                    "/api/v1/projects/{project_id}/tasks/{id}",
+                    get(|| async { StatusCode::OK }),
+                )
+                .layer(from_fn(propagate_trace_context));
+
+            let resp = app
+                .oneshot(request("/api/v1/projects/1/tasks/42?cursor=xyz"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK);
+        });
+
+        let calls = business_calls(&records);
+        assert_eq!(calls.len(), 1, "expected exactly one senko.api.call record");
+        let r = calls[0];
+        assert_eq!(
+            lookup_log_attr(r, "http.method"),
+            Some(AnyValue::String("GET".into()))
+        );
+        assert_eq!(
+            lookup_log_attr(r, "http.route"),
+            Some(AnyValue::String(
+                "/api/v1/projects/{project_id}/tasks/{id}".into()
+            )),
+            "http.route must be the matched template, not the actual path"
+        );
+        assert_eq!(
+            lookup_log_attr(r, "http.status_code"),
+            Some(AnyValue::Int(200))
+        );
+        assert!(
+            matches!(lookup_log_attr(r, "latency_ms"), Some(AnyValue::Int(_))),
+            "latency_ms must be an integer attribute"
+        );
+        assert_eq!(
+            lookup_log_attr(r, "senko.project.id"),
+            Some(AnyValue::Int(1))
+        );
+    }
+
+    #[test]
+    fn emits_senko_api_call_on_5xx() {
+        let records = with_log_subscriber(|| async {
+            let app: Router = Router::new()
+                .route("/boom", get(|| async { StatusCode::INTERNAL_SERVER_ERROR }))
+                .layer(from_fn(propagate_trace_context));
+
+            let resp = app.oneshot(request("/boom")).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        });
+
+        let calls = business_calls(&records);
+        assert_eq!(calls.len(), 1, "5xx must still produce one senko.api.call");
+        assert_eq!(
+            lookup_log_attr(calls[0], "http.status_code"),
+            Some(AnyValue::Int(500))
+        );
+        assert_eq!(
+            lookup_log_attr(calls[0], "http.route"),
+            Some(AnyValue::String("/boom".into()))
+        );
+        // Phase C2 will introduce senko.api.error; it must NOT exist yet.
+        assert!(
+            !records
+                .iter()
+                .any(|r| r.event_name() == Some("senko.api.error")),
+            "C2 has not landed yet; no senko.api.error should be emitted"
+        );
+    }
+
+    #[test]
+    fn http_route_template_strips_query_string() {
+        let records = with_log_subscriber(|| async {
+            let app: Router = Router::new()
+                .route(
+                    "/api/v1/projects/{project_id}/tasks",
+                    get(|| async { StatusCode::OK }),
+                )
+                .layer(from_fn(propagate_trace_context));
+
+            let _ = app
+                .oneshot(request("/api/v1/projects/9/tasks?cursor=secret&limit=5"))
+                .await
+                .unwrap();
+        });
+
+        let r = business_calls(&records)[0];
+        assert_eq!(
+            lookup_log_attr(r, "http.route"),
+            Some(AnyValue::String(
+                "/api/v1/projects/{project_id}/tasks".into()
+            ))
+        );
+        // Defensive: query string substrings must not have leaked into any attr.
+        for (k, v) in r.attributes_iter() {
+            let key = k.as_str();
+            let val = match v {
+                AnyValue::String(s) => s.to_string(),
+                _ => String::new(),
+            };
+            assert!(
+                !key.contains("cursor") && !val.contains("cursor=secret"),
+                "query-string token leaked into telemetry: {key}={val:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn omits_project_id_when_route_lacks_placeholder() {
+        let records = with_log_subscriber(|| async {
+            let app: Router = Router::new()
+                .route("/api/v1/health", get(|| async { StatusCode::OK }))
+                .layer(from_fn(propagate_trace_context));
+
+            let _ = app.oneshot(request("/api/v1/health")).await.unwrap();
+        });
+
+        let r = business_calls(&records)[0];
+        assert!(
+            lookup_log_attr(r, "senko.project.id").is_none(),
+            "senko.project.id must be absent when the route has no {{project_id}}"
+        );
+    }
+
+    #[test]
+    fn falls_back_to_literal_path_when_unmatched() {
+        let records = with_log_subscriber(|| async {
+            let app: Router = Router::new()
+                .route("/known", get(|| async { StatusCode::OK }))
+                .layer(from_fn(propagate_trace_context));
+
+            let resp = app.oneshot(request("/nope?x=1")).await.unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        });
+
+        let r = business_calls(&records)
+            .first()
+            .copied()
+            .expect("senko.api.call still emitted on 404");
+        assert_eq!(
+            lookup_log_attr(r, "http.route"),
+            Some(AnyValue::String("/nope".into())),
+            "no MatchedPath ⇒ literal path (no query string)",
+        );
+        assert_eq!(
+            lookup_log_attr(r, "http.status_code"),
+            Some(AnyValue::Int(404))
+        );
+    }
+
+    #[test]
+    fn http_request_span_uses_http_route_not_target() {
+        let spans = with_test_subscriber(|| async {
+            let app: Router = Router::new()
+                .route(
+                    "/api/v1/projects/{project_id}/tasks",
+                    get(|| async { StatusCode::OK }),
+                )
+                .layer(from_fn(propagate_trace_context));
+
+            let _ = app
+                .oneshot(request("/api/v1/projects/3/tasks?cursor=xyz"))
+                .await
+                .unwrap();
+        });
+
+        let span = spans.into_iter().next().expect("one span");
+        let route = span
+            .attributes
+            .iter()
+            .find(|kv| kv.key.as_str() == "http.route")
+            .expect("http.route must be set on the http_request span");
+        assert_eq!(route.value.as_str(), "/api/v1/projects/{project_id}/tasks");
+        assert!(
+            !span
+                .attributes
+                .iter()
+                .any(|kv| kv.key.as_str() == "http.target"),
+            "http.target must be removed from http_request span attributes"
+        );
+    }
+
+    // --- extract_path_param_i64 unit tests ----------------------------------
+
+    #[test]
+    fn extract_path_param_i64_finds_named_segment() {
+        assert_eq!(
+            extract_path_param_i64(
+                "/api/v1/projects/{project_id}/tasks/{id}",
+                "/api/v1/projects/7/tasks/42",
+                "project_id",
+            ),
+            Some(7),
+        );
+    }
+
+    #[test]
+    fn extract_path_param_i64_returns_none_when_placeholder_missing() {
+        assert_eq!(
+            extract_path_param_i64("/api/v1/health", "/api/v1/health", "project_id"),
+            None,
+        );
+    }
+
+    #[test]
+    fn extract_path_param_i64_returns_none_when_value_not_i64() {
+        assert_eq!(
+            extract_path_param_i64(
+                "/api/v1/projects/{project_id}/tasks",
+                "/api/v1/projects/abc/tasks",
+                "project_id",
+            ),
+            None,
+        );
     }
 }
