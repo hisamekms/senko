@@ -25,7 +25,8 @@ const RESERVED_NAMESPACES: &[&str] = &[
 ];
 
 pub fn is_reserved_namespace(key: &str) -> bool {
-    RESERVED_NAMESPACES.iter().any(|ns| key.starts_with(ns))
+    let lower = key.to_ascii_lowercase();
+    RESERVED_NAMESPACES.iter().any(|ns| lower.starts_with(ns))
 }
 
 /// Parse the OTel `OTEL_RESOURCE_ATTRIBUTES` env-var format:
@@ -164,6 +165,54 @@ mod tests {
         assert!(!is_reserved_namespace("servicefoo")); // no dot
         assert!(!is_reserved_namespace("my.service.name")); // prefix doesn't start at position 0
         assert!(!is_reserved_namespace(""));
+    }
+
+    #[test]
+    fn reserved_namespaces_match_uppercase_variants() {
+        // Each reserved prefix should match regardless of ASCII case so that an
+        // attacker cannot bypass the filter via `Service.name` or `SERVICE.NAME`.
+        for (mixed, upper, lower) in [
+            ("Service.name", "SERVICE.NAME", "service.name"),
+            ("Host.arch", "HOST.ARCH", "host.arch"),
+            ("Os.type", "OS.TYPE", "os.type"),
+            ("Process.pid", "PROCESS.PID", "process.pid"),
+            (
+                "Telemetry.sdk.name",
+                "TELEMETRY.SDK.NAME",
+                "telemetry.sdk.name",
+            ),
+            (
+                "Deployment.environment",
+                "DEPLOYMENT.ENVIRONMENT",
+                "deployment.environment",
+            ),
+            ("Cloud.provider", "CLOUD.PROVIDER", "cloud.provider"),
+            ("K8s.pod.name", "K8S.POD.NAME", "k8s.pod.name"),
+            ("Container.id", "CONTAINER.ID", "container.id"),
+        ] {
+            assert!(is_reserved_namespace(mixed), "expected {mixed} reserved");
+            assert!(is_reserved_namespace(upper), "expected {upper} reserved");
+            assert!(is_reserved_namespace(lower), "expected {lower} reserved");
+        }
+    }
+
+    #[test]
+    fn reserved_namespaces_reject_uppercase_when_prefix_not_at_start() {
+        assert!(!is_reserved_namespace("MyService.name"));
+        assert!(!is_reserved_namespace("MY.SERVICE.NAME"));
+        assert!(!is_reserved_namespace("Servicefoo")); // no dot, mixed case
+    }
+
+    #[test]
+    fn merge_filters_reserved_namespace_from_otel_case_insensitive() {
+        let merged = merge_attributes(
+            pairs(&[]),
+            pairs(&[]),
+            pairs(&[("Service.name", "svc"), ("run.id", "X")]),
+            pairs(&[]),
+        );
+        assert_eq!(merged.get("Service.name"), None);
+        assert_eq!(merged.get("run.id"), Some(&"X".to_string()));
     }
 
     #[test]
