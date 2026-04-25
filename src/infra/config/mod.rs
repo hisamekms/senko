@@ -109,6 +109,8 @@ pub struct TaskActionHooks {
     #[serde(default)]
     pub task_add: ActionConfig,
     #[serde(default)]
+    pub task_update: ActionConfig,
+    #[serde(default)]
     pub task_publish: ActionConfig,
     #[serde(default)]
     pub task_start: ActionConfig,
@@ -124,6 +126,7 @@ impl TaskActionHooks {
     pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
         match action {
             "task_add" => Some(&self.task_add),
+            "task_update" => Some(&self.task_update),
             "task_publish" => Some(&self.task_publish),
             "task_start" => Some(&self.task_start),
             "task_complete" => Some(&self.task_complete),
@@ -135,6 +138,7 @@ impl TaskActionHooks {
 
     pub fn is_empty(&self) -> bool {
         self.task_add.hooks.is_empty()
+            && self.task_update.hooks.is_empty()
             && self.task_publish.hooks.is_empty()
             && self.task_start.hooks.is_empty()
             && self.task_complete.hooks.is_empty()
@@ -181,6 +185,102 @@ impl ContractActionHooks {
             && self.contract_dod_check.hooks.is_empty()
             && self.contract_dod_uncheck.hooks.is_empty()
             && self.contract_note_add.hooks.is_empty()
+    }
+}
+
+/// CLI / server runtimes expose project-aggregate actions for hook config.
+/// Mirrors `TaskActionHooks` but for project / project-member mutations.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProjectActionHooks {
+    #[serde(default)]
+    pub project_create: ActionConfig,
+    #[serde(default)]
+    pub project_update: ActionConfig,
+    #[serde(default)]
+    pub project_member_add: ActionConfig,
+    #[serde(default)]
+    pub project_member_remove: ActionConfig,
+    #[serde(default)]
+    pub project_member_role_change: ActionConfig,
+}
+
+impl ProjectActionHooks {
+    pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
+        match action {
+            "project_create" => Some(&self.project_create),
+            "project_update" => Some(&self.project_update),
+            "project_member_add" => Some(&self.project_member_add),
+            "project_member_remove" => Some(&self.project_member_remove),
+            "project_member_role_change" => Some(&self.project_member_role_change),
+            _ => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.project_create.hooks.is_empty()
+            && self.project_update.hooks.is_empty()
+            && self.project_member_add.hooks.is_empty()
+            && self.project_member_remove.hooks.is_empty()
+            && self.project_member_role_change.hooks.is_empty()
+    }
+}
+
+/// CLI / server runtimes expose user-aggregate actions for hook config.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UserActionHooks {
+    #[serde(default)]
+    pub user_create: ActionConfig,
+    #[serde(default)]
+    pub user_update: ActionConfig,
+    #[serde(default)]
+    pub user_api_key_issue: ActionConfig,
+    #[serde(default)]
+    pub user_api_key_revoke: ActionConfig,
+    #[serde(default)]
+    pub user_session_revoke: ActionConfig,
+}
+
+impl UserActionHooks {
+    pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
+        match action {
+            "user_create" => Some(&self.user_create),
+            "user_update" => Some(&self.user_update),
+            "user_api_key_issue" => Some(&self.user_api_key_issue),
+            "user_api_key_revoke" => Some(&self.user_api_key_revoke),
+            "user_session_revoke" => Some(&self.user_session_revoke),
+            _ => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.user_create.hooks.is_empty()
+            && self.user_update.hooks.is_empty()
+            && self.user_api_key_issue.hooks.is_empty()
+            && self.user_api_key_revoke.hooks.is_empty()
+            && self.user_session_revoke.hooks.is_empty()
+    }
+}
+
+/// CLI / server runtimes expose metadata-field-aggregate actions for hook config.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MetadataFieldActionHooks {
+    #[serde(default)]
+    pub metadata_field_define: ActionConfig,
+    #[serde(default)]
+    pub metadata_field_remove: ActionConfig,
+}
+
+impl MetadataFieldActionHooks {
+    pub fn action_config(&self, action: &str) -> Option<&ActionConfig> {
+        match action {
+            "metadata_field_define" => Some(&self.metadata_field_define),
+            "metadata_field_remove" => Some(&self.metadata_field_remove),
+            _ => None,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.metadata_field_define.hooks.is_empty() && self.metadata_field_remove.hooks.is_empty()
     }
 }
 
@@ -264,6 +364,15 @@ pub struct CliConfig {
     /// Flattened so `[cli.contract_add.hooks.foo]` binds directly.
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    /// Project-aggregate hook definitions for the CLI runtime.
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    /// User-aggregate hook definitions for the CLI runtime.
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    /// Metadata-field-aggregate hook definitions for the CLI runtime.
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 impl Default for CliConfig {
@@ -273,6 +382,9 @@ impl Default for CliConfig {
             remote: CliRemoteConfig::default(),
             hooks: TaskActionHooks::default(),
             contract_hooks: ContractActionHooks::default(),
+            project_hooks: ProjectActionHooks::default(),
+            user_hooks: UserActionHooks::default(),
+            metadata_field_hooks: MetadataFieldActionHooks::default(),
         }
     }
 }
@@ -289,6 +401,15 @@ pub struct ServerRelayConfig {
     /// Contract-aggregate hook definitions for the relay runtime.
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    /// Project-aggregate hook definitions for the relay runtime.
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    /// User-aggregate hook definitions for the relay runtime.
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    /// Metadata-field-aggregate hook definitions for the relay runtime.
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -300,6 +421,15 @@ pub struct ServerRemoteConfig {
     /// Contract-aggregate hook definitions for the direct-server runtime.
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    /// Project-aggregate hook definitions for the direct-server runtime.
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    /// User-aggregate hook definitions for the direct-server runtime.
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    /// Metadata-field-aggregate hook definitions for the direct-server runtime.
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -603,6 +733,12 @@ pub struct RawServerRelayConfig {
     pub hooks: TaskActionHooks,
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -611,6 +747,12 @@ pub struct RawServerRemoteConfig {
     pub hooks: TaskActionHooks,
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -634,6 +776,12 @@ pub struct RawCliConfig {
     pub hooks: TaskActionHooks,
     #[serde(default, flatten)]
     pub contract_hooks: ContractActionHooks,
+    #[serde(default, flatten)]
+    pub project_hooks: ProjectActionHooks,
+    #[serde(default, flatten)]
+    pub user_hooks: UserActionHooks,
+    #[serde(default, flatten)]
+    pub metadata_field_hooks: MetadataFieldActionHooks,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -753,6 +901,18 @@ impl RawConfig {
                         self.server.relay.contract_hooks,
                         overlay.server.relay.contract_hooks,
                     ),
+                    project_hooks: merge_project_action_hooks(
+                        self.server.relay.project_hooks,
+                        overlay.server.relay.project_hooks,
+                    ),
+                    user_hooks: merge_user_action_hooks(
+                        self.server.relay.user_hooks,
+                        overlay.server.relay.user_hooks,
+                    ),
+                    metadata_field_hooks: merge_metadata_field_action_hooks(
+                        self.server.relay.metadata_field_hooks,
+                        overlay.server.relay.metadata_field_hooks,
+                    ),
                 },
                 remote: RawServerRemoteConfig {
                     hooks: merge_task_action_hooks(
@@ -762,6 +922,18 @@ impl RawConfig {
                     contract_hooks: merge_contract_action_hooks(
                         self.server.remote.contract_hooks,
                         overlay.server.remote.contract_hooks,
+                    ),
+                    project_hooks: merge_project_action_hooks(
+                        self.server.remote.project_hooks,
+                        overlay.server.remote.project_hooks,
+                    ),
+                    user_hooks: merge_user_action_hooks(
+                        self.server.remote.user_hooks,
+                        overlay.server.remote.user_hooks,
+                    ),
+                    metadata_field_hooks: merge_metadata_field_action_hooks(
+                        self.server.remote.metadata_field_hooks,
+                        overlay.server.remote.metadata_field_hooks,
                     ),
                 },
                 auth: RawAuthConfig {
@@ -902,6 +1074,15 @@ impl RawConfig {
                     self.cli.contract_hooks,
                     overlay.cli.contract_hooks,
                 ),
+                project_hooks: merge_project_action_hooks(
+                    self.cli.project_hooks,
+                    overlay.cli.project_hooks,
+                ),
+                user_hooks: merge_user_action_hooks(self.cli.user_hooks, overlay.cli.user_hooks),
+                metadata_field_hooks: merge_metadata_field_action_hooks(
+                    self.cli.metadata_field_hooks,
+                    overlay.cli.metadata_field_hooks,
+                ),
             },
             web: RawWebConfig {
                 host: overlay.web.host.or(self.web.host),
@@ -944,10 +1125,16 @@ impl RawConfig {
                     token: self.server.relay.token,
                     hooks: self.server.relay.hooks,
                     contract_hooks: self.server.relay.contract_hooks,
+                    project_hooks: self.server.relay.project_hooks,
+                    user_hooks: self.server.relay.user_hooks,
+                    metadata_field_hooks: self.server.relay.metadata_field_hooks,
                 },
                 remote: ServerRemoteConfig {
                     hooks: self.server.remote.hooks,
                     contract_hooks: self.server.remote.contract_hooks,
+                    project_hooks: self.server.remote.project_hooks,
+                    user_hooks: self.server.remote.user_hooks,
+                    metadata_field_hooks: self.server.remote.metadata_field_hooks,
                 },
                 auth: AuthConfig {
                     api_key: ApiKeyConfig {
@@ -1000,6 +1187,9 @@ impl RawConfig {
                 },
                 hooks: self.cli.hooks,
                 contract_hooks: self.cli.contract_hooks,
+                project_hooks: self.cli.project_hooks,
+                user_hooks: self.cli.user_hooks,
+                metadata_field_hooks: self.cli.metadata_field_hooks,
             },
             web: WebConfig {
                 host: self.web.host,
@@ -1026,21 +1216,23 @@ fn merge_stages(
 
 /// Merge per-action hook maps. For a given action, overlay hook names override
 /// base hook names; hook names unique to either side are preserved.
-fn merge_task_action_hooks(base: TaskActionHooks, overlay: TaskActionHooks) -> TaskActionHooks {
-    fn merge_one(base: ActionConfig, overlay: ActionConfig) -> ActionConfig {
-        let mut hooks = base.hooks;
-        for (name, def) in overlay.hooks {
-            hooks.insert(name, def);
-        }
-        ActionConfig { hooks }
+fn merge_action_config(base: ActionConfig, overlay: ActionConfig) -> ActionConfig {
+    let mut hooks = base.hooks;
+    for (name, def) in overlay.hooks {
+        hooks.insert(name, def);
     }
+    ActionConfig { hooks }
+}
+
+fn merge_task_action_hooks(base: TaskActionHooks, overlay: TaskActionHooks) -> TaskActionHooks {
     TaskActionHooks {
-        task_add: merge_one(base.task_add, overlay.task_add),
-        task_publish: merge_one(base.task_publish, overlay.task_publish),
-        task_start: merge_one(base.task_start, overlay.task_start),
-        task_complete: merge_one(base.task_complete, overlay.task_complete),
-        task_cancel: merge_one(base.task_cancel, overlay.task_cancel),
-        task_select: merge_one(base.task_select, overlay.task_select),
+        task_add: merge_action_config(base.task_add, overlay.task_add),
+        task_update: merge_action_config(base.task_update, overlay.task_update),
+        task_publish: merge_action_config(base.task_publish, overlay.task_publish),
+        task_start: merge_action_config(base.task_start, overlay.task_start),
+        task_complete: merge_action_config(base.task_complete, overlay.task_complete),
+        task_cancel: merge_action_config(base.task_cancel, overlay.task_cancel),
+        task_select: merge_action_config(base.task_select, overlay.task_select),
     }
 }
 
@@ -1048,20 +1240,76 @@ fn merge_contract_action_hooks(
     base: ContractActionHooks,
     overlay: ContractActionHooks,
 ) -> ContractActionHooks {
-    fn merge_one(base: ActionConfig, overlay: ActionConfig) -> ActionConfig {
-        let mut hooks = base.hooks;
-        for (name, def) in overlay.hooks {
-            hooks.insert(name, def);
-        }
-        ActionConfig { hooks }
-    }
     ContractActionHooks {
-        contract_add: merge_one(base.contract_add, overlay.contract_add),
-        contract_edit: merge_one(base.contract_edit, overlay.contract_edit),
-        contract_delete: merge_one(base.contract_delete, overlay.contract_delete),
-        contract_dod_check: merge_one(base.contract_dod_check, overlay.contract_dod_check),
-        contract_dod_uncheck: merge_one(base.contract_dod_uncheck, overlay.contract_dod_uncheck),
-        contract_note_add: merge_one(base.contract_note_add, overlay.contract_note_add),
+        contract_add: merge_action_config(base.contract_add, overlay.contract_add),
+        contract_edit: merge_action_config(base.contract_edit, overlay.contract_edit),
+        contract_delete: merge_action_config(base.contract_delete, overlay.contract_delete),
+        contract_dod_check: merge_action_config(
+            base.contract_dod_check,
+            overlay.contract_dod_check,
+        ),
+        contract_dod_uncheck: merge_action_config(
+            base.contract_dod_uncheck,
+            overlay.contract_dod_uncheck,
+        ),
+        contract_note_add: merge_action_config(base.contract_note_add, overlay.contract_note_add),
+    }
+}
+
+fn merge_project_action_hooks(
+    base: ProjectActionHooks,
+    overlay: ProjectActionHooks,
+) -> ProjectActionHooks {
+    ProjectActionHooks {
+        project_create: merge_action_config(base.project_create, overlay.project_create),
+        project_update: merge_action_config(base.project_update, overlay.project_update),
+        project_member_add: merge_action_config(
+            base.project_member_add,
+            overlay.project_member_add,
+        ),
+        project_member_remove: merge_action_config(
+            base.project_member_remove,
+            overlay.project_member_remove,
+        ),
+        project_member_role_change: merge_action_config(
+            base.project_member_role_change,
+            overlay.project_member_role_change,
+        ),
+    }
+}
+
+fn merge_user_action_hooks(base: UserActionHooks, overlay: UserActionHooks) -> UserActionHooks {
+    UserActionHooks {
+        user_create: merge_action_config(base.user_create, overlay.user_create),
+        user_update: merge_action_config(base.user_update, overlay.user_update),
+        user_api_key_issue: merge_action_config(
+            base.user_api_key_issue,
+            overlay.user_api_key_issue,
+        ),
+        user_api_key_revoke: merge_action_config(
+            base.user_api_key_revoke,
+            overlay.user_api_key_revoke,
+        ),
+        user_session_revoke: merge_action_config(
+            base.user_session_revoke,
+            overlay.user_session_revoke,
+        ),
+    }
+}
+
+fn merge_metadata_field_action_hooks(
+    base: MetadataFieldActionHooks,
+    overlay: MetadataFieldActionHooks,
+) -> MetadataFieldActionHooks {
+    MetadataFieldActionHooks {
+        metadata_field_define: merge_action_config(
+            base.metadata_field_define,
+            overlay.metadata_field_define,
+        ),
+        metadata_field_remove: merge_action_config(
+            base.metadata_field_remove,
+            overlay.metadata_field_remove,
+        ),
     }
 }
 
@@ -1880,6 +2128,132 @@ mod tests {
                 .contract_delete
                 .hooks
                 .contains_key("audit")
+        );
+    }
+
+    #[test]
+    fn project_user_metadata_field_action_hooks_lookup() {
+        // ProjectActionHooks
+        let proj = ProjectActionHooks::default();
+        assert!(proj.is_empty());
+        assert!(proj.action_config("project_create").is_some());
+        assert!(proj.action_config("project_member_role_change").is_some());
+        assert!(proj.action_config("task_add").is_none());
+
+        // UserActionHooks
+        let user = UserActionHooks::default();
+        assert!(user.is_empty());
+        assert!(user.action_config("user_create").is_some());
+        assert!(user.action_config("user_session_revoke").is_some());
+        assert!(user.action_config("project_create").is_none());
+
+        // MetadataFieldActionHooks
+        let mf = MetadataFieldActionHooks::default();
+        assert!(mf.is_empty());
+        assert!(mf.action_config("metadata_field_define").is_some());
+        assert!(mf.action_config("metadata_field_remove").is_some());
+        assert!(mf.action_config("user_create").is_none());
+    }
+
+    #[test]
+    fn cli_project_user_metadata_field_hooks_flatten_toml() {
+        let toml_str = r#"
+            browser = true
+
+            [task_update.hooks.audit_update]
+            command = "logger task-update"
+
+            [project_create.hooks.bootstrap]
+            command = "echo project-created"
+
+            [project_member_role_change.hooks.notify]
+            command = "send-role-change"
+
+            [user_api_key_issue.hooks.security]
+            command = "log-key-issue"
+
+            [user_session_revoke.hooks.audit]
+            command = "log-session-revoke"
+
+            [metadata_field_define.hooks.schema_check]
+            command = "validate-schema"
+        "#;
+        let cli: CliConfig = toml::from_str(toml_str).unwrap();
+        assert!(
+            cli.hooks.task_update.hooks.contains_key("audit_update"),
+            "task_update should bind via flatten on TaskActionHooks"
+        );
+        assert!(
+            cli.project_hooks
+                .project_create
+                .hooks
+                .contains_key("bootstrap")
+        );
+        assert!(
+            cli.project_hooks
+                .project_member_role_change
+                .hooks
+                .contains_key("notify")
+        );
+        assert!(
+            cli.user_hooks
+                .user_api_key_issue
+                .hooks
+                .contains_key("security")
+        );
+        assert!(
+            cli.user_hooks
+                .user_session_revoke
+                .hooks
+                .contains_key("audit")
+        );
+        assert!(
+            cli.metadata_field_hooks
+                .metadata_field_define
+                .hooks
+                .contains_key("schema_check")
+        );
+    }
+
+    #[test]
+    fn server_relay_remote_project_hooks_toml() {
+        let toml_str = r#"
+            host = "127.0.0.1"
+            port = 3142
+
+            [relay.project_create.hooks.notify]
+            command = "echo new-project"
+
+            [remote.user_create.hooks.audit]
+            command = "log-user-create"
+
+            [remote.metadata_field_remove.hooks.cleanup]
+            command = "purge-metadata"
+        "#;
+        let server: ServerConfig = toml::from_str(toml_str).unwrap();
+        assert!(
+            server
+                .relay
+                .project_hooks
+                .project_create
+                .hooks
+                .contains_key("notify")
+        );
+        assert!(
+            server
+                .remote
+                .user_hooks
+                .user_create
+                .hooks
+                .contains_key("audit")
+        );
+        assert!(
+            server
+                .remote
+                .metadata_field_hooks
+                .metadata_field_remove
+                .hooks
+                .contains_key("cleanup")
         );
     }
 

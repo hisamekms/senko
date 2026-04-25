@@ -826,6 +826,12 @@ pub async fn fire(
             // `fire()` is task-scoped; contract triggers must use `fire_contract()`.
             return FireOutcome::Continue;
         }
+        HookTrigger::Project(_) | HookTrigger::User(_) | HookTrigger::MetadataField(_) => {
+            // `fire()` is task-scoped. Project / User / MetadataField triggers
+            // are wired in Phase B3 via their own dispatchers; here we no-op so
+            // accidental task-path calls do not raise an error.
+            return FireOutcome::Continue;
+        }
     };
 
     // Log a single `event_fired` entry even when no hooks match.
