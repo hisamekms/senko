@@ -45,6 +45,21 @@ impl FromStr for MetadataFieldType {
     }
 }
 
+// --- Domain events ---
+
+/// Domain event emitted by MetadataField service mutations.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MetadataFieldEvent {
+    Defined {
+        field_name: String,
+        field_type: MetadataFieldType,
+    },
+    Removed {
+        field_name: String,
+        field_type: MetadataFieldType,
+    },
+}
+
 // --- MetadataField entity ---
 
 /// Maximum length for a metadata field name.
