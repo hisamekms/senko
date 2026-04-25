@@ -26,6 +26,12 @@
 //!   middleware from the W3C `baggage` header; supplies `senko.operation.id`
 //!   and any caller-supplied attributes verbatim (no `baggage.` prefix).
 //!
+//! For emit paths that escape the originating tokio task (notably the
+//! `std::thread::spawn`-backed async hook runner in `infra::hook`), the
+//! processor falls back to thread-locals seeded by [`ForwardedScope`]. The
+//! fallback only fires when the tokio task-local is absent, so in-tokio
+//! emits never double-attach.
+//!
 //! The processor is wired into [`crate::bootstrap::init_telemetry`] **before**
 //! the export processor; tests plug it in the same way. Resource attributes
 //! (`service.name` / `service.version` / `senko.version`) are attached by
@@ -119,6 +125,7 @@ macro_rules! emit_business_event {
     };
 }
 
+use std::cell::RefCell;
 use std::time::Duration;
 
 use opentelemetry::InstrumentationScope;
@@ -146,6 +153,44 @@ tokio::task_local! {
     pub static RESOLVED_USER: ResolvedUser;
 }
 
+thread_local! {
+    /// Per-thread fallback for [`RESOLVED_USER`] used by callers that emit
+    /// from a `std::thread::spawn` worker (where tokio task-locals do not
+    /// propagate). Read by [`BusinessAttributesProcessor`] only when the
+    /// tokio task-local is absent — in-tokio paths keep using the task-local
+    /// and never see this fallback.
+    static FORWARDED_USER: RefCell<Option<ResolvedUser>> = const { RefCell::new(None) };
+
+    /// Companion to [`FORWARDED_USER`] for the `senko.operation.id` baggage
+    /// entry. Other baggage keys (e.g., caller-supplied `aviary.*`) are not
+    /// forwarded — async hooks only need actor identity for audit.
+    static FORWARDED_OPERATION_ID: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// RAII guard that installs forwarded attributes onto the current
+/// thread-local for the duration of its lifetime. Used by `std::thread::spawn`
+/// workers (e.g., async hook execution in `infra::hook`) to make
+/// [`BusinessAttributesProcessor`] enrich emitted records with `enduser.*` /
+/// `senko.operation.id` despite running outside the originating tokio task.
+pub struct ForwardedScope;
+
+impl ForwardedScope {
+    /// Set both forwarded slots and return a guard that clears them on Drop.
+    /// `None` arguments leave the slot empty (no attribute attached).
+    pub fn enter(user: Option<ResolvedUser>, operation_id: Option<String>) -> Self {
+        FORWARDED_USER.with(|c| *c.borrow_mut() = user);
+        FORWARDED_OPERATION_ID.with(|c| *c.borrow_mut() = operation_id);
+        Self
+    }
+}
+
+impl Drop for ForwardedScope {
+    fn drop(&mut self) {
+        FORWARDED_USER.with(|c| c.borrow_mut().take());
+        FORWARDED_OPERATION_ID.with(|c| c.borrow_mut().take());
+    }
+}
+
 /// LogProcessor that enriches Contract #8 business-event records with
 /// per-request common attributes pulled from task-locals.
 ///
@@ -156,6 +201,10 @@ tokio::task_local! {
 ///
 /// Records whose `target` is not `"senko_business"` (i.e. infrastructure
 /// `tracing::info!` / `warn!` calls) pass through untouched.
+///
+/// Lookup order per attribute family is (1) tokio task-local, (2) thread-local
+/// fallback set by [`ForwardedScope`]. Step 2 only fires when step 1 yields
+/// nothing, so in-tokio emits never double-attach.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BusinessAttributesProcessor;
 
@@ -166,16 +215,35 @@ impl LogProcessor for BusinessAttributesProcessor {
             return;
         }
 
-        let _ = RESOLVED_USER.try_with(|u| {
-            record.add_attribute("enduser.id", u.id);
-            record.add_attribute("enduser.name", u.username.clone());
-        });
+        let user_attached = RESOLVED_USER
+            .try_with(|u| {
+                record.add_attribute("enduser.id", u.id);
+                record.add_attribute("enduser.name", u.username.clone());
+            })
+            .is_ok();
+        if !user_attached {
+            FORWARDED_USER.with(|c| {
+                if let Some(u) = c.borrow().as_ref() {
+                    record.add_attribute("enduser.id", u.id);
+                    record.add_attribute("enduser.name", u.username.clone());
+                }
+            });
+        }
 
-        let _ = crate::infra::http::INBOUND_BAGGAGE.try_with(|map| {
-            for (k, v) in map.iter() {
-                record.add_attribute(k.clone(), v.clone());
-            }
-        });
+        let baggage_attached = crate::infra::http::INBOUND_BAGGAGE
+            .try_with(|map| {
+                for (k, v) in map.iter() {
+                    record.add_attribute(k.clone(), v.clone());
+                }
+            })
+            .is_ok();
+        if !baggage_attached {
+            FORWARDED_OPERATION_ID.with(|c| {
+                if let Some(op) = c.borrow().as_ref() {
+                    record.add_attribute("senko.operation.id", op.clone());
+                }
+            });
+        }
     }
 
     fn force_flush(&self) -> OTelSdkResult {

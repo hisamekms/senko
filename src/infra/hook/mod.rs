@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::application::HookTrigger;
 use crate::application::hook_trigger::SelectResult;
 use crate::application::port::HookDataSource;
+use crate::application::telemetry::{ForwardedScope, RESOLVED_USER};
 use crate::domain::contract::Contract;
 use crate::domain::project::ProjectId;
 use crate::domain::task::{self, Task, TaskStatus, UnblockedTask};
@@ -599,13 +600,22 @@ fn log_hook_outcome_entry(
 /// `senko.hook.fired` (success) or `senko.hook.failed` (any of
 /// `failure.reason ∈ { spawn_error, stdin_error, non_zero_exit, timeout, wait_error }`).
 ///
-/// When `sync` is true, waits up to `timeout` and returns the exit status
-/// (or `None` if the run failed before producing one). When false, spawns
-/// a worker thread that performs the same wait + emit and immediately
-/// returns `None`. Note that `std::thread::spawn` does not propagate
-/// tokio task-locals (`RESOLVED_USER`, `INBOUND_BAGGAGE`), so async-mode
-/// hook events lose `enduser.*` / `senko.operation.id` auto-attach — to
-/// be revisited in Contract #8 Phase E1 / V1.
+/// Returns `(exit_status, join_handle)` where:
+/// - `exit_status` is `Some(_)` only when `sync=true` and the child reached
+///   an `Exited` outcome; `None` otherwise (including all failure paths and
+///   every `sync=false` call).
+/// - `join_handle` is `Some(_)` only when `sync=false` and the worker thread
+///   was spawned; production callers drop it (fire-and-forget) while tests
+///   join it to wait for the worker's emit to land.
+///
+/// `std::thread::spawn` does not propagate tokio task-locals
+/// (`RESOLVED_USER`, `INBOUND_BAGGAGE`); the async branch captures them
+/// before spawning and re-establishes them on the worker via
+/// [`ForwardedScope`] so [`crate::application::telemetry::BusinessAttributesProcessor`]
+/// can still attach `enduser.*` / `senko.operation.id`. The current
+/// `tracing::Dispatch` is captured the same way so emits from the worker
+/// reach the configured subscriber (matters for tests using thread-local
+/// `with_default`; production sets a global default).
 #[allow(clippy::too_many_arguments)]
 fn run_hook_command(
     command: &str,
@@ -618,7 +628,10 @@ fn run_hook_command(
     sync: bool,
     log_target: Option<&HookLogTarget>,
     timeout: Duration,
-) -> Option<std::process::ExitStatus> {
+) -> (
+    Option<std::process::ExitStatus>,
+    Option<std::thread::JoinHandle<()>>,
+) {
     let start = Instant::now();
     let mut cmd = std::process::Command::new("sh");
     cmd.arg("-c").arg(command);
@@ -644,7 +657,7 @@ fn run_hook_command(
                     .with_message(&format!("hook spawn error: {err}"));
                 write_hook_log(t, &entry);
             }
-            return None;
+            return (None, None);
         }
     };
 
@@ -666,7 +679,7 @@ fn run_hook_command(
                 .with_message(&format!("hook stdin error: {err}"));
             write_hook_log(t, &entry);
         }
-        return None;
+        return (None, None);
     }
 
     if sync {
@@ -679,20 +692,33 @@ fn run_hook_command(
         log_hook_outcome_entry(
             log_target, event_name, event_id, hook_name, command, task_id, &outcome,
         );
-        returned
+        (returned, None)
     } else {
+        // Capture tokio task-locals + tracing dispatch BEFORE std::thread::spawn —
+        // they don't cross std::thread boundaries (only tokio task boundaries
+        // for task-locals, only the global default for tracing).
+        let forwarded_user = RESOLVED_USER.try_with(|u| u.clone()).ok();
+        let forwarded_op = crate::infra::http::INBOUND_BAGGAGE
+            .try_with(|m| m.get("senko.operation.id").cloned())
+            .ok()
+            .flatten();
+        let dispatch = tracing::dispatcher::get_default(|d| d.clone());
+
         let cmd_s = command.to_owned();
         let evt = event_name.to_owned();
         let eid = event_id.to_owned();
         let hname = hook_name.to_owned();
         let tid = task_id;
         let log = log_target.cloned();
-        std::thread::spawn(move || {
-            let outcome = wait_with_timeout(child, timeout);
-            emit_hook_outcome_event(&hname, &evt, &outcome, start.elapsed());
-            log_hook_outcome_entry(log.as_ref(), &evt, &eid, &hname, &cmd_s, tid, &outcome);
+        let handle = std::thread::spawn(move || {
+            let _scope = ForwardedScope::enter(forwarded_user, forwarded_op);
+            tracing::dispatcher::with_default(&dispatch, || {
+                let outcome = wait_with_timeout(child, timeout);
+                emit_hook_outcome_event(&hname, &evt, &outcome, start.elapsed());
+                log_hook_outcome_entry(log.as_ref(), &evt, &eid, &hname, &cmd_s, tid, &outcome);
+            });
         });
-        None
+        (None, Some(handle))
     }
 }
 
@@ -867,7 +893,7 @@ fn execute_hook_batch(
 
         let sync = hook.mode == HookMode::Sync;
         let timeout = Duration::from_secs(hook.timeout_secs);
-        let status = run_hook_command(
+        let (status, _join) = run_hook_command(
             &hook.command,
             event_name,
             envelope_event_id,
@@ -1699,5 +1725,254 @@ mod tests {
             other => panic!("expected duration_ms Int, got {other:?}"),
         };
         assert!(dur_ms >= 150, "expected duration_ms ≥ 150, got {dur_ms}");
+    }
+
+    // --- Contract #8 V1 follow-up #365: async-mode hook task-local forwarding ---
+
+    use crate::application::telemetry::ResolvedUser;
+    use crate::infra::http::INBOUND_BAGGAGE;
+    use std::collections::BTreeMap;
+
+    /// Run `run_hook_command` in async mode (`sync=false`) under optional
+    /// `RESOLVED_USER` / `senko.operation.id` scopes. Joins the worker thread
+    /// so the LogRecord is observable when the helper returns.
+    ///
+    /// The dispatcher is set thread-locally on the calling thread; the
+    /// production async branch captures it via `tracing::dispatcher::get_default`
+    /// and re-establishes it on the worker via `with_default`. Without that
+    /// capture the worker's emit would land on the no-op global dispatcher.
+    fn run_async_and_capture_with_principal(
+        command: &str,
+        timeout: Duration,
+        user: Option<ResolvedUser>,
+        operation_id: Option<String>,
+    ) -> Vec<opentelemetry_sdk::logs::SdkLogRecord> {
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+        let dispatch = tracing::Dispatch::new(subscriber);
+
+        let join_handle = {
+            let _g = tracing::dispatcher::set_default(&dispatch);
+
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            let cmd = command.to_string();
+            rt.block_on(async move {
+                let mut bag = BTreeMap::new();
+                if let Some(op) = operation_id {
+                    bag.insert("senko.operation.id".to_string(), op);
+                }
+                let fut = INBOUND_BAGGAGE.scope(bag, async move {
+                    let (_status, handle) = run_hook_command(
+                        &cmd,
+                        "task_complete",
+                        "evt-1",
+                        "h1",
+                        None,
+                        "{}",
+                        &HashMap::new(),
+                        false,
+                        None,
+                        timeout,
+                    );
+                    handle
+                });
+                match user {
+                    Some(u) => RESOLVED_USER.scope(u, fut).await,
+                    None => fut.await,
+                }
+            })
+        };
+
+        join_handle
+            .expect("async mode returns a JoinHandle")
+            .join()
+            .expect("hook worker thread joined cleanly");
+
+        provider.force_flush().expect("flush ok");
+        exporter
+            .get_emitted_logs()
+            .expect("logs exported")
+            .into_iter()
+            .map(|l| l.record)
+            .collect()
+    }
+
+    fn alice() -> ResolvedUser {
+        ResolvedUser {
+            id: 7,
+            username: "alice".into(),
+        }
+    }
+
+    #[test]
+    fn async_hook_attaches_enduser_and_op_id_on_success() {
+        let records = run_async_and_capture_with_principal(
+            "true",
+            Duration::from_secs(5),
+            Some(alice()),
+            Some("op-async-ok".into()),
+        );
+        let fired = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.fired"))
+            .expect("expected senko.hook.fired");
+
+        assert_eq!(lookup_attr(fired, "enduser.id"), Some(AnyValue::Int(7)));
+        assert_eq!(
+            lookup_attr(fired, "enduser.name"),
+            Some(AnyValue::String("alice".into()))
+        );
+        assert_eq!(
+            lookup_attr(fired, "senko.operation.id"),
+            Some(AnyValue::String("op-async-ok".into()))
+        );
+        // Existing event-specific attrs preserved.
+        assert_eq!(lookup_attr(fired, "exit_status"), Some(AnyValue::Int(0)));
+        assert_eq!(
+            lookup_attr(fired, "hook.trigger"),
+            Some(AnyValue::String("task_complete".into()))
+        );
+    }
+
+    #[test]
+    fn async_hook_attaches_enduser_and_op_id_on_non_zero_exit() {
+        let records = run_async_and_capture_with_principal(
+            "exit 1",
+            Duration::from_secs(5),
+            Some(alice()),
+            Some("op-async-fail".into()),
+        );
+        let failed = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.failed"))
+            .expect("expected senko.hook.failed");
+
+        assert_eq!(
+            lookup_attr(failed, "failure.reason"),
+            Some(AnyValue::String("non_zero_exit".into()))
+        );
+        assert_eq!(lookup_attr(failed, "enduser.id"), Some(AnyValue::Int(7)));
+        assert_eq!(
+            lookup_attr(failed, "enduser.name"),
+            Some(AnyValue::String("alice".into()))
+        );
+        assert_eq!(
+            lookup_attr(failed, "senko.operation.id"),
+            Some(AnyValue::String("op-async-fail".into()))
+        );
+    }
+
+    #[test]
+    fn async_hook_attaches_enduser_and_op_id_on_timeout() {
+        let records = run_async_and_capture_with_principal(
+            "sleep 5",
+            Duration::from_millis(150),
+            Some(alice()),
+            Some("op-async-timeout".into()),
+        );
+        let failed = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.failed"))
+            .expect("expected senko.hook.failed");
+
+        assert_eq!(
+            lookup_attr(failed, "failure.reason"),
+            Some(AnyValue::String("timeout".into()))
+        );
+        assert_eq!(lookup_attr(failed, "enduser.id"), Some(AnyValue::Int(7)));
+        assert_eq!(
+            lookup_attr(failed, "enduser.name"),
+            Some(AnyValue::String("alice".into()))
+        );
+        assert_eq!(
+            lookup_attr(failed, "senko.operation.id"),
+            Some(AnyValue::String("op-async-timeout".into()))
+        );
+    }
+
+    #[test]
+    fn async_hook_attaches_no_enduser_when_principal_unset() {
+        // Defensive: when neither RESOLVED_USER nor senko.operation.id is in
+        // scope (e.g., CLI mode), the worker's emit must not synthesise either
+        // attribute. The forwarded thread-locals stay None.
+        let records =
+            run_async_and_capture_with_principal("true", Duration::from_secs(5), None, None);
+        let fired = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.hook.fired"))
+            .expect("expected senko.hook.fired");
+
+        assert!(lookup_attr(fired, "enduser.id").is_none());
+        assert!(lookup_attr(fired, "enduser.name").is_none());
+        assert!(lookup_attr(fired, "senko.operation.id").is_none());
+    }
+
+    /// Re-confirm that the **sync** path (auto-attach via tokio task-local)
+    /// keeps working post-fix. The thread-local fallback is only consulted
+    /// when the tokio task-local is absent, so there must be no double-attach
+    /// or regression here.
+    #[test]
+    fn sync_hook_still_attaches_enduser_and_op_id_via_task_local() {
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let mut bag = BTreeMap::new();
+            bag.insert("senko.operation.id".to_string(), "op-sync".to_string());
+            RESOLVED_USER
+                .scope(
+                    alice(),
+                    INBOUND_BAGGAGE.scope(bag, async {
+                        let _g = tracing::subscriber::set_default(subscriber);
+                        let (_status, _join) = run_hook_command(
+                            "true",
+                            "task_complete",
+                            "evt-1",
+                            "h1",
+                            None,
+                            "{}",
+                            &HashMap::new(),
+                            true,
+                            None,
+                            Duration::from_secs(5),
+                        );
+                    }),
+                )
+                .await;
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        let fired_log = logs
+            .iter()
+            .find(|l| l.record.event_name() == Some("senko.hook.fired"))
+            .expect("expected senko.hook.fired");
+        let fired = &fired_log.record;
+
+        assert_eq!(lookup_attr(fired, "enduser.id"), Some(AnyValue::Int(7)));
+        assert_eq!(
+            lookup_attr(fired, "enduser.name"),
+            Some(AnyValue::String("alice".into()))
+        );
+        assert_eq!(
+            lookup_attr(fired, "senko.operation.id"),
+            Some(AnyValue::String("op-sync".into()))
+        );
+        // Exactly one `enduser.id` attribute — fallback must not double-attach.
+        let dup_count = fired
+            .attributes_iter()
+            .filter(|(k, _)| k.as_str() == "enduser.id")
+            .count();
+        assert_eq!(
+            dup_count, 1,
+            "tokio task-local present → thread-local fallback must NOT also attach"
+        );
     }
 }
