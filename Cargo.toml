@@ -45,7 +45,7 @@ keyring = { version = "3", features = ["linux-native", "apple-native"] }
 open = "5"
 opentelemetry = "0.31"
 opentelemetry_sdk = { version = "0.31", features = ["rt-tokio", "trace", "logs"] }
-opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "http-proto", "trace", "logs"] }
+opentelemetry-otlp = { version = "0.31", default-features = false, features = ["grpc-tonic", "http-proto", "reqwest-client", "trace", "logs"] }
 opentelemetry-stdout = { version = "0.31", features = ["trace", "logs"] }
 opentelemetry-appender-tracing = "0.31"
 tracing-opentelemetry = "0.32"

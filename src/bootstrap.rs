@@ -644,7 +644,9 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
             .with(env_filter)
             .with(fmt_layer)
             .init();
-        tracing::info!("OTEL_SDK_DISABLED=true — OTel exporters skipped");
+        // Boot log uses the same schema even when SDK is fully disabled, so
+        // 372/373 never have to special-case this branch.
+        emit_telemetry_init_log(&SignalStatus::Disabled, &SignalStatus::Disabled);
         return TelemetryGuard {
             tracer_provider: None,
             logger_provider: None,
@@ -653,8 +655,8 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
 
     let resource = build_telemetry_resource();
 
-    let tracer_provider = build_tracer_provider(resource.clone());
-    let logger_provider = build_logger_provider(resource);
+    let traces = build_tracer_provider(resource.clone());
+    let logs = build_logger_provider(resource);
 
     let registry = tracing_subscriber::registry()
         .with(env_filter)
@@ -664,35 +666,37 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
     // `tracing_opentelemetry::layer()` without `with_tracer` installs a noop
     // and costs nothing, but installing a proper tracer lets us skip the layer
     // entirely in `none` mode — cheaper spans on a hot path.
-    match (&tracer_provider, &logger_provider) {
+    match (&traces.provider, &logs.provider) {
         (Some(tp), Some(lp)) => {
             let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
             registry
                 .with(tracing_opentelemetry::layer().with_tracer(tracer))
                 .with(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(lp))
                 .init();
-            tracing::info!("OTel telemetry initialized with traces + logs exporters");
         }
         (Some(tp), None) => {
             let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
             registry
                 .with(tracing_opentelemetry::layer().with_tracer(tracer))
                 .init();
-            tracing::info!("OTel telemetry initialized with traces exporter only");
         }
         (None, Some(lp)) => {
             registry
                 .with(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(lp))
                 .init();
-            tracing::info!("OTel telemetry initialized with logs exporter only");
         }
         (None, None) => {
             registry.init();
-            tracing::info!("OTel telemetry initialized without exporters");
         }
     }
 
-    if let Some(ref tp) = tracer_provider {
+    // Subscriber is now installed — replay any warnings buffered during
+    // provider build, then emit the boot log line.
+    replay_warnings(&traces.warnings);
+    replay_warnings(&logs.warnings);
+    emit_telemetry_init_log(&traces.status, &logs.status);
+
+    if let Some(ref tp) = traces.provider {
         opentelemetry::global::set_tracer_provider(tp.clone());
     }
     // `opentelemetry::global` exposes no logger-provider setter in 0.31; the
@@ -701,8 +705,8 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
     // flush it on shutdown.
 
     TelemetryGuard {
-        tracer_provider,
-        logger_provider,
+        tracer_provider: traces.provider,
+        logger_provider: logs.provider,
     }
 }
 
@@ -767,22 +771,124 @@ fn resolve_otlp_protocol(signal_env: &str) -> Result<OtlpExportProtocol, String>
     }
 }
 
+/// Status emitted in the telemetry boot log for a single signal.
+///
+/// The string fields are pinned to compile-time literals so the boot log JSON
+/// always renders them as scalar strings. See Contract #9 for the schema 372
+/// (e2e OTLP smoke) and 373 (release-skill assertion) parse against.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SignalStatus {
+    Enabled {
+        exporter: &'static str,
+        protocol: &'static str,
+    },
+    Disabled,
+}
+
+/// Diagnostic emitted by `build_*_provider` to be replayed via `tracing::warn!`
+/// **after** the subscriber is initialized. Building a provider before the
+/// subscriber is wired up is required (the subscriber composition depends on
+/// the provider), so warnings emitted during that window must be buffered and
+/// replayed — otherwise they are dropped on the floor (the 0.38.2 regression).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TelemetryWarning {
+    UnknownProtocol { signal: &'static str, value: String },
+    BuildFailed { signal: &'static str, error: String },
+    UnknownExporter { signal: &'static str, value: String },
+}
+
+/// Result of building one of the OTel providers. Warnings are buffered for
+/// post-subscriber-init replay; `status` describes what to put in the boot log.
+struct ProviderBuildOutcome<T> {
+    provider: Option<T>,
+    status: SignalStatus,
+    warnings: Vec<TelemetryWarning>,
+}
+
+fn status_str(s: &SignalStatus) -> &'static str {
+    match s {
+        SignalStatus::Enabled { .. } => "enabled",
+        SignalStatus::Disabled => "disabled",
+    }
+}
+
+fn protocol_str(s: &SignalStatus) -> &'static str {
+    match s {
+        SignalStatus::Enabled { protocol, .. } => protocol,
+        SignalStatus::Disabled => "none",
+    }
+}
+
+fn otlp_protocol_str(p: OtlpExportProtocol) -> &'static str {
+    match p {
+        OtlpExportProtocol::Grpc => "grpc",
+        OtlpExportProtocol::HttpProtobuf => "http/protobuf",
+    }
+}
+
+/// Replay buffered warnings via `tracing::warn!`. Must be called only **after**
+/// the global subscriber has been installed; otherwise the events go nowhere.
+fn replay_warnings(warnings: &[TelemetryWarning]) {
+    for w in warnings {
+        match w {
+            TelemetryWarning::UnknownProtocol { signal, value } => {
+                tracing::warn!(
+                    signal = signal,
+                    value = %value,
+                    "unknown OTEL_EXPORTER_OTLP_(TRACES_|LOGS_)PROTOCOL value; signal disabled",
+                );
+            }
+            TelemetryWarning::BuildFailed { signal, error } => {
+                tracing::warn!(
+                    signal = signal,
+                    error = %error,
+                    "failed to build OTLP exporter; signal disabled",
+                );
+            }
+            TelemetryWarning::UnknownExporter { signal, value } => {
+                tracing::warn!(
+                    signal = signal,
+                    value = %value,
+                    "unknown OTEL_*_EXPORTER value; signal disabled",
+                );
+            }
+        }
+    }
+}
+
+/// Emit the single boot log line pinned by Contract #9. Field values are
+/// always `&'static str` so the JSON renderer outputs scalar strings.
+fn emit_telemetry_init_log(traces: &SignalStatus, logs: &SignalStatus) {
+    tracing::info!(
+        traces.status = status_str(traces),
+        traces.protocol = protocol_str(traces),
+        logs.status = status_str(logs),
+        logs.protocol = protocol_str(logs),
+        "OTel telemetry initialized",
+    );
+}
+
 fn build_tracer_provider(
     resource: opentelemetry_sdk::Resource,
-) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+) -> ProviderBuildOutcome<opentelemetry_sdk::trace::SdkTracerProvider> {
     use opentelemetry_otlp::WithExportConfig;
 
+    let mut warnings = Vec::new();
     let choice = resolve_exporter_choice("OTEL_TRACES_EXPORTER");
     match choice.as_str() {
         "otlp" => {
             let protocol = match resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL") {
                 Ok(p) => p,
                 Err(raw) => {
-                    tracing::warn!(
-                        value = %raw,
-                        "unknown OTEL_EXPORTER_OTLP_(TRACES_)PROTOCOL value; traces disabled",
-                    );
-                    return None;
+                    warnings.push(TelemetryWarning::UnknownProtocol {
+                        signal: "traces",
+                        value: raw,
+                    });
+                    return ProviderBuildOutcome {
+                        provider: None,
+                        status: SignalStatus::Disabled,
+                        warnings,
+                    };
                 }
             };
             let builder = opentelemetry_otlp::SpanExporter::builder();
@@ -794,51 +900,87 @@ fn build_tracer_provider(
                     .build(),
             };
             match result {
-                Ok(exporter) => Some(
-                    opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                Ok(exporter) => {
+                    let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                         .with_batch_exporter(exporter)
                         .with_resource(resource)
-                        .build(),
-                ),
+                        .build();
+                    ProviderBuildOutcome {
+                        provider: Some(provider),
+                        status: SignalStatus::Enabled {
+                            exporter: "otlp",
+                            protocol: otlp_protocol_str(protocol),
+                        },
+                        warnings,
+                    }
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, "failed to build OTLP span exporter; traces disabled");
-                    None
+                    warnings.push(TelemetryWarning::BuildFailed {
+                        signal: "traces",
+                        error: e.to_string(),
+                    });
+                    ProviderBuildOutcome {
+                        provider: None,
+                        status: SignalStatus::Disabled,
+                        warnings,
+                    }
                 }
             }
         }
-        "console" => Some(
-            opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        "console" => {
+            let provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
                 .with_resource(resource)
-                .build(),
-        ),
-        "none" => None,
+                .build();
+            ProviderBuildOutcome {
+                provider: Some(provider),
+                status: SignalStatus::Enabled {
+                    exporter: "console",
+                    protocol: "console",
+                },
+                warnings,
+            }
+        }
+        "none" => ProviderBuildOutcome {
+            provider: None,
+            status: SignalStatus::Disabled,
+            warnings,
+        },
         other => {
-            tracing::warn!(
-                value = %other,
-                "unknown OTEL_TRACES_EXPORTER value; traces disabled",
-            );
-            None
+            warnings.push(TelemetryWarning::UnknownExporter {
+                signal: "traces",
+                value: other.to_string(),
+            });
+            ProviderBuildOutcome {
+                provider: None,
+                status: SignalStatus::Disabled,
+                warnings,
+            }
         }
     }
 }
 
 fn build_logger_provider(
     resource: opentelemetry_sdk::Resource,
-) -> Option<opentelemetry_sdk::logs::SdkLoggerProvider> {
+) -> ProviderBuildOutcome<opentelemetry_sdk::logs::SdkLoggerProvider> {
     use opentelemetry_otlp::WithExportConfig;
 
+    let mut warnings = Vec::new();
     let choice = resolve_exporter_choice("OTEL_LOGS_EXPORTER");
     match choice.as_str() {
         "otlp" => {
             let protocol = match resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL") {
                 Ok(p) => p,
                 Err(raw) => {
-                    tracing::warn!(
-                        value = %raw,
-                        "unknown OTEL_EXPORTER_OTLP_(LOGS_)PROTOCOL value; OTel logs disabled",
-                    );
-                    return None;
+                    warnings.push(TelemetryWarning::UnknownProtocol {
+                        signal: "logs",
+                        value: raw,
+                    });
+                    return ProviderBuildOutcome {
+                        provider: None,
+                        status: SignalStatus::Disabled,
+                        warnings,
+                    };
                 }
             };
             let builder = opentelemetry_otlp::LogExporter::builder();
@@ -850,35 +992,66 @@ fn build_logger_provider(
                     .build(),
             };
             match result {
-                Ok(exporter) => Some(
-                    opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                Ok(exporter) => {
+                    let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                         .with_log_processor(
                             crate::application::telemetry::BusinessAttributesProcessor,
                         )
                         .with_batch_exporter(exporter)
                         .with_resource(resource)
-                        .build(),
-                ),
+                        .build();
+                    ProviderBuildOutcome {
+                        provider: Some(provider),
+                        status: SignalStatus::Enabled {
+                            exporter: "otlp",
+                            protocol: otlp_protocol_str(protocol),
+                        },
+                        warnings,
+                    }
+                }
                 Err(e) => {
-                    tracing::warn!(error = %e, "failed to build OTLP log exporter; OTel logs disabled");
-                    None
+                    warnings.push(TelemetryWarning::BuildFailed {
+                        signal: "logs",
+                        error: e.to_string(),
+                    });
+                    ProviderBuildOutcome {
+                        provider: None,
+                        status: SignalStatus::Disabled,
+                        warnings,
+                    }
                 }
             }
         }
-        "console" => Some(
-            opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+        "console" => {
+            let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                 .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
                 .with_simple_exporter(opentelemetry_stdout::LogExporter::default())
                 .with_resource(resource)
-                .build(),
-        ),
-        "none" => None,
+                .build();
+            ProviderBuildOutcome {
+                provider: Some(provider),
+                status: SignalStatus::Enabled {
+                    exporter: "console",
+                    protocol: "console",
+                },
+                warnings,
+            }
+        }
+        "none" => ProviderBuildOutcome {
+            provider: None,
+            status: SignalStatus::Disabled,
+            warnings,
+        },
         other => {
-            tracing::warn!(
-                value = %other,
-                "unknown OTEL_LOGS_EXPORTER value; OTel logs disabled",
-            );
-            None
+            warnings.push(TelemetryWarning::UnknownExporter {
+                signal: "logs",
+                value: other.to_string(),
+            });
+            ProviderBuildOutcome {
+                provider: None,
+                status: SignalStatus::Disabled,
+                warnings,
+            }
         }
     }
 }
@@ -1774,5 +1947,195 @@ name = "project-local"
             Ok(OtlpExportProtocol::HttpProtobuf),
         );
         clear_otlp_protocol_env();
+    }
+
+    // --- Contract #9 / 0.38.2 OTel regression guards -----------------------
+
+    /// Clear the env vars touched by `build_*_provider`. Callers MUST be
+    /// `#[serial]`.
+    fn clear_otel_exporter_env() {
+        // SAFETY: callers are marked #[serial].
+        unsafe {
+            std::env::remove_var("OTEL_TRACES_EXPORTER");
+            std::env::remove_var("OTEL_LOGS_EXPORTER");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_PROTOCOL");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_ENDPOINT");
+        }
+    }
+
+    /// In-memory `MakeWriter` so tests can capture what `fmt::layer().json()`
+    /// would have written to stdout, then `serde_json::from_slice` it. This
+    /// is the same code path operators see when running with
+    /// `SENKO_LOG_FORMAT=json`, which is what 372 / 373 grep against.
+    #[derive(Clone)]
+    struct SharedBuf(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl SharedBuf {
+        fn new() -> Self {
+            Self(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+        }
+        fn json_lines(&self) -> Vec<serde_json::Value> {
+            let raw = self.0.lock().unwrap().clone();
+            String::from_utf8(raw)
+                .unwrap()
+                .lines()
+                .filter(|l| !l.is_empty())
+                .map(|l| serde_json::from_str(l).expect("valid JSON line"))
+                .collect()
+        }
+    }
+
+    impl std::io::Write for SharedBuf {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedBuf {
+        type Writer = SharedBuf;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    fn capture_json<F: FnOnce()>(f: F) -> Vec<serde_json::Value> {
+        let buf = SharedBuf::new();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(buf.clone()),
+        );
+        tracing::subscriber::with_default(subscriber, f);
+        buf.json_lines()
+    }
+
+    // 5a. Feature-gap guards. These compile and pass only when
+    // `opentelemetry-otlp/reqwest-client` is enabled in Cargo.toml; remove
+    // that feature and the `.build()` call returns `Err(NoHttpClient)`,
+    // turning the test red. This is the structural guarantee that the 0.38.2
+    // regression cannot recur silently.
+
+    #[test]
+    #[serial]
+    fn log_exporter_builds_with_http_protobuf() {
+        use opentelemetry_otlp::WithExportConfig;
+        let result = opentelemetry_otlp::LogExporter::builder()
+            .with_http()
+            .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
+            .build();
+        assert!(
+            result.is_ok(),
+            "LogExporter::builder().with_http().build() must succeed when reqwest-client is enabled; got {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn span_exporter_builds_with_http_protobuf() {
+        use opentelemetry_otlp::WithExportConfig;
+        let result = opentelemetry_otlp::SpanExporter::builder()
+            .with_http()
+            .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
+            .build();
+        assert!(
+            result.is_ok(),
+            "SpanExporter::builder().with_http().build() must succeed when reqwest-client is enabled; got {:?}",
+            result.err()
+        );
+    }
+
+    // 5b. Warn replay: provider build buffers a structured warning, and
+    // `replay_warnings` emits it via `tracing::warn!` AFTER subscriber init.
+
+    #[test]
+    #[serial]
+    fn build_logger_provider_buffers_unknown_protocol_warning() {
+        clear_otel_exporter_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_LOGS_EXPORTER", "otlp");
+            std::env::set_var("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "tcp");
+        }
+        let outcome = build_logger_provider(build_telemetry_resource());
+        clear_otel_exporter_env();
+
+        assert!(outcome.provider.is_none());
+        assert_eq!(outcome.status, SignalStatus::Disabled);
+        assert_eq!(
+            outcome.warnings,
+            vec![TelemetryWarning::UnknownProtocol {
+                signal: "logs",
+                value: "tcp".to_string(),
+            }],
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn replay_warnings_emits_warn_event_with_signal_field() {
+        let warnings = vec![TelemetryWarning::UnknownProtocol {
+            signal: "logs",
+            value: "tcp".to_string(),
+        }];
+        let lines = capture_json(|| replay_warnings(&warnings));
+
+        assert_eq!(lines.len(), 1, "expected exactly one tracing::warn! event");
+        let evt = &lines[0];
+        assert_eq!(evt["level"], "WARN");
+        assert_eq!(evt["fields"]["signal"], "logs");
+        assert_eq!(evt["fields"]["value"], "tcp");
+    }
+
+    // 5c. Boot log schema. Pinned by Contract #9 — 372 (e2e OTLP smoke) and
+    // 373 (release-skill assertion) both jq the JSON output for these exact
+    // dotted field names with literal string values. This test fails the
+    // moment anyone changes the message text, renames a field, or lets enum
+    // Debug expansion leak into the boot log.
+
+    #[test]
+    #[serial]
+    fn boot_log_schema_emits_string_literals_when_enabled() {
+        let lines = capture_json(|| {
+            emit_telemetry_init_log(
+                &SignalStatus::Enabled {
+                    exporter: "otlp",
+                    protocol: "http/protobuf",
+                },
+                &SignalStatus::Enabled {
+                    exporter: "otlp",
+                    protocol: "grpc",
+                },
+            );
+        });
+        assert_eq!(lines.len(), 1);
+        let evt = &lines[0];
+        assert_eq!(evt["level"], "INFO");
+        assert_eq!(evt["fields"]["message"], "OTel telemetry initialized");
+        assert_eq!(evt["fields"]["traces.status"], "enabled");
+        assert_eq!(evt["fields"]["traces.protocol"], "http/protobuf");
+        assert_eq!(evt["fields"]["logs.status"], "enabled");
+        assert_eq!(evt["fields"]["logs.protocol"], "grpc");
+    }
+
+    #[test]
+    #[serial]
+    fn boot_log_schema_emits_disabled_literals_when_disabled() {
+        let lines = capture_json(|| {
+            emit_telemetry_init_log(&SignalStatus::Disabled, &SignalStatus::Disabled);
+        });
+        assert_eq!(lines.len(), 1);
+        let evt = &lines[0];
+        assert_eq!(evt["fields"]["message"], "OTel telemetry initialized");
+        assert_eq!(evt["fields"]["traces.status"], "disabled");
+        assert_eq!(evt["fields"]["traces.protocol"], "none");
+        assert_eq!(evt["fields"]["logs.status"], "disabled");
+        assert_eq!(evt["fields"]["logs.protocol"], "none");
     }
 }
