@@ -611,6 +611,12 @@ pub(crate) fn build_telemetry_resource() -> opentelemetry_sdk::Resource {
 ///   `tracing_subscriber::fmt` logger still runs so local debugging works.
 /// - `OTEL_TRACES_EXPORTER` (default `otlp`): `otlp`, `console`, `none`.
 /// - `OTEL_LOGS_EXPORTER` (default `otlp`): same values.
+/// - `OTEL_EXPORTER_OTLP_PROTOCOL` (default `grpc`): `grpc` or `http/protobuf`.
+///   Per-signal overrides `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` /
+///   `OTEL_EXPORTER_OTLP_LOGS_PROTOCOL` take precedence over the global value.
+///   Senko intentionally keeps `grpc` as the default for back-compat (the OTel
+///   spec default of `http/protobuf` is NOT followed). `http/json` is not
+///   supported; any other value logs a warning and disables that signal.
 /// - `OTEL_EXPORTER_OTLP_ENDPOINT`, `OTEL_SERVICE_NAME`,
 ///   `OTEL_RESOURCE_ATTRIBUTES` — read by the OTel SDK directly.
 ///
@@ -725,26 +731,81 @@ fn resolve_exporter_choice(exporter_env: &str) -> String {
     "none".to_string()
 }
 
+/// OTLP transport protocol senko supports. `http/json` is intentionally
+/// excluded — see [`init_telemetry`] doc and task #370 DoD.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OtlpExportProtocol {
+    Grpc,
+    HttpProtobuf,
+}
+
+/// Resolve the OTLP transport protocol for a given signal.
+///
+/// Lookup order (first non-empty wins):
+/// 1. `signal_env` (e.g. `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL`)
+/// 2. `OTEL_EXPORTER_OTLP_PROTOCOL`
+/// 3. default → [`OtlpExportProtocol::Grpc`]
+///
+/// Senko keeps `Grpc` as the default for back-compat with 0.38.1 and earlier;
+/// the OTel-spec default of `http/protobuf` is intentionally NOT followed.
+/// `Err(raw)` carries the unrecognized value so the caller can warn-and-disable
+/// the signal — there is no silent fallback to gRPC.
+fn resolve_otlp_protocol(signal_env: &str) -> Result<OtlpExportProtocol, String> {
+    let raw = std::env::var(signal_env)
+        .ok()
+        .filter(|v| !v.is_empty())
+        .or_else(|| {
+            std::env::var("OTEL_EXPORTER_OTLP_PROTOCOL")
+                .ok()
+                .filter(|v| !v.is_empty())
+        });
+    match raw.as_deref() {
+        None => Ok(OtlpExportProtocol::Grpc),
+        Some("grpc") => Ok(OtlpExportProtocol::Grpc),
+        Some("http/protobuf") => Ok(OtlpExportProtocol::HttpProtobuf),
+        Some(other) => Err(other.to_string()),
+    }
+}
+
 fn build_tracer_provider(
     resource: opentelemetry_sdk::Resource,
 ) -> Option<opentelemetry_sdk::trace::SdkTracerProvider> {
+    use opentelemetry_otlp::WithExportConfig;
+
     let choice = resolve_exporter_choice("OTEL_TRACES_EXPORTER");
     match choice.as_str() {
-        "otlp" => match opentelemetry_otlp::SpanExporter::builder()
-            .with_tonic()
-            .build()
-        {
-            Ok(exporter) => Some(
-                opentelemetry_sdk::trace::SdkTracerProvider::builder()
-                    .with_batch_exporter(exporter)
-                    .with_resource(resource)
+        "otlp" => {
+            let protocol = match resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL") {
+                Ok(p) => p,
+                Err(raw) => {
+                    tracing::warn!(
+                        value = %raw,
+                        "unknown OTEL_EXPORTER_OTLP_(TRACES_)PROTOCOL value; traces disabled",
+                    );
+                    return None;
+                }
+            };
+            let builder = opentelemetry_otlp::SpanExporter::builder();
+            let result = match protocol {
+                OtlpExportProtocol::Grpc => builder.with_tonic().build(),
+                OtlpExportProtocol::HttpProtobuf => builder
+                    .with_http()
+                    .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
                     .build(),
-            ),
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to build OTLP span exporter; traces disabled");
-                None
+            };
+            match result {
+                Ok(exporter) => Some(
+                    opentelemetry_sdk::trace::SdkTracerProvider::builder()
+                        .with_batch_exporter(exporter)
+                        .with_resource(resource)
+                        .build(),
+                ),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to build OTLP span exporter; traces disabled");
+                    None
+                }
             }
-        },
+        }
         "console" => Some(
             opentelemetry_sdk::trace::SdkTracerProvider::builder()
                 .with_simple_exporter(opentelemetry_stdout::SpanExporter::default())
@@ -765,24 +826,45 @@ fn build_tracer_provider(
 fn build_logger_provider(
     resource: opentelemetry_sdk::Resource,
 ) -> Option<opentelemetry_sdk::logs::SdkLoggerProvider> {
+    use opentelemetry_otlp::WithExportConfig;
+
     let choice = resolve_exporter_choice("OTEL_LOGS_EXPORTER");
     match choice.as_str() {
-        "otlp" => match opentelemetry_otlp::LogExporter::builder()
-            .with_tonic()
-            .build()
-        {
-            Ok(exporter) => Some(
-                opentelemetry_sdk::logs::SdkLoggerProvider::builder()
-                    .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
-                    .with_batch_exporter(exporter)
-                    .with_resource(resource)
+        "otlp" => {
+            let protocol = match resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL") {
+                Ok(p) => p,
+                Err(raw) => {
+                    tracing::warn!(
+                        value = %raw,
+                        "unknown OTEL_EXPORTER_OTLP_(LOGS_)PROTOCOL value; OTel logs disabled",
+                    );
+                    return None;
+                }
+            };
+            let builder = opentelemetry_otlp::LogExporter::builder();
+            let result = match protocol {
+                OtlpExportProtocol::Grpc => builder.with_tonic().build(),
+                OtlpExportProtocol::HttpProtobuf => builder
+                    .with_http()
+                    .with_protocol(opentelemetry_otlp::Protocol::HttpBinary)
                     .build(),
-            ),
-            Err(e) => {
-                tracing::warn!(error = %e, "failed to build OTLP log exporter; OTel logs disabled");
-                None
+            };
+            match result {
+                Ok(exporter) => Some(
+                    opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                        .with_log_processor(
+                            crate::application::telemetry::BusinessAttributesProcessor,
+                        )
+                        .with_batch_exporter(exporter)
+                        .with_resource(resource)
+                        .build(),
+                ),
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to build OTLP log exporter; OTel logs disabled");
+                    None
+                }
             }
-        },
+        }
         "console" => Some(
             opentelemetry_sdk::logs::SdkLoggerProvider::builder()
                 .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
@@ -1534,5 +1616,163 @@ name = "project-local"
             Some(env!("CARGO_PKG_VERSION")),
         );
         clear_trace_env();
+    }
+
+    // --- resolve_otlp_protocol ---
+
+    /// Clear every OTLP protocol env var the resolver looks at. Callers MUST
+    /// be `#[serial]`.
+    fn clear_otlp_protocol_env() {
+        // SAFETY: callers are marked #[serial].
+        unsafe {
+            std::env::remove_var("OTEL_EXPORTER_OTLP_PROTOCOL");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL");
+            std::env::remove_var("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_default_when_unset() {
+        clear_otlp_protocol_env();
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_grpc_value() {
+        clear_otlp_protocol_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+        clear_otlp_protocol_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_http_protobuf_value() {
+        clear_otlp_protocol_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::HttpProtobuf),
+        );
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"),
+            Ok(OtlpExportProtocol::HttpProtobuf),
+        );
+        clear_otlp_protocol_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_signal_overrides_global() {
+        clear_otlp_protocol_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc");
+            std::env::set_var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "http/protobuf");
+        }
+        // Traces signal var wins over the global one.
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::HttpProtobuf),
+        );
+        // Logs signal isn't set, so it falls back to the global `grpc`.
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+        clear_otlp_protocol_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_signal_alone() {
+        clear_otlp_protocol_env();
+        // Global unset, only the per-signal var is set.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "http/protobuf");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"),
+            Ok(OtlpExportProtocol::HttpProtobuf),
+        );
+        // Traces signal still falls back to the default Grpc.
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+        clear_otlp_protocol_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_invalid_value() {
+        clear_otlp_protocol_env();
+        // `http/json` is intentionally out of scope and treated as invalid.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http/json");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Err("http/json".to_string()),
+        );
+
+        // Arbitrary garbage is also an error.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "tcp");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL"),
+            Err("tcp".to_string()),
+        );
+        clear_otlp_protocol_env();
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_otlp_protocol_empty_string_treated_as_unset() {
+        clear_otlp_protocol_env();
+        // Mirrors `resolve_exporter_choice`'s empty-string handling.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "");
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::Grpc),
+        );
+
+        // Empty signal var falls through to the global, not into Err.
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+            std::env::set_var("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", "");
+        }
+        assert_eq!(
+            resolve_otlp_protocol("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL"),
+            Ok(OtlpExportProtocol::HttpProtobuf),
+        );
+        clear_otlp_protocol_env();
     }
 }
