@@ -19,14 +19,18 @@ run = "cargo test"
 description = "Build senko binary with postgres feature"
 run = "cargo build -q --bin senko --example pg_test_server --features postgres"
 
+[tasks.build-mock-otel-collector]
+description = "Build embedded OTLP mock collector for e2e"
+run = "cargo build -q -p mock-otel-collector"
+
 [tasks."e2e:sqlite"]
 description = "Run e2e tests with SQLite backend"
-depends = ["build"]
+depends = ["build", "build-mock-otel-collector"]
 run = "bash tests/e2e/run.sh"
 
 [tasks."e2e:postgres"]
 description = "Run e2e tests with PostgreSQL backend"
-depends = ["build-pg"]
+depends = ["build-pg", "build-mock-otel-collector"]
 run = "bash tests/e2e/run.sh --backend=postgres"
 
 [tasks.e2e]

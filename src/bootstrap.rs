@@ -2016,10 +2016,14 @@ name = "project-local"
     }
 
     // 5a. Feature-gap guards. These compile and pass only when
-    // `opentelemetry-otlp/reqwest-client` is enabled in Cargo.toml; remove
-    // that feature and the `.build()` call returns `Err(NoHttpClient)`,
-    // turning the test red. This is the structural guarantee that the 0.38.2
-    // regression cannot recur silently.
+    // `opentelemetry-otlp/reqwest-blocking-client` is enabled in Cargo.toml;
+    // remove that feature and the `.build()` call returns `Err(NoHttpClient)`,
+    // turning the test red. The blocking variant is required because the SDK's
+    // BatchProcessor runs on a dedicated OS thread without a Tokio reactor —
+    // an async client (`reqwest-client`) panics with "there is no reactor
+    // running" on the first export attempt. e2e smoke
+    // `tests/e2e/test_otel_smoke.sh` enforces the runtime side of the same
+    // contract.
 
     #[test]
     #[serial]
@@ -2031,7 +2035,7 @@ name = "project-local"
             .build();
         assert!(
             result.is_ok(),
-            "LogExporter::builder().with_http().build() must succeed when reqwest-client is enabled; got {:?}",
+            "LogExporter::builder().with_http().build() must succeed when reqwest-blocking-client is enabled; got {:?}",
             result.err()
         );
     }
@@ -2046,7 +2050,7 @@ name = "project-local"
             .build();
         assert!(
             result.is_ok(),
-            "SpanExporter::builder().with_http().build() must succeed when reqwest-client is enabled; got {:?}",
+            "SpanExporter::builder().with_http().build() must succeed when reqwest-blocking-client is enabled; got {:?}",
             result.err()
         );
     }
