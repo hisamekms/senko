@@ -627,7 +627,7 @@ pub async fn serve(
     backend: Arc<dyn TaskBackend>,
     auth_mode: Option<AuthMode>,
 ) -> Result<()> {
-    let telemetry = bootstrap::init_telemetry(&config.log);
+    let telemetry = bootstrap::init_telemetry(&config.log, bootstrap::TelemetryMode::Remote);
 
     if auth_mode.is_none() {
         tracing::warn!(
@@ -680,7 +680,7 @@ pub async fn serve_proxy(
     config_path: Option<PathBuf>,
     hook_data: Arc<dyn crate::application::port::HookDataSource>,
 ) -> Result<()> {
-    let telemetry = bootstrap::init_telemetry(&config.log);
+    let telemetry = bootstrap::init_telemetry(&config.log, bootstrap::TelemetryMode::Relay);
 
     let remote_url = config
         .server

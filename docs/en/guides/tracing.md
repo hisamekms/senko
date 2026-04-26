@@ -114,7 +114,7 @@ The Remote's `senko.task.completed` LogRecord then carries:
 | Domain (target) | `senko.task.id=42`, `senko.project.id=…`, `from_status=in_progress`, `to_status=completed` |
 | Actor | `enduser.id=<resolved>`, `enduser.name=<resolved>` |
 | Common (caller-supplied) | `senko.operation.id=<UUID>`, `aviary.session.id=sess-abc`, `aviary.nest.id=nest-42`, `aviary.task.id=at-99` |
-| Resource | `service.name=senko-server`, `service.version=…`, `senko.version=…` |
+| Resource | `service.name=senko-server` (Remote) / `senko-relay` (Relay), `service.version=…`, `senko.version=…` |
 
 Aviary's own observability stack (Loki / Datadog / Splunk / …) can then group every senko operation in one session by filtering on `aviary.session.id = "sess-abc"`.
 
@@ -182,7 +182,7 @@ Minimal checks that propagation is working end to end:
 
 - [ ] Remote-side `console` exporter / log backend shows LogRecords with `event_name = "senko.*"` (e.g. running `senko task complete N` produces `senko.task.completed`).
 - [ ] Each LogRecord carries `enduser.id` / `enduser.name` (when authenticated) and `senko.operation.id`.
-- [ ] Resource attributes `service.name` / `service.version` / `senko.version` appear on every record.
+- [ ] Resource attributes `service.name` (Remote: `senko-server` / Relay: `senko-relay`, env-overridable) / `service.version` / `senko.version` appear on every record.
 - [ ] When you `--attr aviary.session.id=foo`, the `senko.task.completed` LogRecord's attributes include `aviary.session.id = "foo"` (no prefix).
 - [ ] The matching span carries `baggage.run.id = "demo1"` (separate channel, same `trace_id`).
 - [ ] Setting `OTEL_RESOURCE_ATTRIBUTES="service.name=foo"` does **not** surface `foo` on the Remote via baggage; mixed-case variants like `SERVICE.NAME` are filtered too.

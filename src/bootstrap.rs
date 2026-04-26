@@ -569,31 +569,68 @@ impl TelemetryGuard {
     }
 }
 
+/// Which server face is initializing telemetry. Drives the default
+/// `service.name` and the tracer instrumentation scope name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TelemetryMode {
+    Remote,
+    Relay,
+}
+
+impl TelemetryMode {
+    /// Default `service.name` when no env override is set.
+    pub(crate) fn default_service_name(self) -> &'static str {
+        match self {
+            TelemetryMode::Remote => "senko-server",
+            TelemetryMode::Relay => "senko-relay",
+        }
+    }
+}
+
 /// Build the OTel `Resource` used by both the tracer and logger providers.
 ///
 /// Resource attribute policy:
-/// - `service.name`: pinned to `"senko-server"` (overrides `OTEL_SERVICE_NAME`
-///   and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` — pre-existing behavior).
+/// - `service.name`: defaults to `"senko-server"` (Remote) / `"senko-relay"`
+///   (Relay) when no env override is present. Standard OTel precedence
+///   applies: `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES.service.name` >
+///   built-in default.
 /// - `service.version`: defaults to `CARGO_PKG_VERSION`; env-supplied
 ///   `OTEL_RESOURCE_ATTRIBUTES=service.version=...` takes precedence.
 /// - `senko.version`: always `CARGO_PKG_VERSION`. Cannot be overridden by
 ///   env — operators should treat this as an authoritative provenance tag.
-pub(crate) fn build_telemetry_resource() -> opentelemetry_sdk::Resource {
+pub(crate) fn build_telemetry_resource(mode: TelemetryMode) -> opentelemetry_sdk::Resource {
     use opentelemetry::KeyValue;
     use opentelemetry_sdk::Resource;
 
     const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-    let env_has_service_version = std::env::var("OTEL_RESOURCE_ATTRIBUTES")
+    let env_attrs: Vec<(String, String)> = std::env::var("OTEL_RESOURCE_ATTRIBUTES")
         .ok()
-        .map(|s| {
-            parse_otel_resource_attributes(&s)
-                .iter()
-                .any(|(k, _)| k == "service.version")
-        })
-        .unwrap_or(false);
+        .map(|s| parse_otel_resource_attributes(&s))
+        .unwrap_or_default();
 
-    let mut builder = Resource::builder().with_service_name("senko-server");
+    let env_has_service_version = env_attrs.iter().any(|(k, _)| k == "service.version");
+    let env_has_service_name_in_resource_attrs = env_attrs.iter().any(|(k, _)| k == "service.name");
+    let otel_service_name = std::env::var("OTEL_SERVICE_NAME")
+        .ok()
+        .filter(|v| !v.is_empty());
+
+    // Don't call `with_service_name(...)` — that path overrides env-supplied
+    // `service.name`. The SDK's `Resource::builder()` already merges in env-
+    // detected attributes (so `OTEL_RESOURCE_ATTRIBUTES.service.name` is
+    // picked up automatically), but it does not enforce the OTel-spec
+    // precedence `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES.service.name`.
+    // Attach `OTEL_SERVICE_NAME` explicitly when set so it wins over the env
+    // detector. When only `OTEL_RESOURCE_ATTRIBUTES.service.name` is set we
+    // leave it to the detector. When neither is set we fall back to the
+    // mode-specific default.
+    let mut builder = Resource::builder();
+    if let Some(name) = otel_service_name {
+        builder = builder.with_attribute(KeyValue::new("service.name", name));
+    } else if !env_has_service_name_in_resource_attrs {
+        builder =
+            builder.with_attribute(KeyValue::new("service.name", mode.default_service_name()));
+    }
     if !env_has_service_version {
         builder = builder.with_attribute(KeyValue::new("service.version", VERSION));
     }
@@ -621,7 +658,10 @@ pub(crate) fn build_telemetry_resource() -> opentelemetry_sdk::Resource {
 ///   `OTEL_RESOURCE_ATTRIBUTES` — read by the OTel SDK directly.
 ///
 /// Unknown exporter values log a warning and behave like `none`.
-pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
+///
+/// `mode` selects the default `service.name` and tracer instrumentation scope
+/// name (`senko-server` for Remote, `senko-relay` for Relay).
+pub fn init_telemetry(config: &LogConfig, mode: TelemetryMode) -> TelemetryGuard {
     use opentelemetry::propagation::TextMapCompositePropagator;
     use opentelemetry_sdk::propagation::{BaggagePropagator, TraceContextPropagator};
 
@@ -653,10 +693,12 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
         };
     }
 
-    let resource = build_telemetry_resource();
+    let resource = build_telemetry_resource(mode);
 
     let traces = build_tracer_provider(resource.clone());
     let logs = build_logger_provider(resource);
+
+    let scope_name = mode.default_service_name();
 
     let registry = tracing_subscriber::registry()
         .with(env_filter)
@@ -668,14 +710,14 @@ pub fn init_telemetry(config: &LogConfig) -> TelemetryGuard {
     // entirely in `none` mode — cheaper spans on a hot path.
     match (&traces.provider, &logs.provider) {
         (Some(tp), Some(lp)) => {
-            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
+            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, scope_name);
             registry
                 .with(tracing_opentelemetry::layer().with_tracer(tracer))
                 .with(opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(lp))
                 .init();
         }
         (Some(tp), None) => {
-            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, "senko-server");
+            let tracer = opentelemetry::trace::TracerProvider::tracer(tp, scope_name);
             registry
                 .with(tracing_opentelemetry::layer().with_tracer(tracer))
                 .init();
@@ -1548,6 +1590,9 @@ name = "project-local"
         unsafe {
             std::env::remove_var("SENKO_TRACE_ATTRIBUTES");
             std::env::remove_var("OTEL_RESOURCE_ATTRIBUTES");
+            // Cleared so the build_telemetry_resource() tests below can't
+            // observe a stray OTEL_SERVICE_NAME from earlier #[serial] runs.
+            std::env::remove_var("OTEL_SERVICE_NAME");
         }
     }
 
@@ -1717,13 +1762,13 @@ name = "project-local"
     }
 
     /// Build a provider with our resource and return what the exporter received.
-    fn capture_resource() -> opentelemetry_sdk::Resource {
+    fn capture_resource(mode: TelemetryMode) -> opentelemetry_sdk::Resource {
         use opentelemetry_sdk::trace::SdkTracerProvider;
         let exporter = ResourceCapturingExporter::default();
         // `build()` calls `set_resource` on every processor synchronously,
         // which forwards to the exporter — no span needs to be emitted.
         let _provider = SdkTracerProvider::builder()
-            .with_resource(build_telemetry_resource())
+            .with_resource(build_telemetry_resource(mode))
             .with_simple_exporter(exporter.clone())
             .build();
         exporter.captured()
@@ -1739,7 +1784,7 @@ name = "project-local"
     #[serial]
     fn resource_has_service_version_from_cargo_pkg_version_when_env_absent() {
         clear_trace_env();
-        let resource = capture_resource();
+        let resource = capture_resource(TelemetryMode::Remote);
         assert_eq!(
             attr(&resource, "service.version").as_deref(),
             Some(env!("CARGO_PKG_VERSION")),
@@ -1750,7 +1795,7 @@ name = "project-local"
     #[serial]
     fn resource_always_has_senko_version_from_cargo_pkg_version() {
         clear_trace_env();
-        let resource = capture_resource();
+        let resource = capture_resource(TelemetryMode::Remote);
         assert_eq!(
             attr(&resource, "senko.version").as_deref(),
             Some(env!("CARGO_PKG_VERSION")),
@@ -1762,7 +1807,7 @@ name = "project-local"
         unsafe {
             std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "senko.version=evil");
         }
-        let resource = capture_resource();
+        let resource = capture_resource(TelemetryMode::Remote);
         assert_eq!(
             attr(&resource, "senko.version").as_deref(),
             Some(env!("CARGO_PKG_VERSION")),
@@ -1778,7 +1823,7 @@ name = "project-local"
         unsafe {
             std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "service.version=1.2.3-foo");
         }
-        let resource = capture_resource();
+        let resource = capture_resource(TelemetryMode::Remote);
         assert_eq!(
             attr(&resource, "service.version").as_deref(),
             Some("1.2.3-foo"),
@@ -1788,6 +1833,92 @@ name = "project-local"
             attr(&resource, "senko.version").as_deref(),
             Some(env!("CARGO_PKG_VERSION")),
         );
+        clear_trace_env();
+    }
+
+    // --- service.name default + env override (task #376) ---
+
+    #[test]
+    #[serial]
+    fn service_name_default_remote_when_env_unset() {
+        clear_trace_env();
+        let resource = capture_resource(TelemetryMode::Remote);
+        assert_eq!(
+            attr(&resource, "service.name").as_deref(),
+            Some("senko-server"),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn service_name_default_relay_when_env_unset() {
+        clear_trace_env();
+        let resource = capture_resource(TelemetryMode::Relay);
+        assert_eq!(
+            attr(&resource, "service.name").as_deref(),
+            Some("senko-relay"),
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn otel_service_name_overrides_default_remote() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_SERVICE_NAME", "custom-remote");
+        }
+        let resource = capture_resource(TelemetryMode::Remote);
+        assert_eq!(
+            attr(&resource, "service.name").as_deref(),
+            Some("custom-remote"),
+        );
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn otel_service_name_overrides_default_relay() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_SERVICE_NAME", "custom-relay");
+        }
+        let resource = capture_resource(TelemetryMode::Relay);
+        assert_eq!(
+            attr(&resource, "service.name").as_deref(),
+            Some("custom-relay"),
+        );
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn otel_resource_attributes_service_name_overrides_default() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-attrs");
+        }
+        let resource = capture_resource(TelemetryMode::Remote);
+        assert_eq!(
+            attr(&resource, "service.name").as_deref(),
+            Some("from-attrs"),
+        );
+        clear_trace_env();
+    }
+
+    #[test]
+    #[serial]
+    fn otel_service_name_wins_over_otel_resource_attributes() {
+        clear_trace_env();
+        // SAFETY: test is #[serial].
+        unsafe {
+            std::env::set_var("OTEL_SERVICE_NAME", "from-svc");
+            std::env::set_var("OTEL_RESOURCE_ATTRIBUTES", "service.name=from-attrs");
+        }
+        let resource = capture_resource(TelemetryMode::Remote);
+        assert_eq!(attr(&resource, "service.name").as_deref(), Some("from-svc"),);
         clear_trace_env();
     }
 
@@ -2067,7 +2198,7 @@ name = "project-local"
             std::env::set_var("OTEL_LOGS_EXPORTER", "otlp");
             std::env::set_var("OTEL_EXPORTER_OTLP_LOGS_PROTOCOL", "tcp");
         }
-        let outcome = build_logger_provider(build_telemetry_resource());
+        let outcome = build_logger_provider(build_telemetry_resource(TelemetryMode::Remote));
         clear_otel_exporter_env();
 
         assert!(outcome.provider.is_none());

@@ -302,9 +302,11 @@ The Remote reads the standard OTel environment variables at startup to initializ
 | `OTEL_LOGS_EXPORTER` | `otlp` / `console` / `none` | `none` (see note) | Logs destination — business event LogRecords flow here. |
 | `OTEL_SERVICE_NAME` | string | `senko-server` (Remote) / `senko-relay` (Relay) | Value of the `service.name` Resource attribute. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | URL | — | OTLP collector endpoint. When set, the default exporter is promoted to `otlp`. |
-| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | Resource attributes (read directly by the SDK). Including `service.version=…` here overrides the Remote's default (baked-in `CARGO_PKG_VERSION`). |
+| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | Resource attributes (read directly by the SDK). Including `service.name=…` / `service.version=…` here overrides senko's defaults (the mode-specific `senko-server` / `senko-relay`, and the baked-in `CARGO_PKG_VERSION`). For `service.name`, `OTEL_SERVICE_NAME` takes precedence (OTel SDK standard). |
 
 > **Note on defaults**: the OTel spec says the default exporter is `otlp`, but senko Remote defaults to **`none` when no OTel env is set** — this keeps local development quiet and avoids unintended OTLP connections. Setting `OTEL_EXPORTER_OTLP_ENDPOINT` promotes the default to `otlp`. Unknown exporter names log a warning and fall back to `none`.
+
+Example: `OTEL_SERVICE_NAME=senko-prod senko serve` exports with the Resource attribute `service.name=senko-prod` (works in both Remote and Relay mode).
 
 ## Baggage → Span Attribute Promotion
 

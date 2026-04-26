@@ -304,9 +304,11 @@ Remote は起動時に次の標準 OTel 環境変数を読み、OTel SDK を初�
 | `OTEL_LOGS_EXPORTER` | `otlp` / `console` / `none` | `none` (※) | logs の送出先 (業務イベント LogRecord はここを通る) |
 | `OTEL_SERVICE_NAME` | 文字列 | `senko-server` (Remote) / `senko-relay` (Relay) | `service.name` Resource 属性の値 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | URL | — | OTLP collector。これが設定されると exporter 既定が `otlp` に昇格 |
-| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | OTel SDK の Resource 属性 (SDK が直接読む)。`service.version=…` を含めると Remote の既定値 (ビルド時の `CARGO_PKG_VERSION`) を上書きできる |
+| `OTEL_RESOURCE_ATTRIBUTES` | `K=V,K=V,…` | — | OTel SDK の Resource 属性 (SDK が直接読む)。`service.name=…` / `service.version=…` を含めると senko の既定値 (それぞれ mode 別の `senko-server` / `senko-relay`、ビルド時の `CARGO_PKG_VERSION`) を上書きできる。`service.name` については `OTEL_SERVICE_NAME` のほうが優先される (OTel SDK 標準) |
 
 > **(※) 既定値についての注意**: OTel 仕様の既定は `otlp` ですが、senko Remote は **OTel env が何も設定されていない時は `none`** にしています (ローカル開発で意図せぬ OTLP 接続を避けるため)。`OTEL_EXPORTER_OTLP_ENDPOINT` を設定すると exporter の既定が `otlp` に昇格します。未知の exporter 名は警告ログを出して `none` として扱います。
+
+例: `OTEL_SERVICE_NAME=senko-prod senko serve` で起動すると、Resource 属性 `service.name=senko-prod` で OTLP に export されます (Remote / Relay どちらの mode でも同様)。
 
 ## Baggage → Span attribute の昇格
 

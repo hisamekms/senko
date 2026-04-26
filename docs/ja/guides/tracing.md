@@ -114,7 +114,7 @@ senko \
 | 業務 (target) | `senko.task.id=42`, `senko.project.id=…`, `from_status=in_progress`, `to_status=completed` |
 | actor | `enduser.id=<resolved>`, `enduser.name=<resolved>` |
 | 共通 (caller-supplied) | `senko.operation.id=<UUID>`, `aviary.session.id=sess-abc`, `aviary.nest.id=nest-42`, `aviary.task.id=at-99` |
-| Resource | `service.name=senko-server`, `service.version=…`, `senko.version=…` |
+| Resource | `service.name=senko-server` (Remote) / `senko-relay` (Relay), `service.version=…`, `senko.version=…` |
 
 Aviary 側のオブザーバビリティ基盤 (Loki / Datadog / Splunk 等) では `aviary.session.id="sess-abc"` で絞り込むと、その session 内の senko 操作 (複数 task complete / status 変更等) を時系列に並べられます。
 
@@ -182,7 +182,7 @@ Contract #8 で `enduser.*` (actor) と `senko.*.id` (target) を分離したの
 
 - [ ] Remote 側 `console` exporter / log backend で `event_name = "senko.*"` の LogRecord が出る (例: `senko task complete N` 後に `senko.task.completed`)
 - [ ] 各 LogRecord に `enduser.id` / `enduser.name` (auth 認証下) と `senko.operation.id` が乗っている
-- [ ] Resource 属性 `service.name` / `service.version` / `senko.version` がすべての record に付く
+- [ ] Resource 属性 `service.name` (Remote: `senko-server` / Relay: `senko-relay`、env で上書き可) / `service.version` / `senko.version` がすべての record に付く
 - [ ] `--attr aviary.session.id=foo` した時、`senko.task.completed` の attributes に `aviary.session.id=foo` (プレフィックス無し) が乗る
 - [ ] Span 側にも `baggage.run.id=demo1` が付いている (別経路、同 trace_id)
 - [ ] `OTEL_RESOURCE_ATTRIBUTES` に `service.name=foo` を入れても baggage 経由で `service.name` が **流れない** こと (大文字混じり `SERVICE.NAME` も同様に除外)
