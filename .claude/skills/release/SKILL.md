@@ -18,6 +18,32 @@ bash tests/e2e/run.sh
 
 テストが **1つでも失敗したらリリースを中止**し、失敗内容をユーザーに報告して終了する。
 
+### Step 1.5: 起動ログ assertion
+
+`senko serve` が OTel exporter を期待通り初期化することを確認する。0.38.2 で OTel exporter の silent regression を見逃した教訓により導入されたガードレール（Contract #9）。
+
+```bash
+bash scripts/release-boot-check.sh
+```
+
+このスクリプトは：
+
+1. `cargo build -q --bin senko` でバイナリを準備
+2. 期待 env で `senko serve --port 0` を 3 秒だけ起動
+   - `OTEL_LOGS_EXPORTER=otlp` / `OTEL_TRACES_EXPORTER=otlp`
+   - `OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:65535`
+   - `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`
+   - `SENKO_LOG_FORMAT=json`（Contract #9 で pin）
+3. JSON ログを `jq` で構造化検証
+   - `traces.status == "enabled"` / `logs.status == "enabled"`
+   - `traces.protocol == "http/protobuf"` / `logs.protocol == "http/protobuf"`
+   - `"without exporters"` メッセージが出ていないこと
+4. 不一致なら **exit 1 でリリースを中止**
+
+スクリプトが失敗したらリリースを中止し、`Cargo.toml` の `opentelemetry-otlp` features（`reqwest-blocking-client`）と `src/bootstrap.rs::init_telemetry` を確認する。
+
+前提: `jq` がホスト環境にインストール済であること。
+
 ### Step 2: バージョン番号の決定
 
 引数でバージョンが指定されている場合はそれを使う（`v` プレフィックスは除去して扱う）。
