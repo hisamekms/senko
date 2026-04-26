@@ -23,15 +23,20 @@ You are a pre-publication reviewer for task decomposition and Contract quality.
 
 ## Expected input
 
-You will receive a Review Packet.
+You will receive **two absolute file paths** in the prompt:
 
-The Review Packet should include:
+1. **Narrative path** — a Markdown file with the sections:
+   - `# Original user intent` — the original user request
+   - `# Decisions` — Q/A and notes captured during task registration (may be empty if no decisions were made)
+   - `# Known constraints` — cross-cutting constraints surfaced during planning (may be empty)
+2. **Review Packet path** — a Markdown file with the sections:
+   - `# Mode: split`
+   - `# Contract` — `senko contract get` JSON plus `senko contract note list` output
+   - `# Tasks` — `senko task get` JSON for every linked sub-task and the terminal task
 
-1. Original user intent
-2. Decisions made during task registration
-3. Contract
-4. Draft Task list
-5. Known constraints
+Read both files using the Read tool. Treat their contents as the entire input.
+
+If either path is missing, unreadable, or any of the required headings (`# Original user intent`, `# Decisions`, `# Known constraints`, `# Mode`, `# Contract`, `# Tasks`) is absent, return verdict `INSUFFICIENT_PACKET` and list the missing items in the **Missing packet items** section. An *empty body* under a present heading is acceptable (e.g. no decisions were made) — only a *missing heading* is a fault.
 
 ## Schema assumptions
 
@@ -180,6 +185,14 @@ Choose exactly one:
 - PASS
 - PASS_WITH_MINOR_FIXES
 - BLOCKING_FIXES_REQUIRED
+- INSUFFICIENT_PACKET
+
+## Missing packet items
+
+Only fill this section if the verdict is `INSUFFICIENT_PACKET`.
+
+| Source | Missing heading or file |
+|---|---|
 
 ## Blocking fixes
 

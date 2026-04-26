@@ -2,10 +2,28 @@
 
 ## Normal vs Simple Mode
 
-- **Normal** (`add <description>`): Phase 1 → 2 → 3 → 4 (full workflow)
+- **Normal** (`add <description>`): Phase 0 → 1 → 2 → 3 → 4 (full workflow)
 - **Simple** (`add --simple <description>`): Create draft → set description → `task publish` (no planning)
 
 ## Procedure
+
+### Phase 0: Initialize narrative state
+
+> **Skip this phase in simple mode.**
+
+The pre-publication review at Phase 4 step 5 reads its input from two files
+(`narrative.md` and `packet.md`) addressed by a short `$NID`. Initialize that state
+**before** Phase 1 so every decision and constraint can be appended in real time.
+
+Capture the original user intent verbatim — the literal request as it appeared in the
+chat — then run:
+
+```bash
+NID=$(echo '{"intent":"<original user intent>"}' | bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh init)
+```
+
+`$NID` is an 8-char alphanumeric ID. Carry it through every later phase. Keep it in
+session memory; do **not** rebuild it.
 
 ### Phase 1: Planning & Split Decision
 
@@ -18,7 +36,27 @@ Investigate the task through codebase exploration and conversation. Repeat until
 3. For each item, ask the user via `AskUserQuestion`:
    - Present options for each question
    - Mark at least one option with "(Recommended)" when possible
+   - **As soon as the user answers, record the decision** in the narrative:
+
+     ```bash
+     echo '{"q":"<question>","a":"<chosen answer>"}' | bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh append-decision $NID
+     ```
+
+     For decisions made without an explicit AskUserQuestion (e.g., a judgment call you
+     announced and the user accepted), use the `note` form instead:
+
+     ```bash
+     echo '{"note":"<decision text>"}' | bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh append-decision $NID
+     ```
 4. After all questions are resolved, return to step 1 — previous answers may raise new questions
+
+If the conversation surfaces a **cross-cutting constraint** (merge freeze window, fixed
+interface, environment requirement, locked-in library/version, etc.) record it
+immediately:
+
+```bash
+echo '{"text":"<constraint>"}' | bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh append-constraint $NID
+```
 
 Once all questions are resolved, **decide whether to split the task**. Consider these heuristics:
 
@@ -32,7 +70,7 @@ Once all questions are resolved, **decide whether to split the task**. Consider 
   - The task is small enough that splitting adds overhead without benefit
   - Splitting would create tasks that are trivial on their own
 
-If splitting, define the sub-tasks with their titles and relationships. Ask the user via `AskUserQuestion` to confirm the proposed split.
+If splitting, define the sub-tasks with their titles and relationships. Ask the user via `AskUserQuestion` to confirm the proposed split. Record the split rationale (or the rationale for keeping single) via `append-decision` once the user confirms.
 
 #### Phase 1.5: Contract draft (split path only)
 
@@ -45,7 +83,7 @@ Splitting requires a Contract — a shared aggregate that carries the Definition
    - `contract_description`: a summary of the combined goal that all sub-tasks serve
    - `contract_definition_of_done`: the DoD items the **whole split** must satisfy — things that are cross-cutting and can only be verified across sub-tasks (e.g. end-to-end behavior, integration tests, removed dead code, consistent API surface). Per-sub-task DoD stays on the individual sub-tasks.
    - `contract_tags`: optional; useful for grouping contracts of the same feature or initiative.
-2. **Confirm with the user via `AskUserQuestion`** — ask whether the derived title, description, and DoD items are acceptable. Let the user accept, amend, or reject any field. Loop until the user is satisfied.
+2. **Confirm with the user via `AskUserQuestion`** — ask whether the derived title, description, and DoD items are acceptable. Let the user accept, amend, or reject any field. Loop until the user is satisfied. Record each confirmed field via `append-decision $NID` (use the `note` form if the question is multi-part).
 3. Record the confirmed values in local state for Phase 2.
 
 ### Phase 2: Draft Creation
@@ -205,6 +243,9 @@ For each created task:
    - Dependencies are correct
    - Tags to set
    - Priority (default p2) adjustment
+
+   Append each confirmed answer via `append-decision $NID` so the reviewer can see the
+   reasoning.
 3. Apply confirmed settings:
 
 ```bash
@@ -236,54 +277,96 @@ senko task edit <id> \
    - **Split path (Contract exists)** → use `task-contract-reviewer`. Reviews the Contract together with every linked sub-task and the terminal task.
    - **Single-task path (no Contract)** → use `single-task-reviewer`. Reviews the single draft task in isolation.
 
+   The reviewer reads the **narrative** and **packet** files written by
+   `senko-narrative.sh` rather than receiving JSON inline in the prompt. **Always pass
+   both paths.** Never paste task/contract JSON into the agent prompt.
+
    ##### 5a. Split path
 
-   1. Collect the current state of the Contract and every draft task linked to it:
+   1. Build the packet from current state. Always pass `--mode`, `--contract`, and the
+      full list of `--tasks` (sub-tasks plus the terminal task) — `build-packet` does
+      NOT remember args between calls.
 
       ```bash
-      senko contract get $CONTRACT_ID
-      senko contract note list $CONTRACT_ID
-      senko task get $SUB_ID_1
-      senko task get $SUB_ID_2
-      # ... and the terminal task
-      senko task get $TERMINAL_ID
+      PACKET_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh build-packet $NID \
+        --mode split \
+        --contract $CONTRACT_ID \
+        --tasks $SUB_ID_1 $SUB_ID_2 ... $TERMINAL_ID)
+      NARRATIVE_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh path $NID)
       ```
 
-   2. Invoke the `task-contract-reviewer` agent with a Review Packet containing:
+   2. Invoke the `task-contract-reviewer` agent with the two paths in the prompt:
 
-      1. **Original user intent** — the original task description from the user
-      2. **Decisions made during task registration** — the resolved questions/answers from Phase 1 and the split rationale
-      3. **Contract** — the JSON output of `senko contract get` plus existing notes
-      4. **Draft Task list** — the JSON output of `senko task get` for every sub-task and the terminal task
-      5. **Known constraints** — any cross-cutting constraints surfaced in Phase 1 (e.g., merge freeze, interface decisions)
+      ```
+      Narrative path: <NARRATIVE_PATH>
+      Review Packet path: <PACKET_PATH>
+      ```
+
+      Do **not** include any other content. The agent reads both files via the Read tool.
 
    3. Read the agent's verdict:
 
       - **PASS** → proceed to step 6 (publish).
-      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`, `senko contract edit`, or `senko contract note add` as appropriate, then proceed to step 6.
-      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix before publication. Apply Contract additions via `senko contract edit --description …` or `--add-definition-of-done …`. Append decision-log entries via `senko contract note add`. Apply task-specific additions via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata …`. Apply dependency fixes via `senko task deps add/remove/set`. After applying fixes, **re-invoke the reviewer** with the updated Review Packet. Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES.
+      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`, `senko contract edit`, or `senko contract note add` as appropriate. Append each accepted fix via `append-decision $NID`. Then proceed to step 6.
+      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix before publication. Apply Contract additions via `senko contract edit --description …` or `--add-definition-of-done …`. Append decision-log entries via `senko contract note add`. Apply task-specific additions via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata …`. Apply dependency fixes via `senko task deps add/remove/set`. Then **rebuild the packet with the FULL args** (mode/contract/tasks — NOT just the changed task IDs) and **re-invoke the reviewer**:
+
+        ```bash
+        PACKET_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh build-packet $NID \
+          --mode split --contract $CONTRACT_ID \
+          --tasks $SUB_ID_1 $SUB_ID_2 ... $TERMINAL_ID)
+        ```
+
+        Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES. Append each fix as a
+        decision via `append-decision $NID` so subsequent reviewer turns see the
+        reasoning.
+      - **INSUFFICIENT_PACKET** → the reviewer reports missing headings or unreadable files. Resolve the gap before retrying:
+        - Missing `# Decisions` or `# Known constraints` heading in the narrative → re-run `senko-narrative.sh init` is **not** the fix (init creates a new ID). Instead, the heading should already be present from init; if it is missing, the narrative file has been corrupted manually — restore it.
+        - Empty narrative section is fine; if the reviewer complains about empty sections, push back.
+        - Missing `# Contract` or `# Tasks` heading in the packet → re-run `build-packet` with the full split args.
+        - Wrong/stale paths → recompute via `senko-narrative.sh path $NID` / `packet-path $NID`.
+
+        After resolving, rebuild the packet (full args) and re-invoke the reviewer.
 
    ##### 5b. Single-task path
 
-   1. Collect the current state of the draft task:
+   1. Build the single-mode packet:
 
       ```bash
-      senko task get <id>
+      PACKET_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh build-packet $NID \
+        --mode single \
+        --tasks $TASK_ID)
+      NARRATIVE_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh path $NID)
       ```
 
-   2. Invoke the `single-task-reviewer` agent with a Review Packet containing:
+   2. Invoke the `single-task-reviewer` agent with the two paths:
 
-      1. **Original user intent** — the original task description from the user
-      2. **Decisions made during task registration** — the resolved questions/answers from Phase 1 and the rationale for keeping the work as a single task
-      3. **Draft Task** — the JSON output of `senko task get`
-      4. **Known constraints** — any constraints surfaced in Phase 1 (e.g., merge freeze, interface decisions, environment requirements)
+      ```
+      Narrative path: <NARRATIVE_PATH>
+      Review Packet path: <PACKET_PATH>
+      ```
+
+      The agent reads both files via the Read tool.
 
    3. Read the agent's verdict:
 
       - **PASS** → proceed to step 6 (publish).
-      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`, then proceed to step 6.
-      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata … / --add-tag … / --priority …`. Apply dependency fixes via `senko task deps add/remove`. After applying fixes, **re-invoke the reviewer** with the updated Review Packet. Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES.
-      - **SHOULD_SPLIT_TASK** → the reviewer judged that the work should not remain a single task. Present the proposed split to the user via `AskUserQuestion`. If the user agrees, abandon the single-task path and re-enter Phase 1.5 (Contract draft) and Phase 2 split path with the proposed sub-tasks; the existing draft task may be reused as one of the sub-tasks (re-link with `--contract`) or canceled with `senko task cancel <id> --reason "Restructured into split"`. If the user rejects the split, treat the verdict as PASS_WITH_MINOR_FIXES and continue.
+      - **PASS_WITH_MINOR_FIXES** → present the minor fixes to the user via `AskUserQuestion`. Apply the accepted fixes using `senko task edit`. Append each accepted fix via `append-decision $NID`. Then proceed to step 6.
+      - **BLOCKING_FIXES_REQUIRED** → apply every blocking fix via `senko task edit <id> --background … / --description … / --plan-file … / --in-scope … / --out-of-scope … / --add-definition-of-done … / --metadata … / --add-tag … / --priority …`. Apply dependency fixes via `senko task deps add/remove`. Then **rebuild the packet with the FULL args** (mode/tasks) and **re-invoke the reviewer**:
+
+        ```bash
+        PACKET_PATH=$(bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh build-packet $NID \
+          --mode single --tasks $TASK_ID)
+        ```
+
+        Loop until the verdict is PASS or PASS_WITH_MINOR_FIXES. Append each fix as a
+        decision via `append-decision $NID`.
+      - **SHOULD_SPLIT_TASK** → the reviewer judged that the work should not remain a single task. Present the proposed split to the user via `AskUserQuestion`. If the user agrees:
+        - Append a decision noting the restructure: `echo '{"note":"Initial single-task draft restructured into split after reviewer SHOULD_SPLIT_TASK; user confirmed."}' | bash ${CLAUDE_SKILL_DIR}/scripts/senko-narrative.sh append-decision $NID`.
+        - **Keep the same `$NID`** — do NOT call `init` again. Re-enter Phase 1.5 (Contract draft) and Phase 2 split path with the proposed sub-tasks; the existing draft task may be reused as one of the sub-tasks (re-link with `--contract`) or canceled with `senko task cancel <id> --reason "Restructured into split"`.
+        - When you reach step 5a, call `build-packet $NID --mode split --contract $NEW_CONTRACT_ID --tasks ...` to overwrite the packet with the new split metadata.
+
+        If the user rejects the split, treat the verdict as PASS_WITH_MINOR_FIXES and continue.
+      - **INSUFFICIENT_PACKET** → same handling as the split path: missing packet headings → rebuild with full args; missing narrative headings → restore the file.
 
    ##### 5c. Common
 
