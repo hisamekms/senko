@@ -261,6 +261,9 @@ mod tests {
         assert_eq!(content, SKILL_MD_CONTENT);
         let agent_content = std::fs::read_to_string(dir.path().join("dod-verifier.md")).unwrap();
         assert_eq!(agent_content, DOD_VERIFIER_AGENT_CONTENT);
+        // Verify reviewer agents are also installed
+        assert!(dir.path().join("single-task-reviewer.md").exists());
+        assert!(dir.path().join("task-contract-reviewer.md").exists());
         // Verify workflow and other files are present (flat mode uses last segment as filename)
         assert!(dir.path().join("cli-reference.md").exists());
         assert!(dir.path().join("add-task.md").exists());
@@ -314,11 +317,21 @@ mod tests {
             assert!(scripts_dir.join(name).exists(), "missing script: {name}");
         }
 
-        // Agent
+        // Agents
         let agent_path = tmp.path().join(".claude/agents/dod-verifier.md");
         assert!(agent_path.exists());
         let agent_content = std::fs::read_to_string(&agent_path).unwrap();
         assert_eq!(agent_content, DOD_VERIFIER_AGENT_CONTENT);
+        assert!(
+            tmp.path()
+                .join(".claude/agents/single-task-reviewer.md")
+                .exists()
+        );
+        assert!(
+            tmp.path()
+                .join(".claude/agents/task-contract-reviewer.md")
+                .exists()
+        );
     }
 
     #[test]

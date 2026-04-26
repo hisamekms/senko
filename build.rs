@@ -7,20 +7,12 @@ fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let skill_dir = manifest_dir.join(".claude/skills/senko");
-    let dod_verifier = manifest_dir.join("src/dod_verifier_agent.md");
+    let agents_dir = manifest_dir.join("src/agents");
 
-    // Collect skill files
     let mut entries: Vec<SkillEntry> = Vec::new();
-    scan_dir(&skill_dir, &skill_dir, &mut entries);
-    entries.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-
-    // Add hardcoded dod_verifier_agent.md
-    entries.push(SkillEntry {
-        absolute_path: dod_verifier.clone(),
-        relative_path: String::new(), // special case
-        segments: vec!["agents".to_string(), "dod-verifier.md".to_string()],
-        const_name: "DOD_VERIFIER_AGENT_MD".to_string(),
-    });
+    scan_skill_dir(&skill_dir, &skill_dir, &mut entries);
+    scan_agents_dir(&agents_dir, &mut entries);
+    entries.sort_by(|a, b| a.const_name.cmp(&b.const_name));
 
     // Generate code
     let mut code = String::new();
@@ -37,7 +29,7 @@ fn main() {
 
     // Aliases for backward compatibility
     code.push_str("pub const SKILL_MD_CONTENT: &str = SKILLS_SENKO_SKILL_MD;\n");
-    code.push_str("pub const DOD_VERIFIER_AGENT_CONTENT: &str = DOD_VERIFIER_AGENT_MD;\n");
+    code.push_str("pub const DOD_VERIFIER_AGENT_CONTENT: &str = AGENTS_DOD_VERIFIER_MD;\n");
     code.push('\n');
 
     // INSTALLABLE_FILES array
@@ -60,8 +52,7 @@ fn main() {
 
     // rerun-if-changed
     println!("cargo:rerun-if-changed=.claude/skills/senko");
-    println!("cargo:rerun-if-changed=src/dod_verifier_agent.md");
-    // Also watch individual files for changes
+    println!("cargo:rerun-if-changed=src/agents");
     for entry in &entries {
         println!("cargo:rerun-if-changed={}", entry.absolute_path.display());
     }
@@ -69,12 +60,11 @@ fn main() {
 
 struct SkillEntry {
     absolute_path: PathBuf,
-    relative_path: String,
     segments: Vec<String>,
     const_name: String,
 }
 
-fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
+fn scan_skill_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
     let read_dir = match fs::read_dir(dir) {
         Ok(rd) => rd,
         Err(_) => return,
@@ -83,7 +73,7 @@ fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
         let entry = entry.unwrap();
         let path = entry.path();
         if path.is_dir() {
-            scan_dir(base, &path, entries);
+            scan_skill_dir(base, &path, entries);
         } else if path.is_file() {
             let relative = path.strip_prefix(base).unwrap();
             let relative_str = relative.to_str().unwrap().to_string();
@@ -94,7 +84,6 @@ fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
                 segments.push(component.as_os_str().to_str().unwrap().to_string());
             }
 
-            // Const name: SKILLS_SENKO_ + relative path parts joined by _
             let const_name = format!(
                 "SKILLS_SENKO_{}",
                 relative_str.replace(['/', '-', '.'], "_").to_uppercase()
@@ -102,10 +91,39 @@ fn scan_dir(base: &Path, dir: &Path, entries: &mut Vec<SkillEntry>) {
 
             entries.push(SkillEntry {
                 absolute_path: path,
-                relative_path: relative_str,
                 segments,
                 const_name,
             });
         }
+    }
+}
+
+fn scan_agents_dir(dir: &Path, entries: &mut Vec<SkillEntry>) {
+    let read_dir = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(_) => return,
+    };
+    for entry in read_dir {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let filename = path.file_name().unwrap().to_str().unwrap().to_string();
+        if !filename.ends_with(".md") {
+            continue;
+        }
+
+        let segments = vec!["agents".to_string(), filename.clone()];
+        let const_name = format!(
+            "AGENTS_{}",
+            filename.replace(['-', '.'], "_").to_uppercase()
+        );
+
+        entries.push(SkillEntry {
+            absolute_path: path,
+            segments,
+            const_name,
+        });
     }
 }
