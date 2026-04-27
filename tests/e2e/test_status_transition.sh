@@ -122,4 +122,13 @@ OUT="$(run_lf --output json task add --title "No status flag")"
 ID="$(echo "$OUT" | jq -r '.id')"
 assert_exit_code 2 run_lf task edit "$ID" --status todo
 
+echo "[17] Valid: resume keeps status=in_progress (no transition)"
+OUT="$(run_lf --output json task add --title "Resume happy path")"
+ID="$(echo "$OUT" | jq -r '.id')"
+run_lf task publish "$ID" >/dev/null
+run_lf task start "$ID" --session-id "sess-1" >/dev/null
+OUT="$(run_lf --output json task resume "$ID" --session-id "sess-2")"
+assert_json_field "$OUT" '.status' "in_progress" "resume preserves in_progress"
+assert_json_field "$OUT" '.assignee_session_id' "sess-2" "resume refreshes session_id"
+
 test_summary

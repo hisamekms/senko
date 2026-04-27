@@ -529,6 +529,15 @@ struct StartBody {
 }
 
 #[derive(Deserialize)]
+struct ResumeBody {
+    session_id: Option<String>,
+    metadata: Option<serde_json::Value>,
+    replace_metadata: Option<serde_json::Value>,
+    #[serde(default)]
+    clear_metadata: bool,
+}
+
+#[derive(Deserialize)]
 struct CompleteBody {
     #[serde(default)]
     skip_pr_check: bool,
@@ -826,6 +835,10 @@ async fn start_server(
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/start",
             post(start_task),
+        )
+        .route(
+            "/api/v1/projects/{project_id}/tasks/{id}/resume",
+            post(resume_task),
         )
         .route(
             "/api/v1/projects/{project_id}/tasks/{id}/complete",
@@ -1415,6 +1428,29 @@ async fn start_task(
     let updated = state
         .task_service
         .start_task(project_id, id, body.session_id, user_id, metadata)
+        .await
+        .map_err(classify_error)?;
+    Ok(Json(TaskResponse::from(updated)))
+}
+
+// POST /api/v1/projects/{project_id}/tasks/{id}/resume
+async fn resume_task(
+    State(state): State<AppState>,
+    auth: OptionalAuthUser,
+    Path((project_id, id)): Path<(ProjectId, TaskId)>,
+    Json(body): Json<ResumeBody>,
+) -> Result<Json<TaskResponse>, ApiError> {
+    check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let metadata = if body.clear_metadata {
+        Some(MetadataUpdate::Clear)
+    } else if let Some(v) = body.replace_metadata {
+        Some(MetadataUpdate::Replace(v))
+    } else {
+        body.metadata.map(MetadataUpdate::Merge)
+    };
+    let updated = state
+        .task_service
+        .resume_task(project_id, id, body.session_id, metadata)
         .await
         .map_err(classify_error)?;
     Ok(Json(TaskResponse::from(updated)))

@@ -109,6 +109,7 @@ pub enum TaskEvent {
     Created,
     Published,
     Started,
+    Resumed,
     Updated { changed_fields: Vec<String> },
     Completed,
     Canceled,
@@ -765,6 +766,40 @@ impl Task {
         self.updated_at = started_at.clone();
         self.started_at = Some(started_at);
         Ok((self, vec![TaskEvent::Started]))
+    }
+
+    /// Resume: refresh `assignee_session_id` and `metadata` on an already
+    /// in-progress task. Not a status transition — `status` and `started_at`
+    /// stay untouched. Rejects any non-`InProgress` status.
+    pub fn resume(
+        mut self,
+        assignee_session_id: Option<String>,
+        now: String,
+        metadata: Option<MetadataUpdate>,
+    ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
+        if self.status != TaskStatus::InProgress {
+            return Err(DomainError::InvalidStatusTransition {
+                from: self.status.to_string(),
+                to: TaskStatus::InProgress.to_string(),
+            }
+            .into());
+        }
+        self.assignee_session_id = assignee_session_id;
+        if let Some(meta_update) = metadata {
+            match meta_update {
+                MetadataUpdate::Clear => {
+                    self.metadata = None;
+                }
+                MetadataUpdate::Merge(patch) => {
+                    self.metadata = shallow_merge_metadata(self.metadata.as_ref(), &patch);
+                }
+                MetadataUpdate::Replace(value) => {
+                    self.metadata = Some(value);
+                }
+            }
+        }
+        self.updated_at = now;
+        Ok((self, vec![TaskEvent::Resumed]))
     }
 
     /// Transition: InProgress -> Completed.
@@ -1626,6 +1661,92 @@ mod tests {
             )
             .unwrap();
         assert_eq!(task.assignee_user_id(), Some(UserId(5)));
+    }
+
+    // --- resume() tests ---
+
+    fn make_in_progress_task() -> Task {
+        let mut t = make_task(TaskStatus::InProgress);
+        t.assignee_session_id = Some("session-1".to_string());
+        t.started_at = Some("2026-01-02T00:00:00Z".to_string());
+        t.updated_at = "2026-01-02T00:00:00Z".to_string();
+        t
+    }
+
+    #[test]
+    fn task_resume_from_in_progress_updates_session_and_metadata() {
+        let mut t = make_in_progress_task();
+        t.metadata = Some(serde_json::json!({"a": 1}));
+        let (task, events) = t
+            .resume(
+                Some("session-2".to_string()),
+                "2026-01-03T00:00:00Z".to_string(),
+                Some(MetadataUpdate::Merge(serde_json::json!({"b": 2}))),
+            )
+            .unwrap();
+        assert_eq!(events, vec![TaskEvent::Resumed]);
+        assert_eq!(task.status(), TaskStatus::InProgress);
+        assert_eq!(task.assignee_session_id(), Some("session-2"));
+        assert_eq!(task.metadata(), Some(&serde_json::json!({"a": 1, "b": 2})));
+        assert_eq!(task.updated_at(), "2026-01-03T00:00:00Z");
+    }
+
+    #[test]
+    fn task_resume_does_not_modify_started_at() {
+        let t = make_in_progress_task();
+        let original_started_at = t.started_at().map(|s| s.to_string());
+        let (task, _) = t
+            .resume(None, "2026-01-03T12:34:56Z".to_string(), None)
+            .unwrap();
+        assert_eq!(
+            task.started_at().map(|s| s.to_string()),
+            original_started_at
+        );
+    }
+
+    #[test]
+    fn task_resume_clears_session_id_when_none() {
+        let t = make_in_progress_task();
+        let (task, _) = t
+            .resume(None, "2026-01-03T00:00:00Z".to_string(), None)
+            .unwrap();
+        assert_eq!(task.assignee_session_id(), None);
+    }
+
+    #[test]
+    fn task_resume_from_draft_fails() {
+        let task = make_task(TaskStatus::Draft);
+        assert!(
+            task.resume(None, "2026-01-03T00:00:00Z".to_string(), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn task_resume_from_todo_fails() {
+        let task = make_task(TaskStatus::Todo);
+        assert!(
+            task.resume(None, "2026-01-03T00:00:00Z".to_string(), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn task_resume_from_completed_fails() {
+        let task = make_task(TaskStatus::Completed);
+        assert!(
+            task.resume(None, "2026-01-03T00:00:00Z".to_string(), None)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn task_resume_from_canceled_fails() {
+        let task = make_task(TaskStatus::Canceled);
+        assert!(
+            task.resume(None, "2026-01-03T00:00:00Z".to_string(), None)
+                .is_err()
+        );
     }
 
     // --- shallow_merge_metadata tests ---

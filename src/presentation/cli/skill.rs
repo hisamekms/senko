@@ -498,6 +498,7 @@ mod tests {
             "senko task next",
             "senko task publish",
             "senko task start",
+            "senko task resume",
             "senko task edit",
             "senko task complete",
             "senko task cancel",

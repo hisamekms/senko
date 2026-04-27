@@ -1,7 +1,7 @@
 ---
 name: senko
 description: "Task management using senko CLI. Provides workflows for adding, auto-selecting, executing, completing, canceling tasks and managing dependencies. Triggers on \"/senko\", \"タスク追加\", \"次のタスク\", \"タスク実行\", \"タスクを作って\", \"タスク一覧\", \"タスク完了\", \"タスクキャンセル\", \"依存関係\", \"依存グラフ\", \"タスクグラフ\", \"DoDチェック\", \"add task\", \"next task\", \"complete task\", \"cancel task\", \"task list\", \"task dependencies\", \"dependency graph\", \"dod check\" or similar task management requests."
-argument-hint: "[<id> [--force] | add <description> | list | graph | complete <id> | cancel <id> | deps ... | config-explain | config-setup]"
+argument-hint: "[<id> | resume <id> | add <description> | list | graph | complete <id> | cancel <id> | deps ... | config-explain | config-setup]"
 ---
 
 # senko — Task Management Skill
@@ -12,7 +12,7 @@ Manage and execute project tasks using the `senko` CLI. senko is a SQLite-backed
 
 - `/senko` — Auto-select and execute the next eligible task
 - `/senko <id>` — Execute a specific task by ID (requires `status=todo` with all dependencies completed)
-- `/senko <id> --force` — Resume an `in_progress` task (skips the `todo → in_progress` transition, reuses the existing worktree)
+- `/senko resume <id>` — Resume an `in_progress` task: refresh `assignee_session_id`, reuse the existing worktree, re-enter PlanMode (no status change)
 - `/senko add <description>` — Add a new task (interactive planning)
 - `/senko add --simple <description>` — Add a task without planning phase
 - `/senko list` — Show task list
@@ -40,13 +40,13 @@ Parse `$ARGUMENTS` with these rules (check in order):
 4. **`graph`**: Show dependency graph. Read file: `${CLAUDE_SKILL_DIR}/workflows/dependency-graph.md`
 5. **`complete <id>`**: Complete the specified task. Read file: `${CLAUDE_SKILL_DIR}/workflows/complete-task.md`
 6. **`cancel <id>`**: Cancel the specified task. Read file: `${CLAUDE_SKILL_DIR}/workflows/cancel-task.md`
-7. **Starts with `dod`**: Manage DoD check state. Read file: `${CLAUDE_SKILL_DIR}/workflows/dod-check.md`
-8. **Starts with `deps`**: Manage dependencies. Read file: `${CLAUDE_SKILL_DIR}/workflows/manage-dependencies.md`
-9. **`config-explain`**: Explain current config. Read file: `${CLAUDE_SKILL_DIR}/workflows/config-explain.md`
-10. **`config-setup`**: Interactively create/improve config. Read file: `${CLAUDE_SKILL_DIR}/workflows/config-setup.md`
-11. **Number (optionally followed by `--force`)**: Execute that task. Read file: `${CLAUDE_SKILL_DIR}/workflows/execute-task.md`
-    - Without `--force`: execute only if the task's `status` is `todo` and every dependency has `status == completed`. Any other status (`draft` / `in_progress` / `completed` / `canceled`) or incomplete dependency must stop the flow with a clear reason.
-    - With `--force`: permitted **only** when `status == in_progress`, to resume a previously started task. `--force` does **not** override `draft`, `completed`, or `canceled`, and is **not** a dependency bypass. See the Pre-check section of `execute-task.md` for the full branching rules.
+7. **`resume <id>`**: Resume an `in_progress` task (session/metadata refresh, reuse worktree). Read file: `${CLAUDE_SKILL_DIR}/workflows/resume-task.md`
+8. **Starts with `dod`**: Manage DoD check state. Read file: `${CLAUDE_SKILL_DIR}/workflows/dod-check.md`
+9. **Starts with `deps`**: Manage dependencies. Read file: `${CLAUDE_SKILL_DIR}/workflows/manage-dependencies.md`
+10. **`config-explain`**: Explain current config. Read file: `${CLAUDE_SKILL_DIR}/workflows/config-explain.md`
+11. **`config-setup`**: Interactively create/improve config. Read file: `${CLAUDE_SKILL_DIR}/workflows/config-setup.md`
+12. **Number**: Execute that task. Read file: `${CLAUDE_SKILL_DIR}/workflows/execute-task.md`
+    - Execute only if the task's `status` is `todo` and every dependency has `status == completed`. Any other status (`draft` / `in_progress` / `completed` / `canceled`) or incomplete dependency must stop the flow with a clear reason. To resume an `in_progress` task, use `/senko resume <id>` instead.
 
 **After matching a rule above, read the referenced file for the full workflow procedure.** Also read the CLI reference for command syntax: `${CLAUDE_SKILL_DIR}/cli-reference.md`
 
@@ -60,6 +60,7 @@ Parse `$ARGUMENTS` with these rules (check in order):
 | `${CLAUDE_SKILL_DIR}/workflows/list-tasks.md` | List and filter tasks |
 | `${CLAUDE_SKILL_DIR}/workflows/dependency-graph.md` | Visualize dependency graph |
 | `${CLAUDE_SKILL_DIR}/workflows/execute-task.md` | Execute a task (worktree, plan, implement) |
+| `${CLAUDE_SKILL_DIR}/workflows/resume-task.md` | Resume an in_progress task (session refresh, reuse worktree) |
 | `${CLAUDE_SKILL_DIR}/workflows/complete-task.md` | Complete a task (DoD verification, PR checks) |
 | `${CLAUDE_SKILL_DIR}/workflows/contract-terminal.md` | Execute and complete a `contract-terminal` task (verify Contract DoD; spawn follow-ups on gaps) |
 | `${CLAUDE_SKILL_DIR}/workflows/dod-check.md` | Check/uncheck Definition of Done items |

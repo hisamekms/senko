@@ -27,6 +27,7 @@ senko task next
 # Status transitions (dedicated commands)
 senko task publish <id>                     # draft → todo
 senko task start <id>                       # todo → in_progress
+senko task resume <id> [--session-id <id>] [--metadata '{...}']  # session/metadata refresh on an in_progress task (no status change; rejects any non-in_progress status)
 senko task complete <id>                    # in_progress → completed (fails if unchecked DoD)
 senko task complete <id> --skip-pr-check    # bypass PR merge/review checks
 senko task cancel <id> --reason "Reason text"  # any active → canceled
@@ -99,11 +100,12 @@ senko config --init                    # generate template config.toml
 ## Important CLI details
 
 - `--output text|json` and `--dry-run` are **global flags** — place them before the subcommand: `senko --output text task list`, `senko --dry-run task publish 1`
-- `--dry-run` shows what would happen without actually executing the command. Available for all state-changing commands (`task add`, `task edit`, `task publish`, `task start`, `task complete`, `task cancel`, `task next`, `task deps add/remove/set`, `task dod check/uncheck`). Read-only commands (`task list`, `task get`, `task deps list`) ignore it.
+- `--dry-run` shows what would happen without actually executing the command. Available for all state-changing commands (`task add`, `task edit`, `task publish`, `task start`, `task resume`, `task complete`, `task cancel`, `task next`, `task deps add/remove/set`, `task dod check/uncheck`). Read-only commands (`task list`, `task get`, `task deps list`) ignore it.
 - **DoD items have a checked state.** `task complete` will fail if any DoD items are unchecked. Use `task dod check <task_id> <index>` (1-based index) to mark items before completing. Tasks with no DoD items can complete freely.
 - **Status transitions use dedicated commands**, not `task edit --status`:
   - `task publish`: draft → todo
   - `task start`: todo → in_progress
+  - `task resume`: refresh `assignee_session_id` / `metadata` on an `in_progress` task (no status change)
   - `task complete`: in_progress → completed
   - `task cancel`: any active status → canceled
 - `task get` only outputs JSON (no `--output text` support)
@@ -120,7 +122,7 @@ senko config --init                    # generate template config.toml
     - `{{context.<key>}}` — resolved from session context at branch-setting time. If the value is unavailable, the user is asked via `AskUserQuestion`.
     - `{{<name>:<opt1>|<opt2>|...}}` — enum variable. The skill infers the value from the task content. If unclear, the user is asked to choose. Example: `{{prefix:feat|fix|chore}}`
     - Examples: `task/{{id}}-{{slug}}`, `{{prefix:feat|fix|chore}}/{{id}}-{{slug}}`
-  - Stage configs under `[workflow.<stage>]`. Built-in stage names the skill consumes: `task_add`, `task_publish`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `branch_set`, `branch_cleanup`, `branch_merge`, `pr_create`, `pr_update`, `plan`, `implement`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`. Among the `contract_*` stages, only `contract_add`, `contract_note_add`, and `contract_dod_check` are emitted by the bundled workflows; `contract_edit`, `contract_delete`, and `contract_dod_uncheck` are recognized as built-ins but are reserved for user-defined workflow extensions. User-defined stage names are also accepted (preserved in `senko config` output).
+  - Stage configs under `[workflow.<stage>]`. Built-in stage names the skill consumes: `task_add`, `task_publish`, `task_start`, `task_resume`, `task_complete`, `task_cancel`, `task_select`, `branch_set`, `branch_cleanup`, `branch_merge`, `pr_create`, `pr_update`, `plan`, `implement`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`. Among the `contract_*` stages, only `contract_add`, `contract_note_add`, and `contract_dod_check` are emitted by the bundled workflows; `contract_edit`, `contract_delete`, and `contract_dod_uncheck` are recognized as built-ins but are reserved for user-defined workflow extensions. User-defined stage names are also accepted (preserved in `senko config` output).
   - Each stage supports `instructions` (list of text), `metadata_fields` (field list), and `hooks` (map). Workflow stage hooks are emitted as plan instructions by the skill; see the **Hooks** section below for the HookDef shape.
   - `metadata_fields`: each field has `key`, `source` (`env`, `value`, `prompt`, `command`), optional `default`, and `required` flag. `prompt` source fields are collected via `AskUserQuestion`. Values are shallow-merged into existing metadata.
   - **Metadata update semantics**: `--metadata` performs a shallow merge (top-level keys only: add/overwrite existing, null deletes key, unmentioned keys preserved). `--replace-metadata` replaces entirely. `--clear-metadata` removes all metadata.
@@ -133,7 +135,7 @@ senko config --init                    # generate template config.toml
   - `[server.relay.<action>.hooks.<name>]` — fired by `senko serve` when running in Relay mode (enabled by setting `server.relay.url`).
   - `[server.remote.<action>.hooks.<name>]` — fired by `senko serve`.
   - `[workflow.<stage>.hooks.<name>]` — emitted as plan instructions by the skill at the matching stage.
-  - CLI/server `<action>` is one of: `task_add`, `task_publish`, `task_start`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`.
+  - CLI/server `<action>` is one of: `task_add`, `task_publish`, `task_start`, `task_resume`, `task_complete`, `task_cancel`, `task_select`, `contract_add`, `contract_edit`, `contract_delete`, `contract_dod_check`, `contract_dod_uncheck`, `contract_note_add`.
   - Workflow stage hooks under `[workflow.contract_<verb>.hooks.*]` are emitted into the plan by the skill at each `senko contract <verb>` call site (see `workflows/add-task.md`, `workflows/execute-task.md`, and `workflows/contract-terminal.md`).
   - HookDef fields: `command` (shell), `when` (`pre` / `post`, default `post`), `mode` (`sync` / `async`, default `async`), `on_failure` (`abort` / `warn` / `ignore`, default `abort`), `enabled` (default `true`), `env_vars` (list of `{name, required, default, description}`), `on_result` (`any` / `selected` / `none`, `task_select` only), `prompt` (workflow stages only — renders an agent instruction).
   - Only `mode = "sync"` + `when = "pre"` + `on_failure = "abort"` can abort a state transition. Hooks defined under a non-matching runtime section are ignored with a startup warning.

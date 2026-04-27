@@ -23,6 +23,13 @@ pub trait TaskTransitionPort: Send + Sync {
         user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
+    async fn resume_task(
+        &self,
+        project_id: ProjectId,
+        id: TaskId,
+        session_id: Option<String>,
+        metadata: Option<MetadataUpdate>,
+    ) -> Result<Task>;
     async fn complete_task(
         &self,
         project_id: ProjectId,
@@ -62,6 +69,19 @@ pub async fn default_start_task(
 ) -> Result<Task> {
     let task = repo.get_task(project_id, id).await?;
     let (task, _events) = task.start(session_id, user_id, now_rfc3339(), metadata)?;
+    repo.save(&task).await?;
+    Ok(task)
+}
+
+pub async fn default_resume_task(
+    repo: &(dyn TaskRepository + Sync),
+    project_id: ProjectId,
+    id: TaskId,
+    session_id: Option<String>,
+    metadata: Option<MetadataUpdate>,
+) -> Result<Task> {
+    let task = repo.get_task(project_id, id).await?;
+    let (task, _events) = task.resume(session_id, now_rfc3339(), metadata)?;
     repo.save(&task).await?;
     Ok(task)
 }
@@ -114,6 +134,18 @@ macro_rules! impl_task_transition_default {
             ) -> anyhow::Result<$crate::domain::task::Task> {
                 $crate::application::port::task_transition::default_start_task(
                     self, project_id, id, session_id, user_id, metadata,
+                )
+                .await
+            }
+            async fn resume_task(
+                &self,
+                project_id: ProjectId,
+                id: $crate::domain::task::TaskId,
+                session_id: Option<String>,
+                metadata: Option<$crate::domain::task::MetadataUpdate>,
+            ) -> anyhow::Result<$crate::domain::task::Task> {
+                $crate::application::port::task_transition::default_resume_task(
+                    self, project_id, id, session_id, metadata,
                 )
                 .await
             }

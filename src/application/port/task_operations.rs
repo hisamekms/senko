@@ -48,6 +48,13 @@ pub trait TaskOperations: Send + Sync {
         user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task>;
+    async fn resume_task(
+        &self,
+        project_id: ProjectId,
+        id: TaskId,
+        session_id: Option<String>,
+        metadata: Option<MetadataUpdate>,
+    ) -> Result<Task>;
     async fn next_task(
         &self,
         project_id: ProjectId,

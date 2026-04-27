@@ -592,6 +592,64 @@ pub async fn cmd_start(
     Ok(())
 }
 
+pub async fn cmd_resume(
+    cli: &Cli,
+    id: TaskId,
+    session_id: Option<String>,
+    metadata: Option<String>,
+) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+    let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
+    let project_id = resolve_project_id(&*project_ops, &config).await?;
+    let metadata: Option<MetadataUpdate> = metadata
+        .map(|s| -> Result<MetadataUpdate> {
+            let val: serde_json::Value = serde_json::from_str(&s)
+                .map_err(|e| anyhow::anyhow!("invalid metadata JSON: {}", e))?;
+            Ok(MetadataUpdate::Merge(val))
+        })
+        .transpose()?;
+
+    if cli.dry_run {
+        let mut result = task_ops
+            .preview_transition(project_id, id, TaskStatus::InProgress)
+            .await?;
+        if !result.allowed {
+            anyhow::bail!("{}", result.reason.unwrap_or_default());
+        }
+        if let Some(ref sid) = session_id {
+            result
+                .operations
+                .push(format!("Set assignee_session_id to \"{}\"", sid));
+        }
+        if metadata.is_some() {
+            result.operations.push("Merge metadata".to_string());
+        }
+        return print_dry_run(
+            &cli.output,
+            &DryRunOperation {
+                command: "resume".into(),
+                operations: result.operations,
+            },
+        );
+    }
+
+    let updated = task_ops
+        .resume_task(project_id, id, session_id, metadata)
+        .await?;
+
+    match cli.output {
+        OutputFormat::Json => {
+            println!("{}", serde_json::to_string_pretty(&updated)?);
+        }
+        OutputFormat::Text => {
+            println!("Resumed task #{}: {}", updated.id(), updated.title());
+        }
+    }
+
+    Ok(())
+}
+
 pub async fn cmd_next(
     cli: &Cli,
     session_id: Option<String>,
@@ -922,10 +980,11 @@ fn extract_script_path(command: &str) -> Option<String> {
 }
 
 fn print_task_action_hooks(label: &str, hooks: &crate::infra::config::TaskActionHooks) {
-    let sections: [(&str, &crate::infra::config::ActionConfig); 6] = [
+    let sections: [(&str, &crate::infra::config::ActionConfig); 7] = [
         ("task_add", &hooks.task_add),
         ("task_publish", &hooks.task_publish),
         ("task_start", &hooks.task_start),
+        ("task_resume", &hooks.task_resume),
         ("task_complete", &hooks.task_complete),
         ("task_cancel", &hooks.task_cancel),
         ("task_select", &hooks.task_select),
@@ -1029,10 +1088,11 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
 
     let mut diagnostics = Vec::new();
     for (runtime_label, action_hooks) in runtime_sections {
-        let actions: [(&str, &crate::infra::config::ActionConfig); 6] = [
+        let actions: [(&str, &crate::infra::config::ActionConfig); 7] = [
             ("task_add", &action_hooks.task_add),
             ("task_publish", &action_hooks.task_publish),
             ("task_start", &action_hooks.task_start),
+            ("task_resume", &action_hooks.task_resume),
             ("task_complete", &action_hooks.task_complete),
             ("task_cancel", &action_hooks.task_cancel),
             ("task_select", &action_hooks.task_select),

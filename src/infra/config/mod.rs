@@ -121,6 +121,8 @@ pub struct TaskActionHooks {
     #[serde(default)]
     pub task_start: ActionConfig,
     #[serde(default)]
+    pub task_resume: ActionConfig,
+    #[serde(default)]
     pub task_complete: ActionConfig,
     #[serde(default)]
     pub task_cancel: ActionConfig,
@@ -135,6 +137,7 @@ impl TaskActionHooks {
             "task_update" => Some(&self.task_update),
             "task_publish" => Some(&self.task_publish),
             "task_start" => Some(&self.task_start),
+            "task_resume" => Some(&self.task_resume),
             "task_complete" => Some(&self.task_complete),
             "task_cancel" => Some(&self.task_cancel),
             "task_select" => Some(&self.task_select),
@@ -147,6 +150,7 @@ impl TaskActionHooks {
             && self.task_update.hooks.is_empty()
             && self.task_publish.hooks.is_empty()
             && self.task_start.hooks.is_empty()
+            && self.task_resume.hooks.is_empty()
             && self.task_complete.hooks.is_empty()
             && self.task_cancel.hooks.is_empty()
             && self.task_select.hooks.is_empty()
@@ -1246,6 +1250,7 @@ fn merge_task_action_hooks(base: TaskActionHooks, overlay: TaskActionHooks) -> T
         task_update: merge_action_config(base.task_update, overlay.task_update),
         task_publish: merge_action_config(base.task_publish, overlay.task_publish),
         task_start: merge_action_config(base.task_start, overlay.task_start),
+        task_resume: merge_action_config(base.task_resume, overlay.task_resume),
         task_complete: merge_action_config(base.task_complete, overlay.task_complete),
         task_cancel: merge_action_config(base.task_cancel, overlay.task_cancel),
         task_select: merge_action_config(base.task_select, overlay.task_select),
@@ -2358,6 +2363,24 @@ mod tests {
         assert_eq!(webhook.env_vars[0].name, "WEBHOOK_URL");
         let prompt = cli.hooks.task_select.hooks.get("prompt_for_add").unwrap();
         assert_eq!(prompt.on_result, Some(OnResult::None));
+    }
+
+    #[test]
+    fn cli_task_resume_hooks_recognized() {
+        let toml_str = r#"
+            [task_resume.hooks.notify]
+            command = "echo resumed"
+            when = "post"
+        "#;
+        let cli: CliConfig = toml::from_str(toml_str).unwrap();
+        let notify = cli.hooks.task_resume.hooks.get("notify").unwrap();
+        assert_eq!(notify.command, "echo resumed");
+        assert_eq!(
+            cli.hooks
+                .action_config("task_resume")
+                .map(|c| c.hooks.len()),
+            Some(1)
+        );
     }
 
     #[test]

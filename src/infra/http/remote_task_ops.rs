@@ -325,6 +325,62 @@ impl TaskOperations for RemoteTaskOperations {
         Ok(task)
     }
 
+    async fn resume_task(
+        &self,
+        project_id: ProjectId,
+        id: TaskId,
+        session_id: Option<String>,
+        metadata: Option<MetadataUpdate>,
+    ) -> Result<Task> {
+        let prev_status = self.get_task(project_id, id).await?.status();
+
+        let mut body = json!({ "session_id": session_id });
+        if let Some(ref meta_update) = metadata {
+            match meta_update {
+                MetadataUpdate::Clear => {
+                    body["clear_metadata"] = json!(true);
+                }
+                MetadataUpdate::Merge(v) => {
+                    body["metadata"] = json!(v);
+                }
+                MetadataUpdate::Replace(v) => {
+                    body["replace_metadata"] = json!(v);
+                }
+            }
+        }
+
+        let resp = self
+            .prepare(
+                self.client()
+                    .post(self.project_url(project_id, &format!("/tasks/{id}/resume")))
+                    .json(&body),
+            )
+            .send()
+            .await?;
+        let task: Task = read_json_or_error(resp).await?;
+
+        let _ = self
+            .hooks
+            .fire(
+                &HookTrigger::Task(TaskEvent::Resumed),
+                HookWhen::Post,
+                Some(&task),
+                Some(prev_status),
+                None,
+            )
+            .await;
+
+        crate::emit_business_event!(
+            "senko.task.resumed",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
+
+        Ok(task)
+    }
+
     async fn next_task(
         &self,
         project_id: ProjectId,

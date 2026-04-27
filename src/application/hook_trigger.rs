@@ -45,6 +45,7 @@ impl HookTrigger {
             HookTrigger::Task(TaskEvent::Updated { .. }) => Some("task_update"),
             HookTrigger::Task(TaskEvent::Published) => Some("task_publish"),
             HookTrigger::Task(TaskEvent::Started) => Some("task_start"),
+            HookTrigger::Task(TaskEvent::Resumed) => Some("task_resume"),
             HookTrigger::Task(TaskEvent::Completed) => Some("task_complete"),
             HookTrigger::Task(TaskEvent::Canceled) => Some("task_cancel"),
             HookTrigger::TaskSelect { .. } => Some("task_select"),
@@ -97,6 +98,7 @@ impl HookTrigger {
                 TaskEvent::Updated { .. } => "senko.task.updated",
                 TaskEvent::Published => "senko.task.published",
                 TaskEvent::Started => "senko.task.started",
+                TaskEvent::Resumed => "senko.task.resumed",
                 TaskEvent::Completed => "senko.task.completed",
                 TaskEvent::Canceled => "senko.task.canceled",
                 TaskEvent::DependencyAdded { .. } => "senko.task.dependency_added",
@@ -142,6 +144,7 @@ impl HookTrigger {
             "task_update",
             "task_publish",
             "task_start",
+            "task_resume",
             "task_complete",
             "task_cancel",
             "task_select",
@@ -183,6 +186,7 @@ impl HookTrigger {
             })),
             "task_publish" => Some(HookTrigger::Task(TaskEvent::Published)),
             "task_start" => Some(HookTrigger::Task(TaskEvent::Started)),
+            "task_resume" => Some(HookTrigger::Task(TaskEvent::Resumed)),
             "task_complete" => Some(HookTrigger::Task(TaskEvent::Completed)),
             "task_cancel" => Some(HookTrigger::Task(TaskEvent::Canceled)),
             "task_select" => Some(HookTrigger::TaskSelect {
@@ -288,6 +292,7 @@ mod tests {
             "task_update",
             "task_publish",
             "task_start",
+            "task_resume",
             "task_complete",
             "task_cancel",
             "task_select",
@@ -343,8 +348,8 @@ mod tests {
             ApiKeyId, Role, SessionId, SessionRevokeScope, UserCreationSource, UserId,
         };
 
-        // Task aggregate (11 events)
-        let task_cases: [(TaskEvent, &str); 11] = [
+        // Task aggregate (12 events)
+        let task_cases: [(TaskEvent, &str); 12] = [
             (TaskEvent::Created, "senko.task.created"),
             (
                 TaskEvent::Updated {
@@ -354,6 +359,7 @@ mod tests {
             ),
             (TaskEvent::Published, "senko.task.published"),
             (TaskEvent::Started, "senko.task.started"),
+            (TaskEvent::Resumed, "senko.task.resumed"),
             (TaskEvent::Completed, "senko.task.completed"),
             (TaskEvent::Canceled, "senko.task.canceled"),
             (

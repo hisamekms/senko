@@ -87,6 +87,7 @@ fn emit_task_events(project_id: ProjectId, task_id: TaskId, events: &[TaskEvent]
             TaskEvent::Created
             | TaskEvent::Published
             | TaskEvent::Started
+            | TaskEvent::Resumed
             | TaskEvent::Completed
             | TaskEvent::Canceled => {}
         }
@@ -304,6 +305,75 @@ impl TaskOperations for LocalTaskOperations {
 
         crate::emit_business_event!(
             "senko.task.started",
+            senko.task.id = task.id().0,
+            senko.project.id = project_id.0,
+            from_status = %prev_status,
+            to_status = %task.status(),
+        );
+
+        Ok(task)
+    }
+
+    async fn resume_task(
+        &self,
+        project_id: ProjectId,
+        id: TaskId,
+        session_id: Option<String>,
+        metadata: Option<MetadataUpdate>,
+    ) -> Result<Task> {
+        if let Some(ref sid) = session_id {
+            crate::domain::validator::validate_string_length(
+                "session_id",
+                sid,
+                crate::domain::validator::MAX_SESSION_ID_LEN,
+            )?;
+        }
+        match &metadata {
+            Some(MetadataUpdate::Merge(v)) | Some(MetadataUpdate::Replace(v)) => {
+                validate_metadata(v)?
+            }
+            _ => {}
+        }
+        let prev = self.backend.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Resumed);
+        if self
+            .hooks
+            .fire(
+                &trigger,
+                HookWhen::Pre,
+                Some(&prev),
+                Some(prev_status),
+                None,
+            )
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: "task_resume".into(),
+            }
+            .into());
+        }
+
+        let task = self
+            .backend
+            .resume_task(project_id, id, session_id, metadata)
+            .await?;
+
+        let _ = self
+            .hooks
+            .fire(
+                &trigger,
+                HookWhen::Post,
+                Some(&task),
+                Some(prev_status),
+                None,
+            )
+            .await;
+
+        crate::emit_business_event!(
+            "senko.task.resumed",
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -606,6 +676,24 @@ impl TaskOperations for LocalTaskOperations {
     ) -> Result<PreviewResult> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let mut operations = Vec::new();
+
+        // Resume preview: in_progress → in_progress is not a real transition
+        // but a session/metadata refresh. `task resume` reuses this preview
+        // path, so allow it explicitly with a Resumed-shaped operations list.
+        if task.status() == TaskStatus::InProgress && target == TaskStatus::InProgress {
+            operations.push(format!(
+                "Resume task #{} (session/metadata refresh)",
+                task_id
+            ));
+            return Ok(PreviewResult {
+                allowed: true,
+                reason: None,
+                task,
+                target_status: target,
+                operations,
+                unblocked_tasks: vec![],
+            });
+        }
 
         // Check basic transition validity
         let allowed = task.status().can_transition_to(target);

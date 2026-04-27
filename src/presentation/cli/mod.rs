@@ -311,6 +311,17 @@ pub enum TaskAction {
         #[arg(long)]
         metadata: Option<String>,
     },
+    /// Resume an in_progress task: refresh assignee_session_id and metadata.
+    /// Status is unchanged. Rejects any non-in_progress status.
+    Resume {
+        /// Task ID
+        id: TaskId,
+        #[arg(long)]
+        session_id: Option<String>,
+        /// JSON string shallow-merged into existing metadata
+        #[arg(long)]
+        metadata: Option<String>,
+    },
     /// Edit a task
     Edit {
         /// Task ID
@@ -604,7 +615,7 @@ pub enum HooksCommand {
     },
     /// Test hooks by running them synchronously
     Test {
-        /// Event name (task_add, task_publish, task_start, task_complete, task_cancel, task_select, contract_add, contract_edit, contract_delete, contract_dod_check, contract_dod_uncheck, contract_note_add)
+        /// Event name (task_add, task_publish, task_start, task_resume, task_complete, task_cancel, task_select, contract_add, contract_edit, contract_delete, contract_dod_check, contract_dod_uncheck, contract_note_add)
         event_name: String,
         /// Task ID to use for building the event (uses a sample task if omitted)
         task_id: Option<TaskId>,
@@ -850,7 +861,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # url = "http://127.0.0.1:3142"
 # token = "your-api-token"
 
-# Task action hooks: task_add / task_publish / task_start / task_complete / task_cancel / task_select
+# Task action hooks: task_add / task_publish / task_start / task_resume / task_complete / task_cancel / task_select
 # Contract action hooks: contract_add / contract_edit / contract_delete / contract_dod_check /
 #                        contract_dod_uncheck / contract_note_add
 #
@@ -914,7 +925,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 # --- Workflow stages ---
 # Built-in stages consumed by the Claude Code skill:
-#   task_add / task_publish / task_start / task_complete / task_cancel / task_select
+#   task_add / task_publish / task_start / task_resume / task_complete / task_cancel / task_select
 #   branch_set / branch_cleanup / branch_merge / pr_create / pr_update
 #   plan / implement
 # User-defined stages are allowed — unknown stage names are passed through
@@ -1099,6 +1110,11 @@ pub async fn run(cli: Cli) -> Result<()> {
                 session_id,
                 metadata,
             } => handlers::cmd_start(&cli, *id, session_id.clone(), metadata.clone()).await,
+            TaskAction::Resume {
+                id,
+                session_id,
+                metadata,
+            } => handlers::cmd_resume(&cli, *id, session_id.clone(), metadata.clone()).await,
             TaskAction::Edit {
                 id,
                 title,
@@ -1663,6 +1679,47 @@ mod tests {
                 assert_eq!(metadata.as_deref(), Some(r#"{"key":"val"}"#));
             }
             _ => panic!("expected Start"),
+        }
+    }
+
+    #[test]
+    fn parse_resume_command() {
+        let cli = Cli::parse_from(["senko", "task", "resume", "7", "--session-id", "sess-2"]);
+        match cli.command {
+            Command::Task {
+                action:
+                    TaskAction::Resume {
+                        id,
+                        session_id,
+                        metadata,
+                    },
+            } => {
+                assert_eq!(id, TaskId(7));
+                assert_eq!(session_id.as_deref(), Some("sess-2"));
+                assert_eq!(metadata, None);
+            }
+            _ => panic!("expected Resume"),
+        }
+    }
+
+    #[test]
+    fn parse_resume_with_metadata() {
+        let cli = Cli::parse_from([
+            "senko",
+            "task",
+            "resume",
+            "7",
+            "--metadata",
+            r#"{"phase":"recovery"}"#,
+        ]);
+        match cli.command {
+            Command::Task {
+                action: TaskAction::Resume { id, metadata, .. },
+            } => {
+                assert_eq!(id, TaskId(7));
+                assert_eq!(metadata.as_deref(), Some(r#"{"phase":"recovery"}"#));
+            }
+            _ => panic!("expected Resume"),
         }
     }
 

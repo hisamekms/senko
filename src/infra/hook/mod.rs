@@ -1190,6 +1190,7 @@ pub fn validate_config_hooks(config: &Config) {
             ("task_add", &action.task_add),
             ("task_publish", &action.task_publish),
             ("task_start", &action.task_start),
+            ("task_resume", &action.task_resume),
             ("task_complete", &action.task_complete),
             ("task_cancel", &action.task_cancel),
             ("task_select", &action.task_select),
