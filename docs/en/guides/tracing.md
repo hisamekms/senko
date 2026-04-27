@@ -2,7 +2,7 @@
 
 A practical guide for running the CLI → Remote attribute propagation and the Remote / Relay OTel trace + business event LogRecord emission on a real shell.
 
-For the full spec (33 `event.name`s, the common attribute schema, the legacy → new event mapping, baggage limits) see the [Tracing Reference](../reference/tracing.md).
+For the full spec (33 `event_name`s, the common attribute schema, the legacy → new event mapping, baggage limits) see the [Tracing Reference](../reference/tracing.md).
 
 ## Sharing Environment with Claude Code
 

@@ -3,7 +3,7 @@
 The senko Remote and Relay emit observability data on two parallel channels:
 
 1. **W3C Trace Context + Baggage**: the CLI propagates arbitrary attributes to the Remote on every request, and the Remote promotes them to `baggage.<key>` span attributes.
-2. **Business event `LogRecord`s** (each carrying an `event.name` attribute): the application layer of the Remote and Relay emits one OTel `LogRecord` per domain state transition. Caller-supplied baggage from external systems (e.g. `--attr aviary.session.id=…`) rides on these records as common attributes, **without any prefix rewrite**.
+2. **Business event `LogRecord`s** — each carrying `event_name = senko.*` as a top-level field on the OTLP `LogRecord` proto, **not** an entry in the `attributes` array: the application layer of the Remote and Relay emits one OTel `LogRecord` per domain state transition. Caller-supplied baggage from external systems (e.g. `--attr aviary.session.id=…`) rides on these records as common attributes, **without any prefix rewrite**.
 
 Both channels are produced through the standard OTel SDK, so the same environment variables that drive other OTel-aware tools (e.g. Claude Code) drive senko too. For day-to-day operation see the [OTel Tracing Operations Guide](../guides/tracing.md).
 
@@ -12,6 +12,8 @@ Both channels are produced through the standard OTel SDK, so the same environmen
 ## Business Events at a Glance
 
 Business events are emitted via `tracing::event!` with a fixed `target: "senko_business"`. The `opentelemetry-appender-tracing` `OpenTelemetryTracingBridge` layer reads `Metadata::name()` and forwards it as the OTel `LogRecord::set_event_name`.
+
+> **Important**: `event_name` is a **top-level field** on the OTLP `LogRecord` proto (field 12), **not** an entry in the `attributes` array. Downstream consumers must read the `event_name` (snake_case) field directly off the LogRecord — querying the attributes side returns nothing. See [Downstream consumers — reading `event_name`](#downstream-consumers--reading-event_name) for the full receiver-side recipe.
 
 | Field | Value |
 |---|---|
@@ -29,13 +31,13 @@ The `BusinessAttributesProcessor` is registered as an OTel `LogProcessor` and on
 
 Infra-level records (`info!("Listening on …")`, etc.) keep their default module-path `target`, so the processor leaves them alone — they only carry Resource attributes.
 
-## `event.name` Catalog (33 events total)
+## `event_name` Catalog (33 events total)
 
 Twenty-nine business events plus four cross-cutting events. Caller-supplied baggage like `aviary.*=…` rides on **every** one of them as common attributes.
 
 ### Task (11)
 
-| `event.name` | When | Required attributes (in addition to the common ones) |
+| `event_name` | When | Required attributes (in addition to the common ones) |
 |---|---|---|
 | `senko.task.created` | `task add` succeeds | `senko.task.id`, `senko.project.id` |
 | `senko.task.updated` | `task edit` succeeds (title / description / priority / plan / tags / metadata / …) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON array) |
@@ -51,7 +53,7 @@ Twenty-nine business events plus four cross-cutting events. Caller-supplied bagg
 
 ### Contract (6)
 
-| `event.name` | When | Required attributes |
+| `event_name` | When | Required attributes |
 |---|---|---|
 | `senko.contract.created` | `contract create` succeeds | `senko.contract.id`, `senko.project.id` |
 | `senko.contract.updated` | `contract edit` succeeds | `senko.contract.id`, `senko.project.id`, `changed_fields` |
@@ -62,7 +64,7 @@ Twenty-nine business events plus four cross-cutting events. Caller-supplied bagg
 
 ### Project (5)
 
-| `event.name` | When | Required attributes |
+| `event_name` | When | Required attributes |
 |---|---|---|
 | `senko.project.created` | `project create` succeeds | `senko.project.id` |
 | `senko.project.updated` | `project edit` succeeds | `senko.project.id`, `changed_fields` |
@@ -72,7 +74,7 @@ Twenty-nine business events plus four cross-cutting events. Caller-supplied bagg
 
 ### User (5)
 
-| `event.name` | When | Required attributes |
+| `event_name` | When | Required attributes |
 |---|---|---|
 | `senko.user.created` | `user create` or auto-provisioning succeeds | `senko.user.id` (target), `source` (`manual` / `oidc_provisioning` / `trusted_headers_provisioning`) |
 | `senko.user.updated` | `user edit` succeeds | `senko.user.id` (target), `changed_fields` |
@@ -84,7 +86,7 @@ When `scope=All`, **one LogRecord per affected session is emitted** — not a si
 
 ### MetadataField (2)
 
-| `event.name` | When | Required attributes |
+| `event_name` | When | Required attributes |
 |---|---|---|
 | `senko.metadata_field.defined` | `metadata-field define` succeeds | `senko.project.id`, `senko.metadata_field.name`, `senko.metadata_field.type` |
 | `senko.metadata_field.removed` | `metadata-field remove` succeeds | `senko.project.id`, `senko.metadata_field.name`, `senko.metadata_field.type` (the value before removal) |
@@ -93,7 +95,7 @@ When `scope=All`, **one LogRecord per affected session is emitted** — not a si
 
 Emitted by middleware / cross-cutting layers, not tied to a domain aggregate.
 
-| `event.name` | When | Emit site | Required attributes |
+| `event_name` | When | Emit site | Required attributes |
 |---|---|---|---|
 | `senko.api.call` | Request finishes (one record per request, both 2xx and 5xx) | `propagate_trace_context` middleware | `http.method`, `http.route`, `http.status_code`, `latency_ms`, [`senko.project.id`] |
 | `senko.api.error` | `ApiError` response | `IntoResponse for ApiError` | `http.status_code`, `error.type`, `error.message` |
@@ -342,7 +344,36 @@ On failure (network error, non-2xx upstream, parse failure, missing required fie
 
 On `SIGINT` (Ctrl-C) or `SIGTERM`, the Remote / Relay drains in-flight axum requests, then flushes the OTel tracer and logger providers before exiting. Because telemetry is dropped **after** an explicit flush, even short-lived processes manage to ship their final spans and business event LogRecords.
 
+## Downstream Consumers — Reading `event_name`
+
+On the OTLP wire, `event_name` is a **top-level field** on the `LogRecord` proto (field 12). It is **not** an entry in the `attributes` array, so attribute-based aggregation code cannot read it. **Querying `attributes["event.name"]` returns nothing.**
+
+### Reference paths by backend / SDK
+
+| Backend / SDK | Reference path |
+|---|---|
+| OTel Collector pipeline (e.g. transform processor) | OTTL `log` context: `log.event_name` |
+| `opentelemetry-proto` (Rust / Go / Python / …) | Read the `LogRecord.event_name` (snake_case) field directly |
+| Grafana Loki (via the `otelcol → loki` exporter) | Label `event_name` (with default promotion settings) |
+| Grafana Tempo (Logs tab on a trace) | Field name `event_name` |
+| Custom OTLP receiver | Decode proto field 12 directly |
+
+### Compatibility recipe for legacy `attributes["event.name"]` consumers
+
+If you have existing aggregation logic written against the legacy attribute and would rather not rewrite it, the practical fix is to copy `event_name` into an attribute via the OTel Collector `transform` processor:
+
+```yaml
+processors:
+  transform/event_name_compat:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["event.name"], event_name) where event_name != nil
+```
+
+senko itself follows the new OTel Logs Data Model (`LogRecord.event_name`) and **does not dual-emit** — i.e. it deliberately does **not** also push the same value into the attributes side. Legacy consumers must absorb the wire-level shift at the Collector layer.
+
 ## See Also
 
 - [`--attr` global flag](cli.md#global-options)
-- [OTel Tracing Operations Guide](../guides/tracing.md) — Aviary integration, `event.name` queries, audit filters, Jaeger / Tempo / console-exporter verification, security considerations.
+- [OTel Tracing Operations Guide](../guides/tracing.md) — Aviary integration, `event_name` queries, audit filters, Jaeger / Tempo / console-exporter verification, security considerations.

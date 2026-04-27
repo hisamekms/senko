@@ -3,7 +3,7 @@
 senko の Remote / Relay は次の 2 系統で観測性データを発信します。
 
 1. **W3C Trace Context + Baggage**: CLI → Remote のリクエストに任意属性を伝搬し、Remote 側で `baggage.<key>` span attribute に昇格する。
-2. **業務イベント LogRecord (`event.name` 属性付き)**: Remote / Relay のアプリケーション層で、ドメイン状態遷移ごとに OTel `LogRecord` を発火する。Aviary 等の外部システムから `--attr aviary.session.id=…` で渡された baggage が、この LogRecord に **そのまま** 共通属性として乗る。
+2. **業務イベント LogRecord (各 record の `event_name` フィールドに `senko.*` が入る)**: Remote / Relay のアプリケーション層で、ドメイン状態遷移ごとに OTel `LogRecord` を発火する。Aviary 等の外部システムから `--attr aviary.session.id=…` で渡された baggage が、この LogRecord に **そのまま** 共通属性として乗る。
 
 両系統とも標準 OTel SDK 経由で出るので、Claude Code など他の OTel-aware なツールと **同じ環境変数** で運用できます。運用手順は [OTel Tracing 運用ガイド](../guides/tracing.md) を参照。
 
@@ -12,6 +12,8 @@ senko の Remote / Relay は次の 2 系統で観測性データを発信しま�
 ## 業務イベントの全体像
 
 業務イベントは `tracing::event!` を `target: "senko_business"` 固定で発火し、`opentelemetry-appender-tracing` の `OpenTelemetryTracingBridge` が `Metadata::name()` を OTel `LogRecord::set_event_name` に転写します。
+
+> **重要**: `event_name` は OTLP `LogRecord` proto の **トップレベルフィールド** (field 12) であり、`attributes` 配列には入りません。下流コンシューマは LogRecord オブジェクトの `event_name` (snake_case) フィールドを直接参照してください。attributes 側を見ても何も得られません。詳細は [下流コンシューマでの `event_name` 参照](#下流コンシューマでの-event_name-参照) を参照。
 
 | 項目 | 値 |
 |---|---|
@@ -29,13 +31,13 @@ senko の Remote / Relay は次の 2 系統で観測性データを発信しま�
 
 infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパスのままなので Processor は素通り、Resource 属性のみが付きます。
 
-## event.name 一覧 (合計 33 種)
+## event_name 一覧 (合計 33 種)
 
 29 種の業務イベントと 4 種の横断イベントの合計 33 種を発火します。Aviary 等の外部システムから渡された `--attr aviary.*=…` の baggage は、これら **すべて** に共通属性として乗ります。
 
 ### Task (11 種)
 
-| `event.name` | タイミング | 必須属性 (共通属性に加えて) |
+| `event_name` | タイミング | 必須属性 (共通属性に加えて) |
 |---|---|---|
 | `senko.task.created` | `task add` 成功時 | `senko.task.id`, `senko.project.id` |
 | `senko.task.updated` | `task edit` 成功時 (title / description / priority / plan / tags / metadata 等) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON 配列) |
@@ -51,7 +53,7 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 ### Contract (6 種)
 
-| `event.name` | タイミング | 必須属性 |
+| `event_name` | タイミング | 必須属性 |
 |---|---|---|
 | `senko.contract.created` | `contract create` 成功時 | `senko.contract.id`, `senko.project.id` |
 | `senko.contract.updated` | `contract edit` 成功時 | `senko.contract.id`, `senko.project.id`, `changed_fields` |
@@ -62,7 +64,7 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 ### Project (5 種)
 
-| `event.name` | タイミング | 必須属性 |
+| `event_name` | タイミング | 必須属性 |
 |---|---|---|
 | `senko.project.created` | `project create` 成功時 | `senko.project.id` |
 | `senko.project.updated` | `project edit` 成功時 | `senko.project.id`, `changed_fields` |
@@ -72,7 +74,7 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 ### User (5 種)
 
-| `event.name` | タイミング | 必須属性 |
+| `event_name` | タイミング | 必須属性 |
 |---|---|---|
 | `senko.user.created` | `user create` / 自動プロビジョニング成功時 | `senko.user.id` (target), `source` (`manual` / `oidc_provisioning` / `trusted_headers_provisioning`) |
 | `senko.user.updated` | `user edit` 成功時 | `senko.user.id` (target), `changed_fields` |
@@ -84,7 +86,7 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 ### MetadataField (2 種)
 
-| `event.name` | タイミング | 必須属性 |
+| `event_name` | タイミング | 必須属性 |
 |---|---|---|
 | `senko.metadata_field.defined` | `metadata-field define` 成功時 | `senko.project.id`, `senko.metadata_field.name`, `senko.metadata_field.type` |
 | `senko.metadata_field.removed` | `metadata-field remove` 成功時 | `senko.project.id`, `senko.metadata_field.name`, `senko.metadata_field.type` (削除前の値) |
@@ -93,7 +95,7 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 middleware / 横断レイヤで emit。業務イベントと違いドメイン集約に紐付かない。
 
-| `event.name` | タイミング | emit 場所 | 必須属性 |
+| `event_name` | タイミング | emit 場所 | 必須属性 |
 |---|---|---|---|
 | `senko.api.call` | リクエスト終了時 (200 / 5xx いずれも 1 件) | `propagate_trace_context` middleware | `http.method`, `http.route`, `http.status_code`, `latency_ms`, [`senko.project.id`] |
 | `senko.api.error` | `ApiError` レスポンス時 | `IntoResponse for ApiError` | `http.status_code`, `error.type`, `error.message` |
@@ -344,7 +346,36 @@ fetch 失敗時 (network / non-2xx / parse error / 必須フィールド欠) は
 
 `SIGINT` (Ctrl-C) と `SIGTERM` を受けると、Remote / Relay は axum の in-flight リクエストを drain したあと、OTel の tracer / logger provider を flush してから終了します。telemetry 系のドロップは **明示的な flush 後** に起きるので、短寿命プロセスでも最後のスパンと業務イベント LogRecord が送出されます。
 
+## 下流コンシューマでの event_name 参照
+
+OTLP wire 上、`event_name` は `LogRecord` proto の **トップレベルフィールド** (field 12) です。`attributes` 配列には入らないため、attribute ベースで集計しているコードは値を取得できません。**`attributes["event.name"]` を見ても何も得られません。**
+
+### バックエンド / SDK 別の参照パス
+
+| バックエンド / SDK | 参照パス |
+|---|---|
+| OTel Collector pipeline (transform processor 等) | OTTL の `log` context で `log.event_name` |
+| `opentelemetry-proto` (Rust / Go / Python 等) | `LogRecord.event_name` (snake_case) フィールドを直読 |
+| Grafana Loki (otelcol → loki exporter 経由) | label `event_name` (デフォルト promotion 設定時) |
+| Grafana Tempo (Trace 詳細の Logs タブ) | フィールド名 `event_name` |
+| 自前の OTLP receiver | proto field 12 を直接デコード |
+
+### 旧 `attributes["event.name"]` 互換が必要な場合
+
+attribute ベースで書かれた既存集計を書き換えずに済ませるには、OTel Collector の `transform` processor で `event_name` を attribute にコピーするのが実用的です:
+
+```yaml
+processors:
+  transform/event_name_compat:
+    log_statements:
+      - context: log
+        statements:
+          - set(attributes["event.name"], event_name) where event_name != nil
+```
+
+senko 側は OTel Logs Data Model 新仕様 (`LogRecord.event_name`) に準拠しており、互換のための dual-emit はしません (=「attribute 側にも同じ値を二重で乗せる」ことはしません)。旧仕様前提のコンシューマは Collector レイヤで吸収してください。
+
 ## 関連
 
 - [`--attr` グローバルフラグ](cli.md#グローバルオプション)
-- [OTel Tracing 運用ガイド](../guides/tracing.md) — Aviary 連携、event.name クエリ、監査用フィルタ、Jaeger / Tempo / console exporter の検証手順、セキュリティ考慮
+- [OTel Tracing 運用ガイド](../guides/tracing.md) — Aviary 連携、event_name クエリ、監査用フィルタ、Jaeger / Tempo / console exporter の検証手順、セキュリティ考慮

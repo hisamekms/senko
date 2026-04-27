@@ -2,7 +2,7 @@
 
 CLI → Remote の任意属性伝搬と、Remote / Relay 側 OTel SDK での traces / 業務イベント LogRecord 送出を、実際のシェルで動かすためのガイド。
 
-仕様の全量 (33 種の `event.name`、共通属性スキーマ、置換マッピング、baggage 上限) は [Tracing リファレンス](../reference/tracing.md) を参照。
+仕様の全量 (33 種の `event_name`、共通属性スキーマ、置換マッピング、baggage 上限) は [Tracing リファレンス](../reference/tracing.md) を参照。
 
 ## Claude Code との共存
 
