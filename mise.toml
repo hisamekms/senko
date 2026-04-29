@@ -5,7 +5,7 @@ _.file = ".env"
 [tools]
 rust = "latest"
 gh = "latest"
-"github:hisamekms/senko" = "0.41.0"
+"github:hisamekms/senko" = "0.41.1"
 "cargo:mdbook" = "latest"
 "cargo:mdbook-mermaid" = "latest"
 
