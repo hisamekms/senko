@@ -45,7 +45,6 @@ Review the following Task fields:
 - `title`
 - `background`
 - `description`
-- `plan`
 - `definition_of_done`
 - `in_scope`
 - `out_of_scope`
@@ -56,6 +55,8 @@ Review the following Task fields:
 - `priority`
 - `branch`
 - `pr_url`
+
+The `plan` field is intentionally **out of scope**. It is populated by the executor agent during implementation, not at registration time. Do not flag a missing or empty `plan`, and do not suggest plan additions.
 
 Because this is a single-Task flow:
 
@@ -74,7 +75,6 @@ Detect issues such as:
 
 - Missing necessary context in `background`
 - Insufficient work description in `description`
-- Empty or ambiguous `plan`
 - Non-verifiable `definition_of_done`
 - Missing or unclear `in_scope` / `out_of_scope`
 - Hidden assumptions from the task-registration session
@@ -92,7 +92,6 @@ Detect issues such as:
 - Decisions not reflected anywhere in the Task
 - Context that should be added to `background`
 - Work requirements that should be added to `description`
-- Execution steps that should be added to `plan`
 - Completion criteria that should be added to `definition_of_done`
 - Scope boundaries that should be added to `in_scope` or `out_of_scope`
 - Structured information that should be added to `metadata`
@@ -192,7 +191,6 @@ Field must be one of:
 
 - background
 - description
-- plan
 - definition_of_done
 - in_scope
 - out_of_scope

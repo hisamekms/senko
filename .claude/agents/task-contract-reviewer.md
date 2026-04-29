@@ -48,7 +48,6 @@ For each Task, especially review:
 - `title`
 - `background`
 - `description`
-- `plan`
 - `definition_of_done`
 - `in_scope`
 - `out_of_scope`
@@ -59,6 +58,8 @@ For each Task, especially review:
 - `priority`
 - `branch`
 - `pr_url`
+
+The `plan` field is intentionally **out of scope**. It is populated by the executor agent during implementation, not at registration time. Do not flag a missing or empty `plan`, and do not suggest plan additions.
 
 ### Main Contract fields to review
 
@@ -83,7 +84,6 @@ Detect issues such as:
 
 - Missing necessary context in `background`
 - Insufficient work description in `description`
-- Empty or ambiguous `plan`
 - Non-verifiable `definition_of_done`
 - Missing or unclear `in_scope` / `out_of_scope`
 - Implicit ordering assumptions not represented in `dependencies`
@@ -123,7 +123,7 @@ Detect issues such as:
 - Cross-cutting decisions that should be added to Contract `description`
 - Overall completion criteria that should be added to Contract `definition_of_done`
 - Decision-log entries that should be appended to Contract `notes`
-- Local decisions that should be added to a specific Task’s `background`, `description`, `plan`, `definition_of_done`, `in_scope`, or `out_of_scope`
+- Local decisions that should be added to a specific Task’s `background`, `description`, `definition_of_done`, `in_scope`, or `out_of_scope`
 - Structured information that should be added to `metadata`
 
 ### 4. Check dependencies
@@ -222,7 +222,6 @@ Field must be one of:
 
 - background
 - description
-- plan
 - definition_of_done
 - in_scope
 - out_of_scope
