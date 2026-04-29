@@ -330,12 +330,22 @@ Render each task with this structure:
 
 For the split path, render the Contract first (title, description, DoD, tags), then each sub-task in dependency order, then the terminal task last.
 
-After printing, ask the user in plain text (not via `AskUserQuestion`) whether to publish or what to amend.
+After printing the rendered Markdown, ask the user via `AskUserQuestion` how to proceed. Use a single question with three options:
+
+- `header`: "Publish?"
+- `question`: "Publish the finalized task(s), modify them, or cancel?"
+- options:
+  - **Publish (Recommended)** — "Publish the task(s) as shown above and end this workflow."
+  - **Modify** — "Make changes to the task(s) before publishing. You will be asked for the modification details in plain text after selecting this."
+  - **Cancel** — "Stop the workflow. The draft task(s) and Contract (if any) remain as-is — re-run `senko task publish <id>` later to resume."
+
+Adjust wording to the user's language; the option semantics must match the three branches below.
 
 Handle the response:
 
-- **Approved** → proceed to 4.5.
-- **Modifications requested** → apply the changes via the editing cheat-sheet above, append `{"note":"User-requested change at final approval: <summary>"}` via `append-decision $NID`, then **loop back to 4.3a** (rebuild packet → reviewer → handle verdict → re-render → ask again). The reviewer ensures user edits don't reintroduce gaps.
+- **Publish** → proceed to 4.5.
+- **Modify** → in the next assistant message, ask the user for the modification details **in plain text** (free-form text gives the most expressive feedback channel — do not use `AskUserQuestion` for this follow-up). After the user replies, apply the changes via the 4.3b editing cheat-sheet, append `{"note":"User-requested change at final approval: <summary>"}` via `append-decision $NID`, then **loop back to 4.3a** (rebuild packet → reviewer → handle verdict → re-render → ask again). The reviewer ensures user edits don't reintroduce gaps.
+- **Cancel** → leave every draft task and the Contract (if any) untouched (do **not** call `senko task cancel`). Tell the user the draft IDs are preserved and that they can resume later with `senko task publish <id>`. End the workflow.
 
 #### 4.5 Publish
 
