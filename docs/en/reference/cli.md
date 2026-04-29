@@ -17,7 +17,7 @@ Complete list of `senko` subcommands.
 --attr KEY=VALUE        attribute to attach to trace/baggage (repeatable, malformed input errors out)
 ```
 
-> Place `--output` and `--dry-run` **before the subcommand**: `senko --output text task list`.
+> Global options can be placed **before or after the subcommand**: both `senko --output text task list` and `senko task list --output text` are accepted.
 
 > For the full behavior of `--attr` / `SENKO_TRACE_ATTRIBUTES` / `OTEL_RESOURCE_ATTRIBUTES` — precedence, reserved-namespace exclusion — see the [Tracing Reference](tracing.md).
 

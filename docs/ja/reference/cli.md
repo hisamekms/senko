@@ -17,7 +17,7 @@
 --attr KEY=VALUE        trace/baggage に乗せる属性 (繰り返し可、malformed はエラー終了)
 ```
 
-> `--output` と `--dry-run` は **サブコマンドの前** に置いてください: `senko --output text task list`
+> グローバルオプションは **サブコマンドの前後どちらに置いてもよい**: `senko --output text task list` と `senko task list --output text` のどちらも受け付けられる。
 
 > `--attr` / `SENKO_TRACE_ATTRIBUTES` / `OTEL_RESOURCE_ATTRIBUTES` の詳細・優先順位・予約 namespace 除外仕様は [Tracing リファレンス](tracing.md) を参照。
 

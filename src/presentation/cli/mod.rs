@@ -62,45 +62,45 @@ pub enum OutputFormat {
 #[command(name = "senko", about = "Local task management CLI", version)]
 pub struct Cli {
     /// Output format
-    #[arg(long, value_enum, default_value_t = OutputFormat::Json)]
+    #[arg(long, global = true, value_enum, default_value_t = OutputFormat::Json)]
     pub output: OutputFormat,
 
     /// Project root directory
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub project_root: Option<PathBuf>,
 
     /// Path to config file (default: .senko/config.toml)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub config: Option<PathBuf>,
 
     /// Dry run mode: show what would be done without executing
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub dry_run: bool,
 
     /// Override log output directory
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub log_dir: Option<PathBuf>,
 
     /// Path to SQLite database file (env: SENKO_DB_PATH)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub db_path: Option<PathBuf>,
 
     /// PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub postgres_url: Option<String>,
 
     /// Project name to operate on (overrides config; env: SENKO_PROJECT)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub project: Option<String>,
 
     /// User name to operate as (overrides config; env: SENKO_USER)
-    #[arg(long)]
+    #[arg(long, global = true)]
     pub user: Option<String>,
 
     /// Attach a trace-propagation attribute to every outbound HTTP request
     /// as a W3C Baggage entry. Repeatable. Takes highest precedence over
     /// SENKO_TRACE_ATTRIBUTES and OTEL_RESOURCE_ATTRIBUTES.
-    #[arg(long = "attr", value_name = "KEY=VALUE", value_parser = parse_cli_attribute)]
+    #[arg(long = "attr", global = true, value_name = "KEY=VALUE", value_parser = parse_cli_attribute)]
     pub attr: Vec<(String, String)>,
 
     #[command(subcommand)]
@@ -2376,5 +2376,67 @@ mod tests {
         // After restructuring, `senko members` must not be accepted as an alias.
         let result = Cli::try_parse_from(["senko", "members", "list"]);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_global_output_after_subcommand() {
+        let cli = Cli::parse_from(["senko", "task", "list", "--output", "text"]);
+        assert!(matches!(cli.output, OutputFormat::Text));
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::List { .. }
+            }
+        ));
+
+        let before = Cli::parse_from(["senko", "--output", "text", "task", "list"]);
+        assert!(matches!(before.output, OutputFormat::Text));
+        assert!(matches!(
+            before.command,
+            Command::Task {
+                action: TaskAction::List { .. }
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_global_dry_run_after_subcommand() {
+        let cli = Cli::parse_from(["senko", "task", "complete", "1", "--dry-run"]);
+        assert!(cli.dry_run);
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::Complete { .. }
+            }
+        ));
+
+        let before = Cli::parse_from(["senko", "--dry-run", "task", "complete", "1"]);
+        assert!(before.dry_run);
+    }
+
+    #[test]
+    fn parse_global_attr_after_subcommand() {
+        let cli = Cli::parse_from([
+            "senko",
+            "task",
+            "list",
+            "--attr",
+            "run.id=A",
+            "--attr",
+            "session.id=B",
+        ]);
+        assert_eq!(
+            cli.attr,
+            vec![
+                ("run.id".to_string(), "A".to_string()),
+                ("session.id".to_string(), "B".to_string()),
+            ]
+        );
+        assert!(matches!(
+            cli.command,
+            Command::Task {
+                action: TaskAction::List { .. }
+            }
+        ));
     }
 }
