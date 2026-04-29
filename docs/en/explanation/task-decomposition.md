@@ -106,7 +106,7 @@ This lets the agent operate under a strict "don't think about what's next, don't
 
 ```
 /senko                 # auto-pick the next task and start it
-/senko 3               # explicitly pick ID 3 (warn if not ready)
+/senko start 3         # explicitly pick ID 3 (warn if not ready)
 ```
 
 ## Parallel Pick

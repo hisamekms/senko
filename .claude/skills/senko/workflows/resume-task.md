@@ -9,8 +9,8 @@ senko task get <id>
 ```
 
 - Verify `status == in_progress`. If anything else, refuse:
-  - `draft` → suggest `senko task publish <id>` then `/senko <id>` (a fresh start, not resume).
-  - `todo` → suggest `/senko <id>` (or `senko task start <id>`) — resume is for tasks already started.
+  - `draft` → suggest `senko task publish <id>` then `/senko start <id>` (a fresh start, not resume).
+  - `todo` → suggest `/senko start <id>` (or `senko task start <id>`) — resume is for tasks already started.
   - `completed` / `canceled` → already finished; refuse.
 - If `branch` is empty (non-repo task), skip worktree handling and continue.
 

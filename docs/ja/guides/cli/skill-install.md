@@ -36,7 +36,7 @@ Claude Code を再起動するか `/help` → skill 一覧で認識を確認し�
 | スラッシュコマンド | 役割 |
 |---|---|
 | `/senko` | ready なタスクから 1 件自動選択して実行開始 |
-| `/senko <id>` | 指定 ID のタスクを実行 |
+| `/senko start <id>` | 指定 ID のタスクを実行 |
 | `/senko add <description>` | 対話的にタスクを整理して追加 |
 | `/senko add --simple <description>` | 計画フェーズを省略して追加 |
 | `/senko list` | タスク一覧 |

@@ -106,7 +106,7 @@ priority (P0 → P3 の昇順)
 
 ```
 /senko                 # 次の 1 件を自動ピックして start まで
-/senko 3               # 明示的に ID 3 を指定 (ready でなければ warn)
+/senko start 3         # 明示的に ID 3 を指定 (ready でなければ warn)
 ```
 
 ## 並列 pick

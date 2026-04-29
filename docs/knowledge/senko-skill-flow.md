@@ -1,7 +1,7 @@
 ---
 id: senko-skill-flow
-title: senko skill のフロー（/senko add と /senko <id>）
-description: /senko add でタスク（とContract）を作るフロー、/senko <id> でタスクを実行するフローの内部分岐を図示
+title: senko skill のフロー（/senko add と /senko start <id>）
+description: /senko add でタスク（とContract）を作るフロー、/senko start <id> でタスクを実行するフローの内部分岐を図示
 tags:
   - senko
   - skill
@@ -14,12 +14,10 @@ updated_at: 2026-04-29
 ## 概要
 
 senko skill（`.claude/skills/senko/`）の主要 2 フロー — タスク追加 (`/senko add`) と
-タスク実行 (`/senko <id>`) — の内部分岐をまとめる。skill 内の実装が分散している
+タスク実行 (`/senko start <id>`) — の内部分岐をまとめる。skill 内の実装が分散している
 （`SKILL.md` ルーティング、`workflows/add-task.md`、`workflows/execute-task.md`、
 `workflows/contract-terminal.md` など）ため、全体像を 1 枚で把握する用途。
 
-> **コマンド表記の注意**: タスク実行は `/senko start <id>` ではなく `/senko <id>`（数値）。
-> `SKILL.md` のルーティング規則 12（"Number"）が `workflows/execute-task.md` を呼び出す。
 > `/senko resume <id>` は `in_progress` の再開専用で、ここでは扱わない。
 
 ## `/senko add <description>` のフロー
@@ -75,11 +73,11 @@ flowchart TD
   - `SHOULD_SPLIT_TASK`（単一パスのみ） — NID を維持したまま Phase 1.5 / 分割 Phase 2 へ転回
   - `INSUFFICIENT_PACKET` — narrative / packet を修復して再ビルド
 
-## `/senko <id>`（タスク実行）のフロー
+## `/senko start <id>`（タスク実行）のフロー
 
 ```mermaid
 flowchart TD
-    A(["/senko &lt;id&gt;"]) --> FromNext{"senko task next<br/>からの遷移?"}
+    A(["/senko start &lt;id&gt;"]) --> FromNext{"senko task next<br/>からの遷移?"}
     FromNext -- yes --> S1
     FromNext -- no --> PG["Pre-check<br/>senko task get"]
 
@@ -123,6 +121,6 @@ flowchart TD
 
 - `.claude/skills/senko/SKILL.md` — ルーティング規則
 - `.claude/skills/senko/workflows/add-task.md` — `/senko add` のフェーズ詳細
-- `.claude/skills/senko/workflows/execute-task.md` — `/senko <id>` のステップ詳細
+- `.claude/skills/senko/workflows/execute-task.md` — `/senko start <id>` のステップ詳細
 - `.claude/skills/senko/workflows/contract-terminal.md` — terminal task の検証ワークフロー
 - `.claude/skills/senko/workflows/resume-task.md` — `/senko resume <id>` の再開ワークフロー

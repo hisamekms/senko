@@ -36,7 +36,7 @@ Restart Claude Code or run `/help` → skill list to confirm the skill is recogn
 | Slash command | Purpose |
 |---|---|
 | `/senko` | Auto-pick a ready task and start it |
-| `/senko <id>` | Run the task with the given ID |
+| `/senko start <id>` | Run the task with the given ID |
 | `/senko add <description>` | Add a task with an interactive planning phase |
 | `/senko add --simple <description>` | Add a task without planning |
 | `/senko list` | List tasks |
