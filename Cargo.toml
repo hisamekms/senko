@@ -3,7 +3,7 @@ members = [".", "tests/e2e/mock_otel_collector"]
 
 [package]
 name = "senko"
-version = "0.41.1"
+version = "0.42.0"
 edition = "2024"
 
 [[bin]]
