@@ -6,6 +6,8 @@ _.file = ".env"
 rust = "latest"
 gh = "latest"
 "github:hisamekms/senko" = "0.41.0"
+"cargo:mdbook" = "latest"
+"cargo:mdbook-mermaid" = "latest"
 
 [tasks.build]
 description = "Build senko binary"
@@ -41,3 +43,7 @@ depends = ["e2e:sqlite", "e2e:postgres"]
 description = "Run locally built senko binary"
 depends = ["build"]
 run = "./target/debug/senko"
+
+[tasks.docs]
+description = "Serve docs/ via mdbook for local browsing"
+run = "mdbook serve docs"
