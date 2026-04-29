@@ -12,7 +12,7 @@ Manage and execute project tasks using the `senko` CLI. senko is a SQLite-backed
 
 - `/senko` — Auto-select and execute the next eligible task
 - `/senko start <id>` — Execute a specific task by ID (requires `status=todo` with all dependencies completed)
-- `/senko resume <id>` — Resume an `in_progress` task: refresh `assignee_session_id`, reuse the existing worktree, re-enter PlanMode (no status change)
+- `/senko resume <id>` — Resume an `in_progress` task: refresh `assignee_session_id`, reuse the existing worktree, re-enter PlanMode only if no saved plan exists (no status change)
 - `/senko add <description>` — Add a new task (interactive planning)
 - `/senko add --simple <description>` — Add a task without planning phase
 - `/senko list` — Show task list

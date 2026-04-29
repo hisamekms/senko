@@ -43,9 +43,23 @@ Execute any commands printed by the emit-hooks calls in order. Omit `--metadata`
 
 Use the `branch` field from `senko task get <id>` as the branch name. The worktree for this branch most likely already exists from the prior session — reuse it; do **not** recreate. Only create a fresh worktree (following the project's worktree convention) if it is genuinely missing, and confirm with the user before doing so.
 
-## Step 4: Plan Mode
+## Step 4: Resume work
 
-Use `EnterPlanMode` to resume the work. Investigate the prior commits on the branch (`git log main..HEAD`) and review the task's `plan` and unchecked `definition_of_done` items so the plan reflects what is actually left.
+Branch on the task's `plan` field (from the `senko task get <id>` output already loaded in Pre-check):
+
+### If `task.plan` is non-empty (saved plan exists)
+
+Skip `EnterPlanMode` — the previously-approved plan is being adopted. Tell the user in one short line that the saved plan from the prior session is being reused (no `AskUserQuestion`, no approval gate).
+
+Before starting implementation, load context: review prior commits on the branch (`git log main..HEAD`) and re-check the task's unchecked `definition_of_done` items so you know what is actually left.
+
+The saved plan already contains the **Pre-start**, **Finalization**, and **Post-completion** sections (they were embedded by `execute-task.md` Step 3 when the plan was first written). Apply the Finalization and Post-completion sections from `task.plan` on completion as usual; the Pre-start "save the plan" step is already done and can be skipped.
+
+Continue with implementation per `execute-task.md` Step 3 onward.
+
+### If `task.plan` is empty or null (no saved plan)
+
+Use `EnterPlanMode` to resume the work. Investigate the prior commits on the branch (`git log main..HEAD`) and review the task's unchecked `definition_of_done` items so the plan reflects what is actually left.
 
 Continue with implementation as in `execute-task.md` Step 3 onward. The Pre-start / Finalization / Post-completion sections from `generate-plan-sections.sh <id>` still apply on completion.
 
