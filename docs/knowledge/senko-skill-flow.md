@@ -26,39 +26,39 @@ senko skill（`.claude/skills/senko/`）の主要 2 フロー — タスク追�
 
 ```mermaid
 flowchart TD
-    A([/senko add ...]) --> Mode{--simple ?}
-    Mode -- yes --> Simple[Simple mode<br/>task add --&gt; edit --&gt; publish<br/>※ 計画/レビュー無し]
-    Mode -- no --> P0[Phase 0<br/>narrative init で NID 発行]
+    A(["/senko add ..."]) --> Mode{"--simple ?"}
+    Mode -- yes --> Simple["Simple mode<br/>task add --&gt; edit --&gt; publish<br/>※ 計画/レビュー無し"]
+    Mode -- no --> P0["Phase 0<br/>narrative init で NID 発行"]
 
-    P0 --> P1[Phase 1: Planning<br/>AskUserQuestion で Q&amp;A ループ<br/>+ append-decision / append-constraint]
-    P1 --> Split{分割するか?}
+    P0 --> P1["Phase 1: Planning<br/>AskUserQuestion で Q&amp;A ループ<br/>+ append-decision / append-constraint"]
+    P1 --> Split{"分割するか?"}
 
-    Split -- 単一で進める --> P2S[Phase 2 単一<br/>senko task add]
-    Split -- 分割する --> P15[Phase 1.5<br/>Contract draft<br/>title / description / DoD / tags<br/>を AskUserQuestion で確定]
-    P15 --> P2M[Phase 2 分割<br/>1. contract add<br/>2. sub-task add 複数<br/>3. terminal task add<br/>4. 各 task を --contract で紐付け<br/>   terminal には contract-terminal タグ + 専用 DoD<br/>5. contract note add で split サマリ]
+    Split -- 単一で進める --> P2S["Phase 2 単一<br/>senko task add"]
+    Split -- 分割する --> P15["Phase 1.5<br/>Contract draft<br/>title / description / DoD / tags<br/>を AskUserQuestion で確定"]
+    P15 --> P2M["Phase 2 分割<br/>1. contract add<br/>2. sub-task add 複数<br/>3. terminal task add<br/>4. 各 task を --contract で紐付け<br/>   terminal には contract-terminal タグ + 専用 DoD<br/>5. contract note add で split サマリ"]
 
-    P2S --> P3[Phase 3: 依存関係]
+    P2S --> P3["Phase 3: 依存関係"]
     P2M --> P3
-    P3 -. 分割時 .-> P3T[terminal が全 sub-task に依存]
-    P3 --> P4[Phase 4 step 1-3<br/>title / desc / tag / priority / DoD 仕上げ]
+    P3 -. 分割時 .-> P3T["terminal が全 sub-task に依存"]
+    P3 --> P4["Phase 4 step 1-3<br/>title / desc / tag / priority / DoD 仕上げ"]
 
-    P4 --> BR{repo 操作を含む?}
+    P4 --> BR{"repo 操作を含む?"}
     BR -- no --> RV
-    BR -- yes --> SETBR[branch_template を解決<br/>--&gt; senko task edit --branch]
-    SETBR --> RV{どちらのレビュアー?}
+    BR -- yes --> SETBR["branch_template を解決<br/>--&gt; senko task edit --branch"]
+    SETBR --> RV{"どちらのレビュアー?"}
 
-    RV -- 単一 --> R1[single-task-reviewer]
-    RV -- 分割 --> R2[task-contract-reviewer]
-    R1 --> V{Verdict}
+    RV -- 単一 --> R1["single-task-reviewer"]
+    RV -- 分割 --> R2["task-contract-reviewer"]
+    R1 --> V{"Verdict"}
     R2 --> V
 
-    V -- PASS --> PUB[senko task publish]
-    V -- PASS_WITH_MINOR_FIXES --> MF[AskUserQuestion で修正承認<br/>--&gt; task/contract edit] --> PUB
-    V -- BLOCKING_FIXES_REQUIRED --> BF[修正適用<br/>--&gt; build-packet を全引数で再構築<br/>--&gt; 再レビュー] --> V
-    V -- SHOULD_SPLIT_TASK<br/>※単一のみ --> SS[ユーザー承認 --&gt; NID は維持<br/>--&gt; Phase 1.5 / Phase 2 分割パスへ] --> P15
-    V -- INSUFFICIENT_PACKET --> IP[narrative/packet 修復<br/>--&gt; 再 build-packet] --> V
+    V -- PASS --> PUB["senko task publish"]
+    V -- PASS_WITH_MINOR_FIXES --> MF["AskUserQuestion で修正承認<br/>--&gt; task/contract edit"] --> PUB
+    V -- BLOCKING_FIXES_REQUIRED --> BF["修正適用<br/>--&gt; build-packet を全引数で再構築<br/>--&gt; 再レビュー"] --> V
+    V -- SHOULD_SPLIT_TASK<br/>※単一のみ --> SS["ユーザー承認 --&gt; NID は維持<br/>--&gt; Phase 1.5 / Phase 2 分割パスへ"] --> P15
+    V -- INSUFFICIENT_PACKET --> IP["narrative/packet 修復<br/>--&gt; 再 build-packet"] --> V
 
-    PUB --> End([終了])
+    PUB --> End(["終了"])
     Simple --> End
 ```
 
@@ -79,35 +79,35 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A([/senko &lt;id&gt;]) --> FromNext{senko task next<br/>からの遷移?}
+    A(["/senko &lt;id&gt;"]) --> FromNext{"senko task next<br/>からの遷移?"}
     FromNext -- yes --> S1
-    FromNext -- no --> PG[Pre-check<br/>senko task get]
+    FromNext -- no --> PG["Pre-check<br/>senko task get"]
 
-    PG --> ST{status ?}
-    ST -- todo --> DEP{依存が全て<br/>completed ?}
-    ST -- draft --> X1[「publish が必要」と案内し停止]
-    ST -- in_progress --> X2[/senko resume を案内し停止]
-    ST -- completed/canceled --> X3[終了済みで停止]
-    DEP -- 未完あり --> X4[未完依存を提示して停止]
-    DEP -- ok --> META[task_start metadata 構築<br/>--&gt; senko task start]
+    PG --> ST{"status ?"}
+    ST -- todo --> DEP{"依存が全て<br/>completed ?"}
+    ST -- draft --> X1["「publish が必要」と案内し停止"]
+    ST -- in_progress --> X2["/senko resume を案内し停止"]
+    ST -- completed/canceled --> X3["終了済みで停止"]
+    DEP -- 未完あり --> X4["未完依存を提示して停止"]
+    DEP -- ok --> META["task_start metadata 構築<br/>--&gt; senko task start"]
 
-    META --> S1[Step 1: Review Task<br/>desc / plan / DoD / scope を読む]
-    S1 --> CC{contract_id あり?}
-    CC -- yes --> LC[contract get +<br/>contract note list を全ページ走査]
+    META --> S1["Step 1: Review Task<br/>desc / plan / DoD / scope を読む"]
+    S1 --> CC{"contract_id あり?"}
+    CC -- yes --> LC["contract get +<br/>contract note list を全ページ走査"]
     CC -- no --> TT
-    LC --> TT{contract-terminal<br/>タグ?}
-    TT -- yes --> RD[contract-terminal.md へ転送<br/>※ 以降は実装ではなく Contract DoD 検証]
-    TT -- no --> S2{branch 設定あり?}
+    LC --> TT{"contract-terminal<br/>タグ?"}
+    TT -- yes --> RD["contract-terminal.md へ転送<br/>※ 以降は実装ではなく Contract DoD 検証"]
+    TT -- no --> S2{"branch 設定あり?"}
 
-    S2 -- yes --> WT[/wth で worktree 作成]
+    S2 -- yes --> WT["/wth で worktree 作成"]
     S2 -- no --> S3
-    WT --> S3[Step 3: Plan Mode<br/>EnterPlanMode<br/>+ generate-plan-sections.sh 出力を埋め込む]
-    S3 --> AP[ユーザーが plan を承認]
-    AP --> IMP[実装]
+    WT --> S3["Step 3: Plan Mode<br/>EnterPlanMode<br/>+ generate-plan-sections.sh 出力を埋め込む"]
+    S3 --> AP["ユーザーが plan を承認"]
+    AP --> IMP["実装"]
 
-    IMP --> NL{contract_id あり?}
-    NL -- yes --> NOTES[随時 contract note add<br/>1 設計判断<br/>2 ハマり/落とし穴<br/>3 完了直前のサマリ]
-    NL -- no --> FIN([Finalization へ])
+    IMP --> NL{"contract_id あり?"}
+    NL -- yes --> NOTES["随時 contract note add<br/>1 設計判断<br/>2 ハマり/落とし穴<br/>3 完了直前のサマリ"]
+    NL -- no --> FIN(["Finalization へ"])
     NOTES --> FIN
 ```
 
