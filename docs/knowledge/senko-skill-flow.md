@@ -99,7 +99,7 @@ flowchart TD
     TT -- yes --> RD["contract-terminal.md へ転送<br/>※ 以降は実装ではなく Contract DoD 検証"]
     TT -- no --> S2{"branch 設定あり?"}
 
-    S2 -- yes --> WT["/wth で worktree 作成"]
+    S2 -- yes --> WT["worktree 作成（プロジェクトの手順に従う）"]
     S2 -- no --> S3
     WT --> S3["Step 3: Plan Mode<br/>EnterPlanMode<br/>+ generate-plan-sections.sh 出力を埋め込む"]
     S3 --> AP["ユーザーが plan を承認"]
@@ -117,7 +117,7 @@ flowchart TD
 - **status / 依存ガード**: `todo` でかつ全依存 completed のときのみ実行可。それ以外は理由を出して停止（`in_progress` だけは `/senko resume` を案内）。
 - **contract_id**: 設定されていれば Contract 本体と全 note を実行前に読み込み、実装中も note を追記。
 - **`contract-terminal` タグ**: 以降の標準ワークフローを踏まず `contract-terminal.md`（Contract DoD 検証 + 不足分の follow-up タスク作成）に切り替わる。
-- **branch**: 設定があれば `/wth` で worktree を切る。無ければ worktree 作成自体をスキップ。
+- **branch**: 設定があれば worktree を切る（プロジェクトの手順に従う）。無ければ worktree 作成自体をスキップ。
 
 ## 参照
 

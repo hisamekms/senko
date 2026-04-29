@@ -52,7 +52,7 @@ bash ${CLAUDE_SKILL_DIR}/scripts/build-metadata.sh task_start
 senko task start <id> --metadata '<final-metadata-json>'   # omit --metadata if empty
 ```
 
-Terminal tasks normally have no `branch` set (there's no code change). Skip worktree creation. If a branch IS set, treat this as an exceptional case (perhaps the user wants to commit a follow-up doc or snapshot) and follow the normal `/wth` flow.
+Terminal tasks normally have no `branch` set (there's no code change). Skip worktree creation. If a branch IS set, treat this as an exceptional case (perhaps the user wants to commit a follow-up doc or snapshot) and follow the project's normal worktree-creation procedure.
 
 ## Step 3: Verify Contract DoD
 
@@ -99,7 +99,7 @@ The Contract is satisfied. Complete the terminal task itself:
    senko task complete <id>
    ```
 
-   Remind the user to clean up any worktree with `/wth rm`.
+   Remind the user to clean up any worktree (following the project's worktree-removal procedure).
 
 ### Case B — one or more Contract DoDs remain unchecked (gaps)
 
@@ -143,8 +143,8 @@ The Contract is not yet satisfied, but the terminal's own job — *verify-or-del
    senko task complete <id>
    ```
 
-Display the new task graph to the user so they can pick up where this terminal left off. Remind the user to clean up any worktree the terminal created with `/wth rm`.
+Display the new task graph to the user so they can pick up where this terminal left off. Remind the user to clean up any worktree the terminal created (following the project's worktree-removal procedure).
 
 ## Step 5: Post-completion
 
-In both Case A and Case B, the terminal task is now `completed`. If a worktree was created for it (rare for terminal tasks — see Step 2), remind the user to remove it with `/wth rm`. In Case B, the next iteration is already queued: the freshly spawned terminal will re-run this workflow once its follow-up dependencies finish.
+In both Case A and Case B, the terminal task is now `completed`. If a worktree was created for it (rare for terminal tasks — see Step 2), remind the user to remove it (following the project's worktree-removal procedure). In Case B, the next iteration is already queued: the freshly spawned terminal will re-run this workflow once its follow-up dependencies finish.

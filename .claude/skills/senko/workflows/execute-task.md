@@ -67,7 +67,7 @@ Surface the Contract's title, description, DoD checklist, and the full note list
 
 ### Step 2: Create Worktree
 
-Use the `branch` field from `senko task get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Use the `/wth` skill to create a worktree.
+Use the `branch` field from `senko task get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Create a worktree for this branch following the project's worktree convention.
 
 ### Step 3: Plan Mode
 

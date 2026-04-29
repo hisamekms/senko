@@ -152,7 +152,7 @@ emit_hooks "branch_cleanup" "pre"
 emit_instructions "branch_cleanup"
 
 if [ "$BRANCH_MODE" = "worktree" ]; then
-  echo "- Delete the worktree (using \`/wth\` skill)"
+  echo "- Delete the worktree (following the project's worktree-removal procedure)"
 fi
 
 emit_hooks "branch_cleanup" "post"

@@ -41,7 +41,7 @@ Execute any commands printed by the emit-hooks calls in order. Omit `--metadata`
 
 ## Step 3: Reuse worktree
 
-Use the `branch` field from `senko task get <id>` as the branch name. The worktree for this branch most likely already exists from the prior session — reuse it; do **not** recreate. Only create a fresh worktree (via `/wth`) if it is genuinely missing, and confirm with the user before doing so.
+Use the `branch` field from `senko task get <id>` as the branch name. The worktree for this branch most likely already exists from the prior session — reuse it; do **not** recreate. Only create a fresh worktree (following the project's worktree convention) if it is genuinely missing, and confirm with the user before doing so.
 
 ## Step 4: Plan Mode
 
