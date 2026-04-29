@@ -39,17 +39,19 @@ infra 系 (`info!("Listening on …")` 等) は `target` がモジュールパ�
 
 | `event_name` | タイミング | 必須属性 (共通属性に加えて) |
 |---|---|---|
-| `senko.task.created` | `task add` 成功時 | `senko.task.id`, `senko.project.id` |
-| `senko.task.updated` | `task edit` 成功時 (title / description / priority / plan / tags / metadata 等) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON 配列) |
-| `senko.task.published` | `task publish` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.started` | `task start` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.completed` | `task complete` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.canceled` | `task cancel` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `cancel_reason` |
-| `senko.task.dependency_added` | `deps add` 成功時 | `senko.task.id`, `senko.project.id`, `dep_id` |
-| `senko.task.dependency_removed` | `deps remove` 成功時 | `senko.task.id`, `senko.project.id`, `dep_id` |
-| `senko.task.dependencies_set` | `deps set` 成功時 | `senko.task.id`, `senko.project.id`, `deps` (JSON 配列) |
-| `senko.task.dod_checked` | `dod check` 成功時 | `senko.task.id`, `senko.project.id`, `dod_index` |
-| `senko.task.dod_unchecked` | `dod uncheck` 成功時 | `senko.task.id`, `senko.project.id`, `dod_index` |
+| `senko.task.created` | `task add` 成功時 | `senko.task.id`, `senko.project.id`, `senko.contract.id` (任意) |
+| `senko.task.updated` | `task edit` 成功時 (title / description / priority / plan / tags / metadata 等) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON 配列), `senko.contract.id` (任意・更新後の値) |
+| `senko.task.published` | `task publish` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (任意) |
+| `senko.task.started` | `task start` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (任意) |
+| `senko.task.completed` | `task complete` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (任意) |
+| `senko.task.canceled` | `task cancel` 成功時 | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `cancel_reason`, `senko.contract.id` (任意) |
+| `senko.task.dependency_added` | `deps add` 成功時 | `senko.task.id`, `senko.project.id`, `dep_id`, `senko.contract.id` (任意) |
+| `senko.task.dependency_removed` | `deps remove` 成功時 | `senko.task.id`, `senko.project.id`, `dep_id`, `senko.contract.id` (任意) |
+| `senko.task.dependencies_set` | `deps set` 成功時 | `senko.task.id`, `senko.project.id`, `deps` (JSON 配列), `senko.contract.id` (任意) |
+| `senko.task.dod_checked` | `dod check` 成功時 | `senko.task.id`, `senko.project.id`, `dod_index`, `senko.contract.id` (任意) |
+| `senko.task.dod_unchecked` | `dod uncheck` 成功時 | `senko.task.id`, `senko.project.id`, `dod_index`, `senko.contract.id` (任意) |
+
+`senko.contract.id` は Task の `contract_id` が非 null のときのみ付与され、null のときは属性キー自体が省略されます。`senko.task.updated` では更新後の値を出力します (この更新で `contract_id` 自体が変わった場合も新しい値が出力されます)。
 
 ### Contract (6 種)
 
@@ -140,7 +142,7 @@ middleware / 横断レイヤで emit。業務イベントと違いドメイン�
 | 属性 | 載るイベント |
 |---|---|
 | `senko.task.id` | `senko.task.*` 全種 |
-| `senko.contract.id` | `senko.contract.*` 全種 |
+| `senko.contract.id` | `senko.contract.*` 全種、および `contract_id` が非 null の Task が発行する `senko.task.*` 全種 (null のときはキーを省略) |
 | `senko.project.id` | `senko.{task,contract,project,metadata_field}.*` 全種、および `senko.api.call` (path に `{project_id}` を含む場合) |
 | `senko.user.id` | `senko.user.*` 全種 (= target user の id)、`senko.project.member_*` (= 追加 / 削除 / role 変更された user の id) |
 | `senko.metadata_field.name` / `senko.metadata_field.type` | `senko.metadata_field.*` 全種 |

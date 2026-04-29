@@ -39,17 +39,19 @@ Twenty-nine business events plus four cross-cutting events. Caller-supplied bagg
 
 | `event_name` | When | Required attributes (in addition to the common ones) |
 |---|---|---|
-| `senko.task.created` | `task add` succeeds | `senko.task.id`, `senko.project.id` |
-| `senko.task.updated` | `task edit` succeeds (title / description / priority / plan / tags / metadata / …) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON array) |
-| `senko.task.published` | `task publish` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.started` | `task start` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.completed` | `task complete` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status` |
-| `senko.task.canceled` | `task cancel` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `cancel_reason` |
-| `senko.task.dependency_added` | `deps add` succeeds | `senko.task.id`, `senko.project.id`, `dep_id` |
-| `senko.task.dependency_removed` | `deps remove` succeeds | `senko.task.id`, `senko.project.id`, `dep_id` |
-| `senko.task.dependencies_set` | `deps set` succeeds | `senko.task.id`, `senko.project.id`, `deps` (JSON array) |
-| `senko.task.dod_checked` | `dod check` succeeds | `senko.task.id`, `senko.project.id`, `dod_index` |
-| `senko.task.dod_unchecked` | `dod uncheck` succeeds | `senko.task.id`, `senko.project.id`, `dod_index` |
+| `senko.task.created` | `task add` succeeds | `senko.task.id`, `senko.project.id`, `senko.contract.id` (optional) |
+| `senko.task.updated` | `task edit` succeeds (title / description / priority / plan / tags / metadata / …) | `senko.task.id`, `senko.project.id`, `changed_fields` (JSON array), `senko.contract.id` (optional, post-update value) |
+| `senko.task.published` | `task publish` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (optional) |
+| `senko.task.started` | `task start` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (optional) |
+| `senko.task.completed` | `task complete` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `senko.contract.id` (optional) |
+| `senko.task.canceled` | `task cancel` succeeds | `senko.task.id`, `senko.project.id`, `from_status`, `to_status`, `cancel_reason`, `senko.contract.id` (optional) |
+| `senko.task.dependency_added` | `deps add` succeeds | `senko.task.id`, `senko.project.id`, `dep_id`, `senko.contract.id` (optional) |
+| `senko.task.dependency_removed` | `deps remove` succeeds | `senko.task.id`, `senko.project.id`, `dep_id`, `senko.contract.id` (optional) |
+| `senko.task.dependencies_set` | `deps set` succeeds | `senko.task.id`, `senko.project.id`, `deps` (JSON array), `senko.contract.id` (optional) |
+| `senko.task.dod_checked` | `dod check` succeeds | `senko.task.id`, `senko.project.id`, `dod_index`, `senko.contract.id` (optional) |
+| `senko.task.dod_unchecked` | `dod uncheck` succeeds | `senko.task.id`, `senko.project.id`, `dod_index`, `senko.contract.id` (optional) |
+
+`senko.contract.id` is attached when the task has a non-null `contract_id`; the attribute key is omitted entirely when the task is not linked to a contract. For `senko.task.updated` the post-update value is used (if the update itself changed `contract_id`, the new value is what gets emitted).
 
 ### Contract (6)
 
@@ -140,7 +142,7 @@ A LogRecord may carry both an actor and a target when the operator acts on someo
 | Attribute | Carried by |
 |---|---|
 | `senko.task.id` | All `senko.task.*` |
-| `senko.contract.id` | All `senko.contract.*` |
+| `senko.contract.id` | All `senko.contract.*`; `senko.task.*` whose Task has a non-null `contract_id` (key omitted when null) |
 | `senko.project.id` | All `senko.{task,contract,project,metadata_field}.*`, plus `senko.api.call` when the route contains `{project_id}` |
 | `senko.user.id` | All `senko.user.*` (= the target user's id), and `senko.project.member_*` (= the user being added / removed / promoted) |
 | `senko.metadata_field.name` / `senko.metadata_field.type` | All `senko.metadata_field.*` |

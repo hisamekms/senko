@@ -223,8 +223,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.created",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
         );
@@ -255,8 +256,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.published",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -314,8 +316,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.started",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -370,8 +373,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.resumed",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -464,8 +468,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.started",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %TaskStatus::Todo,
@@ -510,8 +515,9 @@ impl TaskOperations for RemoteTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.completed",
+            contract_id = api_resp.task.contract_id(),
             senko.task.id = api_resp.task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -558,8 +564,9 @@ impl TaskOperations for RemoteTaskOperations {
             .await;
 
         let cancel_reason = reason.unwrap_or_default();
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.canceled",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -802,8 +809,9 @@ impl TaskOperations for RemoteTaskOperations {
         let changed_fields = updated_changed_fields(params);
         if !changed_fields.is_empty() {
             let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
-            crate::emit_business_event!(
+            crate::emit_task_event!(
                 "senko.task.updated",
+                contract_id = task.contract_id(),
                 senko.task.id = task.id().0,
                 senko.project.id = project_id.0,
                 changed_fields = changed_fields_json.as_str(),
@@ -833,8 +841,9 @@ impl TaskOperations for RemoteTaskOperations {
         let changed_fields = array_updated_changed_fields(params);
         if !changed_fields.is_empty() {
             let changed_fields_json = serde_json::to_string(&changed_fields).unwrap_or_default();
-            crate::emit_business_event!(
+            crate::emit_task_event!(
                 "senko.task.updated",
+                contract_id = task.contract_id(),
                 senko.task.id = task.id().0,
                 senko.project.id = project_id.0,
                 changed_fields = changed_fields_json.as_str(),
@@ -883,8 +892,9 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.dod_checked",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             dod_index = index as i64,
@@ -907,8 +917,9 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.dod_unchecked",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             dod_index = index as i64,
@@ -935,8 +946,9 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.dependency_added",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             dep_id = dep_id.0,
@@ -961,8 +973,9 @@ impl TaskOperations for RemoteTaskOperations {
             .await?;
         let task: Task = read_json_or_error(resp).await?;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.dependency_removed",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             dep_id = dep_id.0,
@@ -989,8 +1002,9 @@ impl TaskOperations for RemoteTaskOperations {
 
         let deps_json = serde_json::to_string(&dep_ids.iter().map(|d| d.0).collect::<Vec<_>>())
             .unwrap_or_default();
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.dependencies_set",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             deps = deps_json.as_str(),
@@ -1066,10 +1080,10 @@ mod tests {
 
     use super::RemoteTaskOperations;
 
-    /// Fixed `Task` JSON returned by the mock upstream for every request.
-    /// Only `id` / `project_id` matter for assertions — they round-trip
+    /// Build a `Task` JSON with the given `contract_id`. Only `id` /
+    /// `project_id` / `contract_id` matter for assertions — they round-trip
     /// through `read_json_or_error` into the captured LogRecord's attrs.
-    fn mock_task_json() -> Value {
+    fn mock_task_with_contract(contract_id: Option<i64>) -> Value {
         json!({
             "id": 1,
             "project_id": 7,
@@ -1089,7 +1103,7 @@ mod tests {
             "cancel_reason": null,
             "branch": null,
             "pr_url": null,
-            "contract_id": null,
+            "contract_id": contract_id,
             "metadata": null,
             "definition_of_done": [],
             "in_scope": [],
@@ -1099,17 +1113,36 @@ mod tests {
         })
     }
 
-    /// Spawn a minimal upstream that returns `mock_task_json()` for every path
-    /// and method. Listening on a kernel-assigned port so tests can run in
-    /// parallel.
-    async fn spawn_mock_upstream() -> String {
-        let app: Router = Router::new().route("/{*rest}", any(|| async { Json(mock_task_json()) }));
+    /// Spawn a minimal upstream that returns the given `Task` JSON for every
+    /// path and method. The `/complete` path returns the
+    /// `{ task, unblocked_tasks }` envelope expected by `complete_task`'s
+    /// `CompleteApiResponse`. Listening on a kernel-assigned port so tests
+    /// can run in parallel.
+    async fn spawn_mock_upstream_with_contract(contract_id: Option<i64>) -> String {
+        let app: Router = Router::new().route(
+            "/{*rest}",
+            any(
+                move |req: axum::http::Request<axum::body::Body>| async move {
+                    let path = req.uri().path().to_string();
+                    let task = mock_task_with_contract(contract_id);
+                    if path.ends_with("/complete") {
+                        Json(json!({ "task": task, "unblocked_tasks": [] }))
+                    } else {
+                        Json(task)
+                    }
+                },
+            ),
+        );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
         format!("http://{addr}")
+    }
+
+    async fn spawn_mock_upstream() -> String {
+        spawn_mock_upstream_with_contract(None).await
     }
 
     fn make_remote_ops(base_url: &str) -> RemoteTaskOperations {
@@ -1362,5 +1395,203 @@ mod tests {
             lookup_attr(r, "deps"),
             Some(AnyValue::String("[10,20,30]".into())),
         );
+    }
+
+    // --- senko.contract.id attribute (task #383) ----------------------------
+    //
+    // Per Contract #8 the attribute key is fixed (`senko.contract.id`, i64).
+    // The Remote-side emit reads `task.contract_id` from the HTTP-response
+    // Task — i.e. the upstream's authoritative post-state. The wrapper macro
+    // `emit_task_event!` omits the key entirely when `contract_id` is `None`.
+
+    use crate::domain::task::{CreateTaskParams, Priority as DomPriority};
+
+    fn empty_create_params() -> CreateTaskParams {
+        CreateTaskParams {
+            title: "t".into(),
+            background: None,
+            description: None,
+            priority: Some(DomPriority::P2),
+            definition_of_done: vec![],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            branch: None,
+            pr_url: None,
+            metadata: None,
+            tags: vec![],
+            dependencies: vec![],
+            assignee_user_id: None,
+            contract_id: None,
+        }
+    }
+
+    /// All 12 events emitted by RemoteTaskOperations under a contract-less
+    /// upstream Task: assert `senko.contract.id` is absent on every record.
+    #[test]
+    fn no_event_carries_contract_id_when_upstream_task_has_none() {
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream_with_contract(None).await;
+            let ops = make_remote_ops(&base);
+            ops.create_task(ProjectId(7), &empty_create_params())
+                .await
+                .unwrap();
+            ops.publish_task(ProjectId(7), TaskId(1)).await.unwrap();
+            ops.start_task(ProjectId(7), TaskId(1), None, None, None)
+                .await
+                .unwrap();
+            ops.resume_task(ProjectId(7), TaskId(1), None, None)
+                .await
+                .unwrap();
+            ops.next_task(ProjectId(7), None, None, true, None)
+                .await
+                .unwrap();
+            ops.complete_task(ProjectId(7), TaskId(1), false)
+                .await
+                .unwrap();
+            ops.cancel_task(ProjectId(7), TaskId(1), Some("r".into()))
+                .await
+                .unwrap();
+            let upd = UpdateTaskParams {
+                description: Some(Some("x".into())),
+                ..empty_update_params()
+            };
+            ops.edit_task(ProjectId(7), TaskId(1), &upd).await.unwrap();
+            let arr_upd = UpdateTaskArrayParams {
+                set_tags: Some(vec!["a".into()]),
+                ..empty_array_params()
+            };
+            ops.edit_task_arrays(ProjectId(7), TaskId(1), &arr_upd)
+                .await
+                .unwrap();
+            ops.check_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.uncheck_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.add_dependency(ProjectId(7), TaskId(1), TaskId(9))
+                .await
+                .unwrap();
+            ops.remove_dependency(ProjectId(7), TaskId(1), TaskId(9))
+                .await
+                .unwrap();
+            ops.set_dependencies(ProjectId(7), TaskId(1), &[TaskId(9)])
+                .await
+                .unwrap();
+        });
+
+        let task_events: Vec<&str> = records
+            .iter()
+            .filter_map(|r| r.event_name())
+            .filter(|n| n.starts_with("senko.task."))
+            .collect();
+        assert!(
+            !task_events.is_empty(),
+            "expected at least one senko.task.* record"
+        );
+        for r in &records {
+            if let Some(name) = r.event_name()
+                && name.starts_with("senko.task.")
+            {
+                assert!(
+                    lookup_attr(r, "senko.contract.id").is_none(),
+                    "{name} unexpectedly carried senko.contract.id when contract_id is None",
+                );
+            }
+        }
+    }
+
+    /// Same battery, but with the upstream returning `contract_id = 42`.
+    /// Assert every emitted `senko.task.*` record carries the post-response
+    /// `senko.contract.id = 42`.
+    #[test]
+    fn every_event_carries_contract_id_from_upstream_task() {
+        const CID: i64 = 42;
+        let records = with_business_records(|| async {
+            let base = spawn_mock_upstream_with_contract(Some(CID)).await;
+            let ops = make_remote_ops(&base);
+            ops.create_task(ProjectId(7), &empty_create_params())
+                .await
+                .unwrap();
+            ops.publish_task(ProjectId(7), TaskId(1)).await.unwrap();
+            ops.start_task(ProjectId(7), TaskId(1), None, None, None)
+                .await
+                .unwrap();
+            ops.resume_task(ProjectId(7), TaskId(1), None, None)
+                .await
+                .unwrap();
+            ops.next_task(ProjectId(7), None, None, true, None)
+                .await
+                .unwrap();
+            ops.complete_task(ProjectId(7), TaskId(1), false)
+                .await
+                .unwrap();
+            ops.cancel_task(ProjectId(7), TaskId(1), Some("r".into()))
+                .await
+                .unwrap();
+            let upd = UpdateTaskParams {
+                description: Some(Some("x".into())),
+                ..empty_update_params()
+            };
+            ops.edit_task(ProjectId(7), TaskId(1), &upd).await.unwrap();
+            let arr_upd = UpdateTaskArrayParams {
+                set_tags: Some(vec!["a".into()]),
+                ..empty_array_params()
+            };
+            ops.edit_task_arrays(ProjectId(7), TaskId(1), &arr_upd)
+                .await
+                .unwrap();
+            ops.check_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.uncheck_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.add_dependency(ProjectId(7), TaskId(1), TaskId(9))
+                .await
+                .unwrap();
+            ops.remove_dependency(ProjectId(7), TaskId(1), TaskId(9))
+                .await
+                .unwrap();
+            ops.set_dependencies(ProjectId(7), TaskId(1), &[TaskId(9)])
+                .await
+                .unwrap();
+        });
+
+        let expected_events = [
+            "senko.task.created",
+            "senko.task.published",
+            "senko.task.started",
+            "senko.task.resumed",
+            "senko.task.completed",
+            "senko.task.canceled",
+            "senko.task.updated",
+            "senko.task.dod_checked",
+            "senko.task.dod_unchecked",
+            "senko.task.dependency_added",
+            "senko.task.dependency_removed",
+            "senko.task.dependencies_set",
+        ];
+
+        for name in expected_events {
+            let r = records
+                .iter()
+                .find(|r| r.event_name() == Some(name))
+                .unwrap_or_else(|| panic!("expected at least one {name} record"));
+            assert_eq!(
+                lookup_attr(r, "senko.contract.id"),
+                Some(AnyValue::Int(CID)),
+                "{name} missing or wrong senko.contract.id",
+            );
+        }
+
+        // Also check the `started` records — both `start_task` and `next_task`
+        // emit `senko.task.started`; both must carry the contract id.
+        let started_records: Vec<&SdkLogRecord> = records
+            .iter()
+            .filter(|r| r.event_name() == Some("senko.task.started"))
+            .collect();
+        assert!(
+            started_records.len() >= 2,
+            "expected `senko.task.started` from both start_task and next_task",
+        );
+        for r in started_records {
+            assert_eq!(
+                lookup_attr(r, "senko.contract.id"),
+                Some(AnyValue::Int(CID)),
+            );
+        }
     }
 }

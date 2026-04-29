@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 
 use crate::application::port::TaskBackend;
+use crate::domain::contract::ContractId;
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{ListMetadataFieldsFilter, MetadataField, MetadataFieldType};
 use crate::domain::pagination::ListPage;
@@ -28,45 +29,59 @@ use crate::infra::hook::FireOutcome;
 /// ops). State-transition events (Created/Published/Started/Completed/Canceled)
 /// are emitted inline by the caller so that `from_status` / `to_status` /
 /// `cancel_reason` can be sourced from the surrounding scope.
-fn emit_task_events(project_id: ProjectId, task_id: TaskId, events: &[TaskEvent]) {
+///
+/// `contract_id` is the **post-mutation** `Option<ContractId>` taken from the
+/// just-saved Task; `senko.task.updated` therefore carries the new value when
+/// the update itself changed `contract_id`.
+fn emit_task_events(
+    project_id: ProjectId,
+    task_id: TaskId,
+    contract_id: Option<ContractId>,
+    events: &[TaskEvent],
+) {
     for ev in events {
         match ev {
             TaskEvent::Updated { changed_fields } => {
                 let changed_fields_json = serde_json::to_string(changed_fields).unwrap_or_default();
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.updated",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     changed_fields = changed_fields_json.as_str(),
                 );
             }
             TaskEvent::DodChecked { index } => {
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.dod_checked",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     dod_index = *index as i64,
                 );
             }
             TaskEvent::DodUnchecked { index } => {
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.dod_unchecked",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     dod_index = *index as i64,
                 );
             }
             TaskEvent::DependencyAdded { dep_id } => {
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.dependency_added",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     dep_id = dep_id.0,
                 );
             }
             TaskEvent::DependencyRemoved { dep_id } => {
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.dependency_removed",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     dep_id = dep_id.0,
@@ -76,8 +91,9 @@ fn emit_task_events(project_id: ProjectId, task_id: TaskId, events: &[TaskEvent]
                 let deps_json =
                     serde_json::to_string(&dep_ids.iter().map(|d| d.0).collect::<Vec<_>>())
                         .unwrap_or_default();
-                crate::emit_business_event!(
+                crate::emit_task_event!(
                     "senko.task.dependencies_set",
+                    contract_id = contract_id,
                     senko.task.id = task_id.0,
                     senko.project.id = project_id.0,
                     deps = deps_json.as_str(),
@@ -188,8 +204,9 @@ impl TaskOperations for LocalTaskOperations {
             .fire(&trigger, HookWhen::Post, Some(&task), None, None)
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.created",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
         );
@@ -233,8 +250,9 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.published",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -303,8 +321,9 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.started",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -372,8 +391,9 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.resumed",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -487,8 +507,9 @@ impl TaskOperations for LocalTaskOperations {
         // the transition. If the upstream already returned an InProgress task
         // (Relay path), the corresponding emit happened on the upstream side.
         if prev_status != TaskStatus::InProgress {
-            crate::emit_business_event!(
+            crate::emit_task_event!(
                 "senko.task.started",
+                contract_id = task.contract_id(),
                 senko.task.id = task.id().0,
                 senko.project.id = project_id.0,
                 from_status = %prev_status,
@@ -593,8 +614,9 @@ impl TaskOperations for LocalTaskOperations {
             )
             .await;
 
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.completed",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -656,8 +678,9 @@ impl TaskOperations for LocalTaskOperations {
             .await;
 
         let cancel_reason = reason.unwrap_or_default();
-        crate::emit_business_event!(
+        crate::emit_task_event!(
             "senko.task.canceled",
+            contract_id = task.contract_id(),
             senko.task.id = task.id().0,
             senko.project.id = project_id.0,
             from_status = %prev_status,
@@ -886,7 +909,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (_aggregate_after, events) = prev.apply_update(params, now);
         let task = self.backend.update_task(project_id, id, params).await?;
-        emit_task_events(project_id, id, &events);
+        emit_task_events(project_id, id, task.contract_id(), &events);
         Ok(task)
     }
 
@@ -899,11 +922,11 @@ impl TaskOperations for LocalTaskOperations {
         params.validate()?;
         let prev = self.backend.get_task(project_id, id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (_aggregate_after, events) = prev.apply_array_update(params, now);
+        let (aggregate_after, events) = prev.apply_array_update(params, now);
         self.backend
             .update_task_arrays(project_id, id, params)
             .await?;
-        emit_task_events(project_id, id, &events);
+        emit_task_events(project_id, id, aggregate_after.contract_id(), &events);
         Ok(())
     }
 
@@ -925,7 +948,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, events) = task.check_dod(index, now)?;
         self.backend.save(&task).await?;
-        emit_task_events(project_id, task_id, &events);
+        emit_task_events(project_id, task_id, task.contract_id(), &events);
         Ok(task)
     }
 
@@ -939,7 +962,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, events) = task.uncheck_dod(index, now)?;
         self.backend.save(&task).await?;
-        emit_task_events(project_id, task_id, &events);
+        emit_task_events(project_id, task_id, task.contract_id(), &events);
         Ok(task)
     }
 
@@ -973,7 +996,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, events) = task.add_dependency(dep_id, Some(now))?;
         self.backend.save(&task).await?;
-        emit_task_events(project_id, task_id, &events);
+        emit_task_events(project_id, task_id, task.contract_id(), &events);
         self.backend.get_task(project_id, task_id).await
     }
 
@@ -987,7 +1010,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, events) = task.remove_dependency(dep_id, Some(now))?;
         self.backend.save(&task).await?;
-        emit_task_events(project_id, task_id, &events);
+        emit_task_events(project_id, task_id, task.contract_id(), &events);
         self.backend.get_task(project_id, task_id).await
     }
 
@@ -1026,7 +1049,7 @@ impl TaskOperations for LocalTaskOperations {
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
         let (task, events) = task.set_dependencies(dep_ids, Some(now))?;
         self.backend.save(&task).await?;
-        emit_task_events(project_id, task_id, &events);
+        emit_task_events(project_id, task_id, task.contract_id(), &events);
         self.backend.get_task(project_id, task_id).await
     }
 
@@ -1088,4 +1111,391 @@ pub fn resolve_metadata_filter_types(
             (key.clone(), resolved)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    //! Tests for `senko.contract.id` attribution on `senko.task.*` events
+    //! (task #383). Other behaviour of `LocalTaskOperations` is exercised by
+    //! the e2e suite and the SQLite-backend integration tests.
+
+    use std::sync::Arc;
+
+    use anyhow::Result;
+    use opentelemetry::logs::AnyValue;
+    use opentelemetry_sdk::logs::SdkLogRecord;
+    use tempfile::tempdir;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use crate::application::contract_service::LocalContractOperations;
+    use crate::application::port::contract_operations::ContractOperations;
+    use crate::application::port::{NoOpHookExecutor, PrVerifier, TaskBackend, TaskOperations};
+    use crate::application::telemetry::test_support::{
+        build_capture_provider, capture_layer, lookup_attr,
+    };
+    use crate::domain::contract::CreateContractParams;
+    use crate::domain::project::ProjectId;
+    use crate::domain::task::{
+        CompletionPolicy, CreateTaskParams, MergeVia, UpdateTaskArrayParams, UpdateTaskParams,
+    };
+    use crate::infra::sqlite::SqliteBackend;
+
+    use super::{HookExecutor, LocalTaskOperations};
+
+    /// PrVerifier that always succeeds. The test scenarios use
+    /// `merge_via = Direct`, so `verify_pr_status` is never reached, but the
+    /// trait is still required for `LocalTaskOperations::new`.
+    struct AlwaysOkPrVerifier;
+    impl PrVerifier for AlwaysOkPrVerifier {
+        fn verify_pr_status(&self, _pr_url: &str) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn noop_hooks() -> Arc<dyn HookExecutor> {
+        Arc::new(NoOpHookExecutor)
+    }
+
+    async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, ProjectId) {
+        let dir = tempdir().unwrap();
+        let backend = SqliteBackend::new(
+            dir.path(),
+            Some(&dir.path().join("data.db")),
+            None,
+            &crate::infra::xdg::XdgDirs::default(),
+        )
+        .unwrap();
+        let backend: Arc<dyn TaskBackend> = Arc::new(backend);
+        (dir, backend, ProjectId(1))
+    }
+
+    fn task_ops(backend: Arc<dyn TaskBackend>) -> LocalTaskOperations {
+        LocalTaskOperations::new(
+            backend,
+            noop_hooks(),
+            Arc::new(AlwaysOkPrVerifier),
+            CompletionPolicy::new(MergeVia::Direct),
+        )
+    }
+
+    fn contract_ops(backend: Arc<dyn TaskBackend>) -> LocalContractOperations {
+        LocalContractOperations::new(backend, noop_hooks())
+    }
+
+    fn create_params() -> CreateTaskParams {
+        CreateTaskParams {
+            title: "t".into(),
+            background: None,
+            description: None,
+            priority: None,
+            definition_of_done: vec!["dod-1".into()],
+            in_scope: vec![],
+            out_of_scope: vec![],
+            branch: None,
+            pr_url: None,
+            metadata: None,
+            tags: vec![],
+            dependencies: vec![],
+            assignee_user_id: None,
+            contract_id: None,
+        }
+    }
+
+    /// Drive `body` under a tracing subscriber that bridges
+    /// `emit_business_event!` calls into an in-memory OTel exporter.
+    fn with_records<F, Fut>(body: F) -> Vec<SdkLogRecord>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let (exporter, provider) = build_capture_provider();
+        let subscriber = tracing_subscriber::registry().with(capture_layer(&provider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let _g = tracing::subscriber::set_default(subscriber);
+            body().await;
+        });
+
+        provider.force_flush().ok();
+        exporter
+            .get_emitted_logs()
+            .unwrap()
+            .into_iter()
+            .map(|d| d.record)
+            .collect()
+    }
+
+    fn one<'a>(records: &'a [SdkLogRecord], name: &str) -> &'a SdkLogRecord {
+        records
+            .iter()
+            .find(|r| r.event_name() == Some(name))
+            .unwrap_or_else(|| panic!("expected at least one {name} record"))
+    }
+
+    // --- None case: no senko.task.* event carries senko.contract.id --------
+
+    #[test]
+    fn no_event_carries_contract_id_when_task_has_no_contract() {
+        let records = with_records(|| async {
+            let (_dir, backend, project_id) = new_backend().await;
+            let ops = task_ops(backend);
+
+            let t = ops.create_task(project_id, &create_params()).await.unwrap();
+            ops.publish_task(project_id, t.id()).await.unwrap();
+            ops.start_task(project_id, t.id(), Some("s".into()), None, None)
+                .await
+                .unwrap();
+            ops.resume_task(project_id, t.id(), Some("s2".into()), None)
+                .await
+                .unwrap();
+            // edit_task → senko.task.updated
+            let upd = UpdateTaskParams {
+                description: Some(Some("d".into())),
+                ..empty_update_params()
+            };
+            ops.edit_task(project_id, t.id(), &upd).await.unwrap();
+            // edit_task_arrays → senko.task.updated
+            let arr = UpdateTaskArrayParams {
+                add_tags: vec!["x".into()],
+                ..empty_array_params()
+            };
+            ops.edit_task_arrays(project_id, t.id(), &arr)
+                .await
+                .unwrap();
+            // dod
+            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.uncheck_dod(project_id, t.id(), 1).await.unwrap();
+            // deps — need a second task as the dependency
+            let dep = ops.create_task(project_id, &create_params()).await.unwrap();
+            ops.add_dependency(project_id, t.id(), dep.id())
+                .await
+                .unwrap();
+            ops.remove_dependency(project_id, t.id(), dep.id())
+                .await
+                .unwrap();
+            ops.set_dependencies(project_id, t.id(), &[dep.id()])
+                .await
+                .unwrap();
+            // complete → first need to check the only DoD
+            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.complete_task(project_id, t.id(), false).await.unwrap();
+        });
+
+        let saw_task_event = records
+            .iter()
+            .any(|r| r.event_name().is_some_and(|n| n.starts_with("senko.task.")));
+        assert!(saw_task_event, "expected at least one senko.task.* record");
+
+        for r in &records {
+            if let Some(name) = r.event_name()
+                && name.starts_with("senko.task.")
+            {
+                assert!(
+                    lookup_attr(r, "senko.contract.id").is_none(),
+                    "{name} unexpectedly carried senko.contract.id when contract_id is None",
+                );
+            }
+        }
+    }
+
+    // --- Some case: every senko.task.* event carries senko.contract.id -----
+
+    #[test]
+    fn every_event_carries_contract_id_when_task_links_a_contract() {
+        let records = with_records(|| async {
+            let (_dir, backend, project_id) = new_backend().await;
+            let cops = contract_ops(backend.clone());
+            let contract = cops
+                .create_contract(
+                    project_id,
+                    &CreateContractParams {
+                        title: "c".into(),
+                        description: None,
+                        definition_of_done: vec![],
+                        tags: vec![],
+                        metadata: None,
+                    },
+                )
+                .await
+                .unwrap();
+
+            let ops = task_ops(backend);
+            let mut params = create_params();
+            params.contract_id = Some(contract.id());
+            let t = ops.create_task(project_id, &params).await.unwrap();
+            ops.publish_task(project_id, t.id()).await.unwrap();
+            ops.start_task(project_id, t.id(), Some("s".into()), None, None)
+                .await
+                .unwrap();
+            ops.resume_task(project_id, t.id(), Some("s2".into()), None)
+                .await
+                .unwrap();
+            let upd = UpdateTaskParams {
+                description: Some(Some("d".into())),
+                ..empty_update_params()
+            };
+            ops.edit_task(project_id, t.id(), &upd).await.unwrap();
+            let arr = UpdateTaskArrayParams {
+                add_tags: vec!["x".into()],
+                ..empty_array_params()
+            };
+            ops.edit_task_arrays(project_id, t.id(), &arr)
+                .await
+                .unwrap();
+            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.uncheck_dod(project_id, t.id(), 1).await.unwrap();
+            // deps need a sibling task linked to the same contract is fine
+            let dep_params = CreateTaskParams {
+                title: "dep".into(),
+                ..create_params()
+            };
+            let dep = ops.create_task(project_id, &dep_params).await.unwrap();
+            ops.add_dependency(project_id, t.id(), dep.id())
+                .await
+                .unwrap();
+            ops.remove_dependency(project_id, t.id(), dep.id())
+                .await
+                .unwrap();
+            ops.set_dependencies(project_id, t.id(), &[dep.id()])
+                .await
+                .unwrap();
+            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.complete_task(project_id, t.id(), false).await.unwrap();
+
+            // separately exercise cancel via a fresh task (cancel rejects completed)
+            let mut params2 = create_params();
+            params2.contract_id = Some(contract.id());
+            let t2 = ops.create_task(project_id, &params2).await.unwrap();
+            ops.publish_task(project_id, t2.id()).await.unwrap();
+            ops.cancel_task(project_id, t2.id(), Some("nope".into()))
+                .await
+                .unwrap();
+        });
+
+        let cid = records
+            .iter()
+            .find(|r| r.event_name() == Some("senko.task.created"))
+            .and_then(|r| lookup_attr(r, "senko.contract.id"))
+            .expect("first senko.task.created should carry the contract id");
+        let AnyValue::Int(cid_val) = cid else {
+            panic!("senko.contract.id is not an Int");
+        };
+
+        let expected = [
+            "senko.task.created",
+            "senko.task.published",
+            "senko.task.started",
+            "senko.task.resumed",
+            "senko.task.completed",
+            "senko.task.canceled",
+            "senko.task.updated",
+            "senko.task.dod_checked",
+            "senko.task.dod_unchecked",
+            "senko.task.dependency_added",
+            "senko.task.dependency_removed",
+            "senko.task.dependencies_set",
+        ];
+        for name in expected {
+            // Filter to only contract-bearing tasks (the dep task has no contract,
+            // so its `senko.task.created` would have None).
+            let with_cid = records.iter().find(|r| {
+                r.event_name() == Some(name)
+                    && lookup_attr(r, "senko.contract.id") == Some(AnyValue::Int(cid_val))
+            });
+            assert!(
+                with_cid.is_some(),
+                "no `{name}` record carries senko.contract.id={cid_val}",
+            );
+        }
+    }
+
+    // --- Updated post-state semantics: contract_id update emits new value --
+
+    #[test]
+    fn updated_event_uses_post_update_contract_id() {
+        let records = with_records(|| async {
+            let (_dir, backend, project_id) = new_backend().await;
+            let cops = contract_ops(backend.clone());
+            let contract = cops
+                .create_contract(
+                    project_id,
+                    &CreateContractParams {
+                        title: "c".into(),
+                        description: None,
+                        definition_of_done: vec![],
+                        tags: vec![],
+                        metadata: None,
+                    },
+                )
+                .await
+                .unwrap();
+            let ops = task_ops(backend);
+            // Task starts contract-less.
+            let t = ops.create_task(project_id, &create_params()).await.unwrap();
+            // Update sets contract_id to Some(contract.id()).
+            let upd = UpdateTaskParams {
+                contract_id: Some(Some(contract.id())),
+                ..empty_update_params()
+            };
+            ops.edit_task(project_id, t.id(), &upd).await.unwrap();
+        });
+
+        let updated = one(&records, "senko.task.updated");
+        let AnyValue::Int(cid) = lookup_attr(updated, "senko.contract.id")
+            .expect("senko.task.updated must carry senko.contract.id after the update sets it")
+        else {
+            panic!("senko.contract.id is not Int");
+        };
+        assert!(
+            cid > 0,
+            "senko.contract.id should be the post-update contract id, got {cid}",
+        );
+        assert_eq!(
+            lookup_attr(updated, "changed_fields"),
+            Some(AnyValue::String("[\"contract_id\"]".into())),
+        );
+    }
+
+    // --- Helpers ------------------------------------------------------------
+
+    fn empty_update_params() -> UpdateTaskParams {
+        UpdateTaskParams {
+            title: None,
+            background: None,
+            description: None,
+            plan: None,
+            priority: None,
+            assignee_session_id: None,
+            assignee_user_id: None,
+            started_at: None,
+            completed_at: None,
+            canceled_at: None,
+            cancel_reason: None,
+            branch: None,
+            pr_url: None,
+            contract_id: None,
+            metadata: None,
+        }
+    }
+
+    fn empty_array_params() -> UpdateTaskArrayParams {
+        UpdateTaskArrayParams {
+            set_tags: None,
+            add_tags: Vec::new(),
+            remove_tags: Vec::new(),
+            set_definition_of_done: None,
+            add_definition_of_done: Vec::new(),
+            remove_definition_of_done: Vec::new(),
+            set_in_scope: None,
+            add_in_scope: Vec::new(),
+            remove_in_scope: Vec::new(),
+            set_out_of_scope: None,
+            add_out_of_scope: Vec::new(),
+            remove_out_of_scope: Vec::new(),
+        }
+    }
 }

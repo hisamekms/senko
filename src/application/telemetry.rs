@@ -125,6 +125,50 @@ macro_rules! emit_business_event {
     };
 }
 
+/// Emit a `senko.task.*` business event, conditionally adding `senko.contract.id`
+/// when the task's `contract_id` is `Some`.
+///
+/// `tracing::event!` resolves fields at compile time, so an attribute can't be
+/// dropped at runtime within one call. This macro branches once on the
+/// `Option<ContractId>` and forwards to one of two
+/// [`emit_business_event!`](crate::emit_business_event) callsites — one with
+/// `senko.contract.id`, one without. Pass the **post-mutation**
+/// `Option<ContractId>` so `senko.task.updated` reports the post-state value
+/// when `contract_id` itself was just changed.
+///
+/// # Examples
+///
+/// ```ignore
+/// emit_task_event!(
+///     "senko.task.published",
+///     contract_id = task.contract_id(),
+///     senko.task.id = task.id().0,
+///     senko.project.id = project_id.0,
+///     from_status = %prev_status,
+///     to_status = %task.status(),
+/// );
+/// ```
+#[macro_export]
+macro_rules! emit_task_event {
+    ($otel_event_name:expr, contract_id = $cid:expr $(, $($fields:tt)*)?) => {
+        match $cid {
+            Some(__cid) => {
+                $crate::emit_business_event!(
+                    $otel_event_name,
+                    senko.contract.id = __cid.0,
+                    $($($fields)*)?
+                );
+            }
+            None => {
+                $crate::emit_business_event!(
+                    $otel_event_name,
+                    $($($fields)*)?
+                );
+            }
+        }
+    };
+}
+
 use std::cell::RefCell;
 use std::time::Duration;
 
@@ -378,6 +422,80 @@ mod tests {
             lookup_attr(record, "to_status"),
             Some(AnyValue::String("in_progress".into()))
         );
+    }
+
+    // --- emit_task_event! macro (task #383) -------------------------------
+
+    #[test]
+    fn emit_task_event_includes_contract_id_when_some() {
+        use crate::domain::contract::ContractId;
+
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let cid: Option<ContractId> = Some(ContractId(99));
+            crate::emit_task_event!(
+                "senko.task.created",
+                contract_id = cid,
+                senko.task.id = 5_i64,
+                senko.project.id = 1_i64,
+            );
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        assert_eq!(record.event_name(), Some("senko.task.created"));
+        assert_eq!(
+            lookup_attr(record, "senko.contract.id"),
+            Some(AnyValue::Int(99)),
+        );
+        assert_eq!(lookup_attr(record, "senko.task.id"), Some(AnyValue::Int(5)));
+        assert_eq!(
+            lookup_attr(record, "senko.project.id"),
+            Some(AnyValue::Int(1)),
+        );
+    }
+
+    #[test]
+    fn emit_task_event_omits_contract_id_when_none() {
+        use crate::domain::contract::ContractId;
+
+        let exporter = InMemoryLogExporter::default();
+        let provider = SdkLoggerProvider::builder()
+            .with_simple_exporter(exporter.clone())
+            .build();
+        let subscriber =
+            tracing_subscriber::registry().with(OpenTelemetryTracingBridge::new(&provider));
+
+        tracing::subscriber::with_default(subscriber, || {
+            let cid: Option<ContractId> = None;
+            crate::emit_task_event!(
+                "senko.task.created",
+                contract_id = cid,
+                senko.task.id = 5_i64,
+                senko.project.id = 1_i64,
+            );
+        });
+
+        provider.force_flush().expect("flush ok");
+        let logs = exporter.get_emitted_logs().expect("logs exported");
+        assert_eq!(logs.len(), 1);
+        let record = &logs[0].record;
+
+        assert_eq!(record.event_name(), Some("senko.task.created"));
+        assert!(
+            lookup_attr(record, "senko.contract.id").is_none(),
+            "senko.contract.id must be absent when contract_id is None",
+        );
+        assert_eq!(lookup_attr(record, "senko.task.id"), Some(AnyValue::Int(5)));
     }
 
     #[test]
