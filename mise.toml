@@ -45,5 +45,9 @@ depends = ["build"]
 run = "./target/debug/senko"
 
 [tasks.docs]
-description = "Serve docs/ via mdbook for local browsing"
-run = "mdbook serve docs"
+description = "Serve docs/ via mdbook in background. Writes .local/docs.pid + .local/docs.log. Pass --port <N> to override the default 3000."
+run = "docs serve"
+
+[tasks."docs:stop"]
+description = "Stop the backgrounded mdbook docs server"
+run = "docs stop"

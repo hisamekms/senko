@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[docs] %s\n' "$*"
+}
+
+on_error() {
+  local exit_code=$?
+  log "FAILED (exit=${exit_code}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}"
+  exit "$exit_code"
+}
+
+trap on_error ERR
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+LOCAL_DIR="${PROJECT_ROOT}/.local"
+PID_FILE="${LOCAL_DIR}/docs.pid"
+LOG_FILE="${LOCAL_DIR}/docs.log"
+DEFAULT_PORT=3000
+FALLBACK_PORT_END=3010
+DOCS_DIR="${PROJECT_ROOT}/docs"
+
+usage() {
+  cat <<'EOF'
+Usage: docs <command> [options]
+
+Commands:
+  serve [--port <N>]   Start mdbook serve in background (default port 3000)
+  stop                 Stop the backgrounded mdbook server
+  help                 Show this help message
+
+Files:
+  .local/docs.pid   First line: PID. Second line: port.
+  .local/docs.log   Captured stdout/stderr from mdbook.
+
+Behavior:
+  serve  - When --port is omitted, tries ports 3000..3010 and uses the first
+           free one. When --port is given, fails if that port is busy.
+           Refuses to start if a live PID file already exists.
+  stop   - Idempotent. Cleans up stale PID files; sends SIGTERM, then SIGKILL
+           after a grace period.
+EOF
+}
+
+port_in_use() {
+  local port="$1"
+  if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+    exec 3<&-
+    return 0
+  fi
+  return 1
+}
+
+process_alive() {
+  kill -0 "$1" 2>/dev/null
+}
+
+cmd_serve() {
+  local port=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --port)
+        port="${2:-}"
+        if [ -z "$port" ]; then
+          log "error: --port requires a value"
+          exit 1
+        fi
+        shift 2
+        ;;
+      --port=*)
+        port="${1#--port=}"
+        shift
+        ;;
+      -h|--help)
+        usage
+        exit 0
+        ;;
+      *)
+        log "error: unknown option: $1"
+        usage >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  if [ -n "$port" ]; then
+    if ! [[ "$port" =~ ^[0-9]+$ ]] || [ "$port" -lt 1 ] || [ "$port" -gt 65535 ]; then
+      log "error: --port must be an integer in 1..65535 (got: ${port})"
+      exit 1
+    fi
+  fi
+
+  if [ -f "$PID_FILE" ]; then
+    local existing_pid existing_port
+    existing_pid="$(sed -n '1p' "$PID_FILE" || true)"
+    existing_port="$(sed -n '2p' "$PID_FILE" || true)"
+    if [ -n "$existing_pid" ] && process_alive "$existing_pid"; then
+      log "already running at http://localhost:${existing_port:-?} (pid=${existing_pid})"
+      exit 1
+    fi
+    log "stale pid file detected (pid=${existing_pid:-?}), cleaning up"
+    rm -f "$PID_FILE"
+  fi
+
+  local chosen_port=""
+  if [ -n "$port" ]; then
+    if port_in_use "$port"; then
+      log "error: port ${port} is already in use"
+      exit 1
+    fi
+    chosen_port="$port"
+  else
+    local p
+    for ((p=DEFAULT_PORT; p<=FALLBACK_PORT_END; p++)); do
+      if ! port_in_use "$p"; then
+        chosen_port="$p"
+        break
+      fi
+    done
+    if [ -z "$chosen_port" ]; then
+      log "error: no free port found in ${DEFAULT_PORT}..${FALLBACK_PORT_END}"
+      exit 1
+    fi
+  fi
+
+  mkdir -p "$LOCAL_DIR"
+
+  log "starting: mdbook serve docs --port ${chosen_port}"
+  nohup mdbook serve "$DOCS_DIR" --port "$chosen_port" >>"$LOG_FILE" 2>&1 &
+  local pid=$!
+
+  printf '%s\n%s\n' "$pid" "$chosen_port" >"$PID_FILE"
+
+  sleep 0.4
+  if ! process_alive "$pid"; then
+    log "error: mdbook exited immediately. Last 20 log lines:"
+    tail -n 20 "$LOG_FILE" >&2 || true
+    rm -f "$PID_FILE"
+    exit 1
+  fi
+
+  log "started: http://localhost:${chosen_port} (pid=${pid}, log=.local/docs.log)"
+}
+
+cmd_stop() {
+  if [ ! -f "$PID_FILE" ]; then
+    log "not running"
+    exit 0
+  fi
+
+  local pid
+  pid="$(sed -n '1p' "$PID_FILE" || true)"
+  if [ -z "$pid" ]; then
+    log "pid file is empty, removing"
+    rm -f "$PID_FILE"
+    exit 0
+  fi
+
+  if ! process_alive "$pid"; then
+    log "stale pid file (pid=${pid}), cleaning up"
+    rm -f "$PID_FILE"
+    exit 0
+  fi
+
+  log "stopping (pid=${pid})"
+  kill -TERM "$pid" 2>/dev/null || true
+
+  local i
+  for ((i=0; i<25; i++)); do
+    if ! process_alive "$pid"; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if process_alive "$pid"; then
+    log "process did not exit on TERM, sending KILL (pid=${pid})"
+    kill -KILL "$pid" 2>/dev/null || true
+    sleep 0.2
+  fi
+
+  rm -f "$PID_FILE"
+  log "stopped (pid=${pid})"
+}
+
+case "${1:-}" in
+  serve) shift; cmd_serve "$@" ;;
+  stop)  shift; cmd_stop  "$@" ;;
+  help|--help|-h) usage ;;
+  "") usage >&2; exit 1 ;;
+  *)
+    log "error: unknown command: $1"
+    usage >&2
+    exit 1
+    ;;
+esac
