@@ -35,7 +35,7 @@ env override: `SENKO_POSTGRES_URL`
 
 > **重要: 認証モードは pairwise 排他**
 >
-> `[server.auth.api_key]`(`master_key`) / `[server.auth.oidc]` / `[server.auth.trusted_headers]` は **同時に 1 つだけ** しか有効化できません。複数設定されていると起動時に bail します。master 権限の与え方はモードごとに異なる機構です (下記各 section 参照)。
+> `[server.auth.api_key]`(`master_key`) / `[server.auth.oidc]` / `[server.auth.trusted_headers]` / `[server.auth.dev_bypass]` は **同時に 1 つだけ** しか有効化できません。複数設定されていると起動時に bail します。master 権限の与え方はモードごとに異なる機構です (下記各 section 参照)。
 
 ## `[server.auth.api_key]`
 
@@ -102,6 +102,18 @@ OIDC 認証モード (他モードと排他)。**初回認証時にユーザが 
 | `oidc_issuer_url` | string | `null` | `GET /auth/config` で返す (CLI ログイン用) |
 | `oidc_client_id` | string | `null` | 同上 |
 
+## `[server.auth.dev_bypass]` — 開発専用
+
+> **開発専用です。`SENKO_ENV=production` で起動を拒否します**。詳細は [Dev Bypass 認証](../../guides/server-remote/auth-dev-bypass.md)。
+
+認証を完全に無効化し、すべてのリクエストを固定のダミーマスターユーザに解決します。3 つの本物の認証モードや `[server.relay]` とは併用できません。
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | `true` で bypass を有効化。CLI 等価: `senko serve --dev-no-auth` |
+
+CLI 等価フラグ: `--dev-no-auth`（一方向のみ — 一度 on にすると同一起動中は off に戻せません）。
+
 ## `[server.remote.<action>.hooks.<name>]`
 
 `senko serve` (direct) で状態遷移が起きた時に発火する hook。action 一覧は [`[cli.*]` 設定](cli.md) と同じ。
@@ -124,4 +136,4 @@ Hook のスキーマは [Hooks リファレンス](../hooks.md)。
 
 ## 認証モードの排他性
 
-`api_key` / `oidc` / `trusted_headers` は **同時に 1 つだけ有効**。複数設定した場合は起動時エラーになります (起動せず)。切り替えたい場合は片方のキーを削除してください。
+`api_key` / `oidc` / `trusted_headers` / `dev_bypass` は **同時に 1 つだけ有効**。複数設定した場合は起動時エラーになります (起動せず)。切り替えたい場合は片方のキーを削除してください。`dev_bypass` はさらに `[server.relay]` とも併用不可で、`SENKO_ENV=production` 下では起動を拒否します。

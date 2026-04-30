@@ -35,7 +35,7 @@ env override: `SENKO_POSTGRES_URL`
 
 > **Important: auth modes are pairwise exclusive.**
 >
-> `[server.auth.api_key]` (`master_key`) / `[server.auth.oidc]` / `[server.auth.trusted_headers]` can only have **one** enabled at a time. Configuring more than one bails at startup. How master privilege is granted differs per mode (see below).
+> `[server.auth.api_key]` (`master_key`) / `[server.auth.oidc]` / `[server.auth.trusted_headers]` / `[server.auth.dev_bypass]` can only have **one** enabled at a time. Configuring more than one bails at startup. How master privilege is granted differs per mode (see below).
 
 ## `[server.auth.api_key]`
 
@@ -102,6 +102,18 @@ Exclusive with other modes. **Users are JIT-provisioned on first access** (same 
 | `oidc_issuer_url` | string | `null` | Returned from `GET /auth/config` (for CLI login) |
 | `oidc_client_id` | string | `null` | Same |
 
+## `[server.auth.dev_bypass]` — DEV-ONLY
+
+> **DEVELOPMENT-ONLY. Refuses to boot with `SENKO_ENV=production`.** See [Dev Bypass Authentication](../../guides/server-remote/auth-dev-bypass.md).
+
+Disables all authentication and resolves every inbound request to a fixed synthetic master user. Cannot be combined with the three real auth modes or with `[server.relay]`.
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `enabled` | bool | `false` | Set to `true` to enable bypass. CLI equivalent: `senko serve --dev-no-auth` |
+
+Equivalent CLI flag: `--dev-no-auth` (overrides the config in the on-direction only — once on, it stays on for that boot).
+
 ## `[server.remote.<action>.hooks.<name>]`
 
 Hooks that fire when a state transition happens under `senko serve` (direct). Same action list as [`[cli.*]` Config](cli.md).
@@ -124,4 +136,4 @@ Hook schema: [Hooks Reference](../hooks.md).
 
 ## Mutual Exclusion of Auth Modes
 
-Only one of `api_key` / `oidc` / `trusted_headers` can be enabled. Configuring more than one is a startup error (the server refuses to start). To switch, remove the keys belonging to the other mode.
+Only one of `api_key` / `oidc` / `trusted_headers` / `dev_bypass` can be enabled. Configuring more than one is a startup error (the server refuses to start). To switch, remove the keys belonging to the other mode. `dev_bypass` additionally cannot coexist with `[server.relay]` and refuses to start when `SENKO_ENV=production`.

@@ -522,6 +522,13 @@ impl TrustedHeadersConfig {
     }
 }
 
+/// DEVELOPMENT-ONLY auth bypass. Refuses to start with SENKO_ENV=production.
+#[derive(Debug, Serialize, Deserialize, Default, Clone)]
+pub struct DevBypassConfig {
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct AuthConfig {
     #[serde(default)]
@@ -530,6 +537,8 @@ pub struct AuthConfig {
     pub oidc: OidcConfig,
     #[serde(default)]
     pub trusted_headers: TrustedHeadersConfig,
+    #[serde(default)]
+    pub dev_bypass: DevBypassConfig,
 }
 
 impl AuthConfig {
@@ -538,6 +547,7 @@ impl AuthConfig {
         self.oidc.is_configured()
             || self.api_key.master_key.is_some()
             || self.trusted_headers.is_configured()
+            || self.dev_bypass.enabled
     }
 
     /// Returns an error message if more than one authentication mode is configured.
@@ -546,6 +556,7 @@ impl AuthConfig {
             self.oidc.is_configured(),
             self.api_key.master_key.is_some(),
             self.trusted_headers.is_configured(),
+            self.dev_bypass.enabled,
         ]
         .iter()
         .filter(|&&v| v)
@@ -553,7 +564,7 @@ impl AuthConfig {
 
         if count > 1 {
             Err("only one authentication mode may be configured at a time \
-                 (api_key, oidc, or trusted_headers)"
+                 (api_key, oidc, trusted_headers, or dev_bypass)"
                 .to_string())
         } else {
             Ok(())
@@ -857,6 +868,11 @@ pub struct RawTrustedHeadersConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
+pub struct RawDevBypassConfig {
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct RawAuthConfig {
     #[serde(default)]
     pub api_key: RawApiKeyConfig,
@@ -864,6 +880,8 @@ pub struct RawAuthConfig {
     pub oidc: RawOidcConfig,
     #[serde(default)]
     pub trusted_headers: RawTrustedHeadersConfig,
+    #[serde(default)]
+    pub dev_bypass: RawDevBypassConfig,
 }
 
 impl RawConfig {
@@ -1081,6 +1099,13 @@ impl RawConfig {
                             .oidc
                             .master_group),
                     },
+                    dev_bypass: RawDevBypassConfig {
+                        enabled: overlay.server.auth.dev_bypass.enabled.or(self
+                            .server
+                            .auth
+                            .dev_bypass
+                            .enabled),
+                    },
                 },
             },
             cli: RawCliConfig {
@@ -1196,6 +1221,9 @@ impl RawConfig {
                         oidc_issuer_url: self.server.auth.trusted_headers.oidc_issuer_url,
                         oidc_client_id: self.server.auth.trusted_headers.oidc_client_id,
                         master_group: self.server.auth.trusted_headers.master_group,
+                    },
+                    dev_bypass: DevBypassConfig {
+                        enabled: self.server.auth.dev_bypass.enabled.unwrap_or(false),
                     },
                 },
             },
@@ -1347,6 +1375,8 @@ pub struct CliOverrides {
     pub host: Option<String>,
     pub server_port: Option<u16>,
     pub server_host: Option<String>,
+    /// DEVELOPMENT-ONLY: enable auth bypass via `--dev-no-auth`. Cannot be reset by lower-priority sources.
+    pub dev_no_auth: bool,
 }
 
 impl Config {
@@ -1698,6 +1728,9 @@ impl Config {
         }
         if let Some(ref host) = overrides.server_host {
             self.server.host = Some(host.clone());
+        }
+        if overrides.dev_no_auth {
+            self.server.auth.dev_bypass.enabled = true;
         }
     }
 
@@ -2576,6 +2609,51 @@ mod tests {
             config.auth.oidc.issuer_url.as_deref(),
             Some("https://auth.example.com")
         );
+    }
+
+    #[test]
+    fn dev_bypass_round_trips_from_toml() {
+        let raw: RawConfig = toml::from_str(
+            r#"
+            [server.auth.dev_bypass]
+            enabled = true
+            "#,
+        )
+        .unwrap();
+        // Round-trip through merge (the easy-to-miss step) and resolve.
+        let merged = RawConfig::default().merge(raw);
+        let config = merged.resolve();
+        assert!(config.server.auth.dev_bypass.enabled);
+        assert!(config.server.auth.is_configured());
+    }
+
+    #[test]
+    fn dev_bypass_default_is_disabled() {
+        let config = RawConfig::default().resolve();
+        assert!(!config.server.auth.dev_bypass.enabled);
+        assert!(!config.server.auth.is_configured());
+    }
+
+    #[test]
+    fn dev_bypass_exclusive_with_other_modes() {
+        let mut config = Config::default();
+        config.server.auth.api_key.master_key = Some("sk".into());
+        config.server.auth.dev_bypass.enabled = true;
+        let err = config.server.auth.validate_exclusive().unwrap_err();
+        assert!(
+            err.contains("dev_bypass"),
+            "error mentions dev_bypass: {err}"
+        );
+    }
+
+    #[test]
+    fn apply_cli_dev_no_auth_enables_bypass() {
+        let mut config = Config::default();
+        config.apply_cli(&CliOverrides {
+            dev_no_auth: true,
+            ..Default::default()
+        });
+        assert!(config.server.auth.dev_bypass.enabled);
     }
 
     #[test]

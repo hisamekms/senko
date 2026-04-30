@@ -379,6 +379,9 @@ fn has_auth_credentials(
             Some(header) => headers.contains_key(header.as_str()),
             None => false,
         },
+        // Bypass: credentials are intrinsic to the variant — every request is
+        // authenticated, so we always emit the version header.
+        Some(AuthMode::DevBypass { .. }) => true,
     }
 }
 
@@ -938,7 +941,7 @@ async fn start_server(
         // Contract #8 / Phase C3. Active only when `auth_mode` is
         // `Some(_)`; in proxy mode the relay layer above takes over.
         .layer(axum::middleware::from_fn_with_state(
-            state,
+            state.clone(),
             self::auth::resolve_enduser_middleware::<AppState>,
         ));
 
@@ -948,6 +951,13 @@ async fn start_server(
         .with_context(|| format!("invalid bind address: {bind_addr_str}"))?;
 
     let (listener, actual_port) = super::bind_with_retry(bind_ip, port, port_is_explicit).await?;
+
+    // Repeat the bypass warning right next to the "Listening on" line so
+    // operators tailing the log from boot still see it. The first warning
+    // is emitted in `bootstrap::create_auth_mode`.
+    if matches!(state.auth_mode.as_deref(), Some(AuthMode::DevBypass { .. })) {
+        tracing::warn!("dev auth bypass enabled — DO NOT USE IN PRODUCTION");
+    }
 
     if bind_ip.is_unspecified() {
         let device_ip = get_local_ip()
@@ -1915,6 +1925,7 @@ async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigRespon
             };
             ("trusted_headers".to_string(), oidc)
         }
+        Some(AuthMode::DevBypass { .. }) => ("dev_bypass".to_string(), None),
         None => ("none".to_string(), None),
     };
     Json(AuthConfigResponse { auth_mode, oidc })
@@ -2320,6 +2331,10 @@ async fn get_me(
     let auth = auth.0.ok_or(AuthError::MissingToken)?;
     let session = match state.auth_mode.as_deref() {
         Some(AuthMode::TrustedHeaders(_)) => None,
+        // Bypass mode has no session — and we MUST NOT consult the
+        // Authorization header here, because callers under bypass do not
+        // send one.
+        Some(AuthMode::DevBypass { .. }) => None,
         _ => {
             let token = headers
                 .get("authorization")
@@ -2372,6 +2387,14 @@ async fn create_token(
     auth: AuthUser,
     body: Option<Json<CreateTokenRequest>>,
 ) -> Result<(StatusCode, Json<TokenResponse>), ApiError> {
+    // Under dev_bypass we'd otherwise persist the synthetic user via
+    // `get_or_create_user` and hand out a real session token — neither is
+    // appropriate for a bypass deployment, so refuse the call.
+    if matches!(state.auth_mode.as_deref(), Some(AuthMode::DevBypass { .. })) {
+        return Err(ApiError::NotImplemented(
+            "/auth/token is disabled in dev_bypass mode".into(),
+        ));
+    }
     let device_name = body.and_then(|b| b.0.device_name);
     // Ensure user exists in DB (auto-created by JwtAuthProvider if OIDC)
     // Auto-create runs only when the JWT path didn't already provision the

@@ -76,6 +76,15 @@ where
                     is_master: result.is_master,
                 })
             }
+            // DEV-ONLY bypass: short-circuit without inspecting headers and
+            // return the synthetic user prepared at boot. The production
+            // guard lives in `bootstrap::validate_serve_auth`.
+            AuthMode::DevBypass { user, is_master } => Ok(AuthUser {
+                user: user.clone(),
+                groups: Vec::new(),
+                scopes: Vec::new(),
+                is_master: *is_master,
+            }),
         }
     }
 }
@@ -359,5 +368,60 @@ mod resolve_enduser_tests {
 
         assert!(lookup_attr(record, "enduser.id").is_none());
         assert!(lookup_attr(record, "enduser.name").is_none());
+    }
+
+    fn dev_bypass_mode() -> Option<Arc<AuthMode>> {
+        let user = User::new(
+            UserId(1),
+            Username("dev-bypass".into()),
+            "dev-bypass".into(),
+            Some("Dev Bypass User".into()),
+            None,
+            "2026-04-30T00:00:00Z".into(),
+        );
+        Some(Arc::new(AuthMode::DevBypass {
+            user,
+            is_master: true,
+        }))
+    }
+
+    #[test]
+    fn dev_bypass_returns_synthetic_user_without_bearer() {
+        // Drives `AuthUser::from_request_parts` directly to confirm that
+        // bypass mode skips the Bearer requirement entirely.
+        let state = StubState {
+            mode: dev_bypass_mode(),
+        };
+        let mut req = req_with_bearer(None);
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let auth = rt.block_on(async {
+            let (mut parts, _body) = std::mem::take(&mut req).into_parts();
+            AuthUser::from_request_parts(&mut parts, &state).await
+        });
+        let auth = auth.expect("dev_bypass extractor must succeed without Bearer");
+        assert_eq!(auth.user.id(), UserId(1));
+        assert!(auth.is_master);
+        assert_eq!(auth.user.username().0, "dev-bypass");
+    }
+
+    #[test]
+    fn middleware_attaches_enduser_for_dev_bypass() {
+        // Observability check: under dev_bypass the middleware must still
+        // publish the synthetic principal to the OTel business-event
+        // pipeline, so `enduser.id` / `enduser.name` keep showing up in logs.
+        let state = StubState {
+            mode: dev_bypass_mode(),
+        };
+        let records = capture_business_records(state, req_with_bearer(None));
+        let record = pick_task_created(&records);
+
+        assert_eq!(lookup_attr(record, "enduser.id"), Some(AnyValue::Int(1)));
+        assert_eq!(
+            lookup_attr(record, "enduser.name"),
+            Some(AnyValue::String("dev-bypass".into()))
+        );
     }
 }

@@ -27,6 +27,7 @@
   - [API キー認証](ja/guides/server-remote/auth-api-key.md)
   - [OIDC 認証](ja/guides/server-remote/auth-oidc.md)
   - [信頼ヘッダ (trusted_headers) 認証](ja/guides/server-remote/auth-trusted-headers.md)
+  - [Dev Bypass 認証 (開発専用)](ja/guides/server-remote/auth-dev-bypass.md)
   - [AWS デプロイ (API Gateway + Cognito + Lambda Web Adapter)](ja/guides/server-remote/aws-deployment.md)
   - [`[server.remote.*]` hook の実例](ja/guides/server-remote/hooks.md)
 

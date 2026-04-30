@@ -155,6 +155,10 @@ pub enum Command {
         /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
         #[arg(long)]
         host: Option<String>,
+        /// DEVELOPMENT ONLY: bypass authentication. Refuses to start with
+        /// SENKO_ENV=production. Cannot be combined with relay mode.
+        #[arg(long)]
+        dev_no_auth: bool,
     },
     /// Install a skill
     SkillInstall {
@@ -1233,7 +1237,11 @@ pub async fn run(cli: Cli) -> Result<()> {
             .await?;
             Ok(())
         }
-        Command::Serve { port, host } => {
+        Command::Serve {
+            port,
+            host,
+            dev_no_auth,
+        } => {
             let root = resolve_project_root(cli.project_root.as_deref())?;
             let xdg = crate::infra::xdg::XdgDirs::from_env();
             let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
@@ -1249,11 +1257,20 @@ pub async fn run(cli: Cli) -> Result<()> {
                 postgres_url: cli.postgres_url.clone(),
                 server_port: port,
                 server_host: host,
+                dev_no_auth,
                 ..Default::default()
             });
             #[cfg(feature = "aws-secrets")]
             config.resolve_secrets().await?;
             let is_proxy = config.server.relay.url.is_some();
+            // `validate_serve_auth` only runs on the non-proxy branch, so the
+            // bypass production-guard / exclusivity checks would never fire
+            // under relay. Reject the combination explicitly here.
+            if is_proxy && config.server.auth.dev_bypass.enabled {
+                anyhow::bail!(
+                    "--dev-no-auth / [server.auth.dev_bypass] cannot be used with relay mode (server.relay.url is set)"
+                );
+            }
             if !is_proxy {
                 crate::bootstrap::validate_serve_auth(&config)?;
             }

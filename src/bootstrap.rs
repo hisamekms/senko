@@ -192,17 +192,36 @@ pub enum AuthMode {
     Token(Arc<dyn AuthProvider>),
     /// Trusted headers auth — reads user identity from proxy-set headers.
     TrustedHeaders(Arc<TrustedHeadersAuthProvider>),
+    /// DEVELOPMENT-ONLY: every request resolves to a fixed synthetic user.
+    /// Refuses to start with `SENKO_ENV=production` (see `validate_serve_auth`).
+    DevBypass {
+        user: crate::domain::user::User,
+        is_master: bool,
+    },
 }
 
 /// Validate that `senko serve` has exactly one authentication method configured.
 /// Call before `create_auth_mode`.
 pub fn validate_serve_auth(config: &Config) -> Result<()> {
+    // Production guard: reject `dev_bypass` whenever SENKO_ENV signals
+    // production. Trim + case-insensitive so e.g. `SENKO_ENV=Production ` is
+    // still caught.
+    if config.server.auth.dev_bypass.enabled
+        && let Ok(env) = std::env::var("SENKO_ENV")
+        && env.trim().eq_ignore_ascii_case("production")
+    {
+        bail!(
+            "dev auth bypass cannot be enabled with SENKO_ENV=production. \
+             Unset SENKO_ENV or remove [server.auth.dev_bypass] / --dev-no-auth."
+        );
+    }
     if !config.server.auth.is_configured() {
         bail!(
             "senko serve requires an authentication method. \
              Set server.auth.oidc (issuer_url + client_id), \
-             server.auth.api_key.master_key, or \
-             server.auth.trusted_headers.subject_header."
+             server.auth.api_key.master_key, \
+             server.auth.trusted_headers.subject_header, or \
+             server.auth.dev_bypass.enabled (DEV ONLY)."
         );
     }
     config
@@ -218,6 +237,24 @@ pub fn create_auth_mode(
     backend: Arc<dyn TaskBackend>,
 ) -> Result<Option<AuthMode>> {
     let auth = &config.server.auth;
+
+    // First-position so accidental config overlap cannot shadow the bypass
+    // branch — `validate_exclusive` ensures the other modes are not also set.
+    if auth.dev_bypass.enabled {
+        tracing::warn!("dev auth bypass enabled — DO NOT USE IN PRODUCTION");
+        let user = crate::domain::user::User::new(
+            crate::domain::DEFAULT_USER_ID,
+            crate::domain::user::Username("dev-bypass".to_string()),
+            "dev-bypass".to_string(),
+            Some("Dev Bypass User".to_string()),
+            None,
+            chrono::Utc::now().to_rfc3339(),
+        );
+        return Ok(Some(AuthMode::DevBypass {
+            user,
+            is_master: true,
+        }));
+    }
 
     if auth.oidc.is_configured() {
         let issuer_url = auth.oidc.issuer_url.clone().unwrap();
@@ -1580,6 +1617,85 @@ name = "project-local"
             msg.contains("trusted_headers"),
             "error should mention trusted_headers: {msg}"
         );
+    }
+
+    /// Helper for env-var tests: clear SENKO_ENV, run the test body, restore.
+    /// `#[serial]` is required on all callers because env vars are process-global.
+    fn with_senko_env<F: FnOnce()>(value: Option<&str>, f: F) {
+        // SAFETY: callers are marked #[serial].
+        unsafe {
+            std::env::remove_var("SENKO_ENV");
+            if let Some(v) = value {
+                std::env::set_var("SENKO_ENV", v);
+            }
+        }
+        f();
+        // SAFETY: callers are marked #[serial].
+        unsafe {
+            std::env::remove_var("SENKO_ENV");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn validate_serve_auth_with_dev_bypass_ok() {
+        with_senko_env(None, || {
+            let mut config = Config::default();
+            config.server.auth.dev_bypass.enabled = true;
+            validate_serve_auth(&config).unwrap();
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_serve_auth_with_dev_bypass_in_production_fails() {
+        with_senko_env(Some("production"), || {
+            let mut config = Config::default();
+            config.server.auth.dev_bypass.enabled = true;
+            let err = validate_serve_auth(&config).unwrap_err();
+            assert!(
+                err.to_string().contains("production"),
+                "error should mention production: {err}"
+            );
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_serve_auth_with_dev_bypass_in_production_case_and_whitespace() {
+        // Trim + case-insensitive — `Production ` (trailing space, capital P) must still fail.
+        with_senko_env(Some("Production "), || {
+            let mut config = Config::default();
+            config.server.auth.dev_bypass.enabled = true;
+            let err = validate_serve_auth(&config).unwrap_err();
+            assert!(err.to_string().contains("production"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_serve_auth_with_dev_bypass_in_development_ok() {
+        with_senko_env(Some("development"), || {
+            let mut config = Config::default();
+            config.server.auth.dev_bypass.enabled = true;
+            validate_serve_auth(&config).unwrap();
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn validate_serve_auth_with_dev_bypass_and_oidc_fails() {
+        with_senko_env(None, || {
+            let mut config = Config::default();
+            config.server.auth.dev_bypass.enabled = true;
+            config.server.auth.oidc.issuer_url = Some("https://example.com".to_string());
+            config.server.auth.oidc.client_id = Some("my-client".to_string());
+            let err = validate_serve_auth(&config).unwrap_err();
+            assert!(
+                err.to_string().contains("only one authentication mode"),
+                "error should mention exclusivity: {err}"
+            );
+        });
     }
 
     // --- resolve_trace_attributes ---
