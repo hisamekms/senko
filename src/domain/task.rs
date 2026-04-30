@@ -17,8 +17,21 @@ use super::user::UserId;
 /// bare integer (e.g. `42`), not `{"0": 42}`. The goal is compile-time safety: a
 /// `TaskId` cannot be accidentally mixed with a `ProjectId`, `user_id`, or
 /// `contract_id` that also happen to be `i64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
 #[serde(transparent)]
+#[schema(value_type = i64)]
 pub struct TaskId(pub i64);
 
 impl fmt::Display for TaskId {
@@ -229,7 +242,9 @@ impl FromStr for TaskStatus {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema,
+)]
 pub enum Priority {
     P0 = 0,
     P1 = 1,
@@ -1032,7 +1047,7 @@ impl<'de> Deserialize<'de> for AssigneeUserId {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateTaskParams {
     pub title: String,
     pub background: Option<String>,
@@ -1047,12 +1062,14 @@ pub struct CreateTaskParams {
     pub branch: Option<String>,
     pub pr_url: Option<String>,
     #[serde(default)]
+    #[schema(value_type = Option<Object>)]
     pub metadata: Option<serde_json::Value>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
     pub dependencies: Vec<TaskId>,
     #[serde(default)]
+    #[schema(value_type = Option<Object>)]
     pub assignee_user_id: Option<AssigneeUserId>,
     #[serde(default)]
     pub contract_id: Option<ContractId>,

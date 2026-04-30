@@ -10,7 +10,7 @@ use super::project::ProjectId;
 
 // --- MetadataFieldType enum ---
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum MetadataFieldType {
     String,
@@ -163,7 +163,7 @@ pub fn validate_field_name(name: &str) -> Result<(), DomainError> {
 
 // --- Params ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateMetadataFieldParams {
     pub name: String,
     pub field_type: MetadataFieldType,

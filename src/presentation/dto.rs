@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::application::{CompleteResult, PreviewResult};
 use crate::domain::contract::{Contract, ContractId, ContractNote};
@@ -10,7 +11,7 @@ use crate::infra::config::Config;
 
 // --- Project ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ProjectResponse {
     id: ProjectId,
     name: String,
@@ -31,7 +32,7 @@ impl From<Project> for ProjectResponse {
 
 // --- MetadataField ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MetadataFieldResponse {
     id: i64,
     project_id: ProjectId,
@@ -58,7 +59,7 @@ impl From<MetadataField> for MetadataFieldResponse {
 
 // --- Task ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct DodItemResponse {
     content: String,
     checked: bool,
@@ -73,7 +74,7 @@ impl From<&DodItem> for DodItemResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TaskResponse {
     id: TaskId,
     project_id: ProjectId,
@@ -94,6 +95,7 @@ pub struct TaskResponse {
     branch: Option<String>,
     pr_url: Option<String>,
     contract_id: Option<ContractId>,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
     definition_of_done: Vec<DodItemResponse>,
     in_scope: Vec<String>,
@@ -140,7 +142,7 @@ impl From<Task> for TaskResponse {
 
 // --- Contract ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ContractNoteResponse {
     content: String,
     source_task_id: Option<TaskId>,
@@ -163,7 +165,7 @@ impl From<ContractNote> for ContractNoteResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ContractResponse {
     id: ContractId,
     project_id: ProjectId,
@@ -171,6 +173,7 @@ pub struct ContractResponse {
     description: Option<String>,
     definition_of_done: Vec<DodItemResponse>,
     tags: Vec<String>,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
     notes: Vec<ContractNoteResponse>,
     is_completed: bool,
@@ -271,7 +274,7 @@ impl From<Task> for TaskViewModel {
 
 // --- List Tasks (paged) ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListTasksPageResponse {
     pub items: Vec<TaskResponse>,
     /// Opaque cursor for fetching the next page; `null` when there are no more results.
@@ -280,49 +283,49 @@ pub struct ListTasksPageResponse {
 
 // --- List pagination responses (task #337) ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListContractsPageResponse {
     pub items: Vec<ContractResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListContractNotesPageResponse {
     pub items: Vec<ContractNoteResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListProjectsPageResponse {
     pub items: Vec<ProjectResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListMembersPageResponse {
     pub items: Vec<ProjectMemberResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListUsersPageResponse {
     pub items: Vec<UserResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListMetadataFieldsPageResponse {
     pub items: Vec<MetadataFieldResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListDepsPageResponse {
     pub items: Vec<TaskResponse>,
     pub next_cursor: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ListSessionsPageResponse {
     pub items: Vec<SessionResponse>,
     pub next_cursor: Option<String>,
@@ -330,7 +333,7 @@ pub struct ListSessionsPageResponse {
 
 // --- Complete Task ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct CompleteTaskResponse {
     pub task: TaskResponse,
     pub unblocked_tasks: Vec<UnblockedTaskInfo>,
@@ -356,7 +359,7 @@ impl From<CompleteResult> for CompleteTaskResponse {
 
 // --- Preview Transition ---
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct PreviewTransitionResponse {
     pub allowed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -366,7 +369,7 @@ pub struct PreviewTransitionResponse {
     pub unblocked_tasks: Vec<UnblockedTaskInfo>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct UnblockedTaskInfo {
     pub id: TaskId,
     pub title: String,
@@ -397,7 +400,7 @@ impl From<PreviewResult> for PreviewTransitionResponse {
 
 // --- User ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct UserResponse {
     id: UserId,
     username: crate::domain::user::Username,
@@ -422,7 +425,7 @@ impl From<User> for UserResponse {
 
 // --- ProjectMember ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MemberUserInfo {
     id: UserId,
     name: String,
@@ -439,7 +442,7 @@ impl From<&User> for MemberUserInfo {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ProjectMemberResponse {
     id: i64,
     project_id: ProjectId,
@@ -464,7 +467,7 @@ impl ProjectMemberResponse {
 
 // --- ApiKey ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ApiKeyResponse {
     id: i64,
     user_id: UserId,
@@ -491,7 +494,7 @@ impl From<ApiKey> for ApiKeyResponse {
 
 // --- ApiKeyWithSecret ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct ApiKeyWithSecretResponse {
     id: i64,
     user_id: UserId,
@@ -518,7 +521,7 @@ impl From<ApiKeyWithSecret> for ApiKeyWithSecretResponse {
 
 // --- Session ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct SessionResponse {
     pub id: i64,
     pub key_prefix: String,
@@ -541,7 +544,7 @@ impl From<ApiKey> for SessionResponse {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct TokenResponse {
     pub token: String,
     pub id: i64,
@@ -551,13 +554,13 @@ pub struct TokenResponse {
 
 // --- Auth config (public) ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AuthConfigResponse {
     pub auth_mode: String,
     pub oidc: Option<AuthConfigOidc>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AuthConfigOidc {
     pub issuer_url: String,
     pub client_id: String,
@@ -567,7 +570,7 @@ pub struct AuthConfigOidc {
 
 // --- Me (auth status) ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct MeResponse {
     pub user: UserResponse,
     pub session: Option<SessionResponse>,
@@ -575,7 +578,8 @@ pub struct MeResponse {
 
 // --- Config ---
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
+#[schema(value_type = Object)]
 pub struct ConfigResponse(serde_json::Value);
 
 const MASKED: &str = "****";

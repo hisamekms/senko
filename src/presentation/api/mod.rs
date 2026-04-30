@@ -7,10 +7,13 @@ use axum::extract::{Path, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post, put};
+use axum::routing::put;
 use axum::{Json, Router};
 use axum_extra::extract::Query;
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, OpenApi, ToSchema};
+use utoipa_axum::router::OpenApiRouter;
+use utoipa_axum::routes;
 
 mod auth;
 mod relay_auth;
@@ -194,7 +197,7 @@ enum ApiError {
     },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 struct ErrorBody {
     error: String,
 }
@@ -407,7 +410,8 @@ async fn version_header_middleware(
 
 // --- Request types ---
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListTasksQuery {
     #[serde(default)]
     status: Vec<String>,
@@ -437,7 +441,8 @@ struct ListTasksQuery {
 
 // --- Pagination query structs (task #337) ---
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListContractsQuery {
     #[serde(default)]
     tag: Vec<String>,
@@ -447,7 +452,8 @@ struct ListContractsQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListContractNotesQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -455,7 +461,8 @@ struct ListContractNotesQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListProjectsQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -463,7 +470,8 @@ struct ListProjectsQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListMembersQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -471,7 +479,8 @@ struct ListMembersQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListUsersQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -479,7 +488,8 @@ struct ListUsersQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListMetadataFieldsQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -487,7 +497,8 @@ struct ListMetadataFieldsQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListDepsQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -495,7 +506,8 @@ struct ListDepsQuery {
     after: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct ListSessionsQuery {
     #[serde(default)]
     limit: Option<u32>,
@@ -524,58 +536,65 @@ fn decode_page_inputs<T: From<i64>>(
     Ok((limit.or(Some(50)), after_decoded))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct StartBody {
     session_id: Option<String>,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
     replace_metadata: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct ResumeBody {
     session_id: Option<String>,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
     replace_metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CompleteBody {
     #[serde(default)]
     skip_pr_check: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CancelBody {
     reason: Option<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct NextBody {
     session_id: Option<String>,
     #[serde(default)]
     include_unassigned: bool,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
     replace_metadata: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AddDepBody {
     dep_id: TaskId,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct SetDepsBody {
     dep_ids: Vec<TaskId>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 struct PreviewTransitionQuery {
     target: String,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Deserialize, Default, ToSchema)]
 struct EditTaskBody {
     title: Option<String>,
     background: Option<String>,
@@ -597,10 +616,13 @@ struct EditTaskBody {
     contract_id: Option<ContractId>,
     #[serde(default)]
     clear_contract: bool,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
     replace_metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
+    #[schema(value_type = Option<Object>)]
     assignee_user_id: Option<serde_json::Value>,
     #[serde(default)]
     clear_assignee_user_id: bool,
@@ -766,6 +788,116 @@ pub async fn serve_proxy(
     start_server(state, config, port, port_is_explicit, telemetry).await
 }
 
+/// Build the OpenAPI document used by both the runtime server and the
+/// `senko openapi dump` CLI subcommand.
+///
+/// The same value is consumed by `start_server` (when serving Swagger UI in
+/// remote mode) and by the CLI dumper, so generated artifacts stay in lockstep
+/// with the running API.
+pub fn build_openapi() -> utoipa::openapi::OpenApi {
+    let (_router, api): (Router<AppState>, _) = build_openapi_router().split_for_parts();
+    api
+}
+
+/// Construct an `OpenApiRouter` populated with every handler annotated with
+/// `#[utoipa::path]`. Returns `OpenApiRouter<AppState>` because every handler
+/// extracts `State<AppState>`. `build_openapi` simply discards the router half
+/// of `.split_for_parts()` to retrieve the spec without booting a server.
+/// Routes that intentionally stay out of the OpenAPI document (e.g. `_save`)
+/// are added by the caller after `.split_for_parts()`.
+fn build_openapi_router() -> OpenApiRouter<AppState> {
+    OpenApiRouter::with_openapi(ApiDoc::openapi())
+        // Users
+        .routes(routes!(list_users, create_user))
+        .routes(routes!(get_user, update_user, delete_user))
+        // API keys
+        .routes(routes!(list_api_keys, create_api_key))
+        .routes(routes!(delete_api_key))
+        // Projects
+        .routes(routes!(list_projects, create_project))
+        .routes(routes!(get_project, update_project, delete_project))
+        .routes(routes!(get_stats))
+        // Members
+        .routes(routes!(list_members, add_member))
+        .routes(routes!(get_member, update_member_role, remove_member))
+        // Task next/preview (static path before wildcard)
+        .routes(routes!(next_task))
+        .routes(routes!(preview_next))
+        // Tasks
+        .routes(routes!(list_tasks, create_task))
+        .routes(routes!(get_task, edit_task, delete_task))
+        .routes(routes!(preview_transition))
+        .routes(routes!(publish_task))
+        .routes(routes!(start_task))
+        .routes(routes!(resume_task))
+        .routes(routes!(complete_task))
+        .routes(routes!(cancel_task))
+        // Dependencies
+        .routes(routes!(list_deps, add_dep, set_deps))
+        .routes(routes!(remove_dep))
+        // DoD
+        .routes(routes!(check_dod))
+        .routes(routes!(uncheck_dod))
+        // Contracts
+        .routes(routes!(list_contracts, create_contract))
+        .routes(routes!(get_contract, edit_contract, delete_contract))
+        .routes(routes!(check_contract_dod))
+        .routes(routes!(uncheck_contract_dod))
+        .routes(routes!(list_contract_notes, add_contract_note))
+        // Metadata fields
+        .routes(routes!(list_metadata_fields, create_metadata_field))
+        .routes(routes!(delete_metadata_field_handler))
+        // Auth
+        .routes(routes!(get_auth_config))
+        .routes(routes!(get_me))
+        .routes(routes!(create_token))
+        .routes(routes!(list_sessions, revoke_all_sessions))
+        .routes(routes!(revoke_session))
+        // Server-wide
+        .routes(routes!(health_check))
+        .routes(routes!(get_config))
+}
+
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "senko remote API",
+        description = "REST API for the senko task management system. Served by `senko serve` in remote mode.",
+        version = env!("CARGO_PKG_VERSION"),
+        license(name = "MIT", identifier = "MIT"),
+    ),
+    modifiers(&BearerSecurityAddon),
+    tags(
+        (name = "tasks", description = "Task CRUD and lifecycle"),
+        (name = "deps", description = "Task dependencies"),
+        (name = "dod", description = "Definition of Done check/uncheck"),
+        (name = "contracts", description = "Contracts, contract DoD, and contract notes"),
+        (name = "projects", description = "Projects"),
+        (name = "members", description = "Project members"),
+        (name = "users", description = "Users"),
+        (name = "api-keys", description = "User API keys"),
+        (name = "metadata-fields", description = "Project metadata field definitions"),
+        (name = "auth", description = "Authentication / sessions"),
+        (name = "server", description = "Server-wide endpoints"),
+    ),
+)]
+struct ApiDoc;
+
+struct BearerSecurityAddon;
+
+impl utoipa::Modify for BearerSecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+        let components = openapi
+            .components
+            .get_or_insert_with(utoipa::openapi::Components::new);
+        components.add_security_scheme(
+            "bearer_auth",
+            SecurityScheme::Http(Http::new(HttpAuthScheme::Bearer)),
+        );
+    }
+}
+
 async fn start_server(
     state: AppState,
     config: &Config,
@@ -773,147 +905,29 @@ async fn start_server(
     port_is_explicit: bool,
     telemetry: bootstrap::TelemetryGuard,
 ) -> Result<()> {
-    let app = Router::new()
-        // User CRUD
-        .route("/api/v1/users", get(list_users).post(create_user))
-        .route(
-            "/api/v1/users/{user_id}",
-            get(get_user).put(update_user).delete(delete_user),
+    // Build the OpenAPI-aware router and split into (axum::Router, OpenApi).
+    // `_save` is intentionally NOT in the OpenAPI document — it accepts a full
+    // `Task` aggregate and is for internal/admin use only.
+    let (api_router, openapi) = build_openapi_router().split_for_parts();
+    let app: Router<AppState> = api_router.route(
+        "/api/v1/projects/{project_id}/tasks/{id}/_save",
+        put(save_task_handler),
+    );
+
+    // Conditionally mount Swagger UI + the OpenAPI JSON endpoint. Only the
+    // remote (standalone) server exposes the docs surface; the relay/proxy
+    // server is a thin forwarder and intentionally returns 404 for both
+    // `/api/v1/docs/*` and `/api/v1/openapi.json` so callers cannot mistake it
+    // for an authoritative spec source.
+    let app: Router<AppState> = if state.proxy_mode {
+        app
+    } else {
+        app.merge(
+            utoipa_swagger_ui::SwaggerUi::new("/api/v1/docs").url("/api/v1/openapi.json", openapi),
         )
-        // API key management
-        .route(
-            "/api/v1/users/{user_id}/api-keys",
-            get(list_api_keys).post(create_api_key),
-        )
-        .route(
-            "/api/v1/users/{user_id}/api-keys/{key_id}",
-            delete(delete_api_key),
-        )
-        // Project CRUD
-        .route("/api/v1/projects", get(list_projects).post(create_project))
-        .route(
-            "/api/v1/projects/{project_id}",
-            get(get_project).put(update_project).delete(delete_project),
-        )
-        // Project members
-        .route(
-            "/api/v1/projects/{project_id}/members",
-            get(list_members).post(add_member),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/members/{user_id}",
-            get(get_member)
-                .put(update_member_role)
-                .delete(remove_member),
-        )
-        // Task next + preview (static paths before wildcard)
-        .route("/api/v1/projects/{project_id}/tasks/next", post(next_task))
-        .route(
-            "/api/v1/projects/{project_id}/tasks/preview-next",
-            get(preview_next),
-        )
-        // Task CRUD
-        .route(
-            "/api/v1/projects/{project_id}/tasks",
-            get(list_tasks).post(create_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}",
-            get(get_task).put(edit_task).delete(delete_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/_save",
-            put(save_task_handler),
-        )
-        // Preview transition (read-only)
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/preview-transition",
-            get(preview_transition),
-        )
-        // Status transitions
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/publish",
-            post(publish_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/start",
-            post(start_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/resume",
-            post(resume_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/complete",
-            post(complete_task),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/cancel",
-            post(cancel_task),
-        )
-        // Dependencies
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/deps",
-            get(list_deps).post(add_dep).put(set_deps),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}",
-            delete(remove_dep),
-        )
-        // DoD
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check",
-            post(check_dod),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck",
-            post(uncheck_dod),
-        )
-        // Contract CRUD
-        .route(
-            "/api/v1/projects/{project_id}/contracts",
-            get(list_contracts).post(create_contract),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/contracts/{id}",
-            get(get_contract).put(edit_contract).delete(delete_contract),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check",
-            post(check_contract_dod),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck",
-            post(uncheck_contract_dod),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/contracts/{id}/notes",
-            get(list_contract_notes).post(add_contract_note),
-        )
-        // Metadata fields
-        .route(
-            "/api/v1/projects/{project_id}/metadata-fields",
-            get(list_metadata_fields).post(create_metadata_field),
-        )
-        .route(
-            "/api/v1/projects/{project_id}/metadata-fields/{name}",
-            delete(delete_metadata_field_handler),
-        )
-        // Project stats
-        .route("/api/v1/projects/{project_id}/stats", get(get_stats))
-        // Auth config (public, no auth required)
-        .route("/auth/config", get(get_auth_config))
-        // Auth / Session management
-        .route("/auth/me", get(get_me))
-        .route("/auth/token", post(create_token))
-        .route(
-            "/auth/sessions",
-            get(list_sessions).delete(revoke_all_sessions),
-        )
-        .route("/auth/sessions/{id}", delete(revoke_session))
-        // Server-wide
-        .route("/api/v1/health", get(health_check))
-        .route("/api/v1/config", get(get_config))
+    };
+
+    let app = app
         .route_layer(axum::middleware::from_fn_with_state(
             state.clone(),
             passthrough_auth_middleware,
@@ -1014,7 +1028,18 @@ fn get_local_ip() -> Option<std::net::IpAddr> {
 
 // --- Project Handlers ---
 
-// GET /api/v1/projects
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects",
+    params(ListProjectsQuery),
+    responses(
+        (status = 200, body = ListProjectsPageResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn list_projects(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1034,7 +1059,18 @@ async fn list_projects(
     }))
 }
 
-// POST /api/v1/projects
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects",
+    request_body = CreateProjectParams,
+    responses(
+        (status = 201, body = ProjectResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn create_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1050,7 +1086,19 @@ async fn create_project(
     Ok((StatusCode::CREATED, Json(ProjectResponse::from(project))))
 }
 
-// GET /api/v1/projects/{project_id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}",
+    params(("project_id" = i64, Path)),
+    responses(
+        (status = 200, body = ProjectResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn get_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1065,14 +1113,28 @@ async fn get_project(
     Ok(Json(ProjectResponse::from(project)))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateProjectBody {
     description: Option<String>,
     #[serde(default)]
     clear_description: bool,
 }
 
-// PUT /api/v1/projects/{project_id}
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{project_id}",
+    params(("project_id" = i64, Path)),
+    request_body = UpdateProjectBody,
+    responses(
+        (status = 200, body = ProjectResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn update_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1096,7 +1158,20 @@ async fn update_project(
     Ok(Json(ProjectResponse::from(project)))
 }
 
-// DELETE /api/v1/projects/{project_id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}",
+    params(("project_id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn delete_project(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1114,7 +1189,19 @@ async fn delete_project(
 
 // --- Task Handlers ---
 
-// GET /api/v1/projects/{project_id}/tasks
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/tasks",
+    params(("project_id" = i64, Path), ListTasksQuery),
+    responses(
+        (status = 200, body = ListTasksPageResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn list_tasks(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1224,7 +1311,20 @@ fn resolve_query_assignee_self(
         })
 }
 
-// POST /api/v1/projects/{project_id}/tasks
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks",
+    params(("project_id" = i64, Path)),
+    request_body = CreateTaskParams,
+    responses(
+        (status = 201, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn create_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1243,7 +1343,19 @@ async fn create_task(
     Ok((StatusCode::CREATED, Json(TaskResponse::from(task))))
 }
 
-// GET /api/v1/projects/{project_id}/tasks/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/tasks/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn get_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1258,7 +1370,21 @@ async fn get_task(
     Ok(Json(TaskResponse::from(task)))
 }
 
-// PUT /api/v1/projects/{project_id}/tasks/{id}
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{project_id}/tasks/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = EditTaskBody,
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn edit_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1371,6 +1497,10 @@ async fn edit_task(
 }
 
 // PUT /api/v1/projects/{project_id}/tasks/{id}/_save
+//
+// Internal/admin endpoint for full task replacement; intentionally NOT included
+// in the OpenAPI document because the request body is the complete `Task`
+// aggregate (not a public client surface).
 async fn save_task_handler(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1391,7 +1521,19 @@ async fn save_task_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// DELETE /api/v1/projects/{project_id}/tasks/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}/tasks/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn delete_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1406,7 +1548,20 @@ async fn delete_task(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/publish
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/publish",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn publish_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1421,7 +1576,22 @@ async fn publish_task(
     Ok(Json(TaskResponse::from(updated)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/start
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/start",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = StartBody,
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn start_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1443,7 +1613,22 @@ async fn start_task(
     Ok(Json(TaskResponse::from(updated)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/resume
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/resume",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = ResumeBody,
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn resume_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1466,7 +1651,21 @@ async fn resume_task(
     Ok(Json(TaskResponse::from(updated)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/complete
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/complete",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body(content = CompleteBody, description = "Optional. Defaults applied when omitted."),
+    responses(
+        (status = 200, body = CompleteTaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn complete_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1483,7 +1682,21 @@ async fn complete_task(
     Ok(Json(CompleteTaskResponse::from(result)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/cancel
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/cancel",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body(content = CancelBody, description = "Optional cancel reason."),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+        (status = 409, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn cancel_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1500,7 +1713,20 @@ async fn cancel_task(
     Ok(Json(TaskResponse::from(updated)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/next
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/next",
+    params(("project_id" = i64, Path)),
+    request_body(content = NextBody, description = "Optional metadata filter."),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody, description = "No eligible task"),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn next_task(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1538,7 +1764,20 @@ async fn next_task(
     Ok(Json(TaskResponse::from(updated)))
 }
 
-// GET /api/v1/projects/{project_id}/tasks/{id}/preview-transition?target=todo
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/preview-transition",
+    params(("project_id" = i64, Path), ("id" = i64, Path), PreviewTransitionQuery),
+    responses(
+        (status = 200, body = PreviewTransitionResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn preview_transition(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1555,7 +1794,18 @@ async fn preview_transition(
     Ok(Json(PreviewTransitionResponse::from(result)))
 }
 
-// GET /api/v1/projects/{project_id}/tasks/preview-next
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/tasks/preview-next",
+    params(("project_id" = i64, Path)),
+    responses(
+        (status = 200, body = PreviewTransitionResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "tasks",
+)]
 async fn preview_next(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1570,7 +1820,19 @@ async fn preview_next(
     Ok(Json(PreviewTransitionResponse::from(result)))
 }
 
-// GET /api/v1/projects/{project_id}/tasks/{id}/deps
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/deps",
+    params(("project_id" = i64, Path), ("id" = i64, Path), ListDepsQuery),
+    responses(
+        (status = 200, body = ListDepsPageResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "deps",
+)]
 async fn list_deps(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1591,7 +1853,21 @@ async fn list_deps(
     }))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/deps
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/deps",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = AddDepBody,
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "deps",
+)]
 async fn add_dep(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1607,7 +1883,23 @@ async fn add_dep(
     Ok(Json(TaskResponse::from(task)))
 }
 
-// DELETE /api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}",
+    params(
+        ("project_id" = i64, Path),
+        ("id" = i64, Path),
+        ("dep_id" = i64, Path),
+    ),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "deps",
+)]
 async fn remove_dep(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1622,7 +1914,21 @@ async fn remove_dep(
     Ok(Json(TaskResponse::from(task)))
 }
 
-// PUT /api/v1/projects/{project_id}/tasks/{id}/deps
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/deps",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = SetDepsBody,
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "deps",
+)]
 async fn set_deps(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1638,7 +1944,24 @@ async fn set_deps(
     Ok(Json(TaskResponse::from(task)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check",
+    params(
+        ("project_id" = i64, Path),
+        ("id" = i64, Path),
+        ("index" = u32, Path, description = "1-based DoD item index"),
+    ),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "dod",
+)]
 async fn check_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1653,7 +1976,24 @@ async fn check_dod(
     Ok(Json(TaskResponse::from(task)))
 }
 
-// POST /api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck",
+    params(
+        ("project_id" = i64, Path),
+        ("id" = i64, Path),
+        ("index" = u32, Path, description = "1-based DoD item index"),
+    ),
+    responses(
+        (status = 200, body = TaskResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "dod",
+)]
 async fn uncheck_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1670,7 +2010,7 @@ async fn uncheck_dod(
 
 // --- Contract handlers ---
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateContractBody {
     title: String,
     #[serde(default)]
@@ -1680,16 +2020,19 @@ struct CreateContractBody {
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct EditContractBody {
     title: Option<String>,
     description: Option<String>,
     #[serde(default)]
     clear_description: bool,
+    #[schema(value_type = Option<Object>)]
     metadata: Option<serde_json::Value>,
+    #[schema(value_type = Option<Object>)]
     replace_metadata: Option<serde_json::Value>,
     #[serde(default)]
     clear_metadata: bool,
@@ -1705,14 +2048,27 @@ struct EditContractBody {
     remove_definition_of_done: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AddContractNoteBody {
     content: String,
     #[serde(default)]
     source_task_id: Option<TaskId>,
 }
 
-// POST /api/v1/projects/{project_id}/contracts
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/contracts",
+    params(("project_id" = i64, Path)),
+    request_body = CreateContractBody,
+    responses(
+        (status = 200, body = ContractResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn create_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1735,7 +2091,19 @@ async fn create_contract(
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// GET /api/v1/projects/{project_id}/contracts
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/contracts",
+    params(("project_id" = i64, Path), ListContractsQuery),
+    responses(
+        (status = 200, body = ListContractsPageResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn list_contracts(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1760,7 +2128,19 @@ async fn list_contracts(
     }))
 }
 
-// GET /api/v1/projects/{project_id}/contracts/{id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/contracts/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    responses(
+        (status = 200, body = ContractResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn get_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1775,7 +2155,21 @@ async fn get_contract(
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// PUT /api/v1/projects/{project_id}/contracts/{id}
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{project_id}/contracts/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = EditContractBody,
+    responses(
+        (status = 200, body = ContractResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn edit_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1815,7 +2209,19 @@ async fn edit_contract(
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// DELETE /api/v1/projects/{project_id}/contracts/{id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}/contracts/{id}",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn delete_contract(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1830,7 +2236,24 @@ async fn delete_contract(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// POST /api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check",
+    params(
+        ("project_id" = i64, Path),
+        ("id" = i64, Path),
+        ("index" = u32, Path, description = "1-based DoD item index"),
+    ),
+    responses(
+        (status = 200, body = ContractResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn check_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1845,7 +2268,24 @@ async fn check_contract_dod(
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// POST /api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck",
+    params(
+        ("project_id" = i64, Path),
+        ("id" = i64, Path),
+        ("index" = u32, Path, description = "1-based DoD item index"),
+    ),
+    responses(
+        (status = 200, body = ContractResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn uncheck_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1860,7 +2300,21 @@ async fn uncheck_contract_dod(
     Ok(Json(ContractResponse::from(contract)))
 }
 
-// POST /api/v1/projects/{project_id}/contracts/{id}/notes
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/contracts/{id}/notes",
+    params(("project_id" = i64, Path), ("id" = i64, Path)),
+    request_body = AddContractNoteBody,
+    responses(
+        (status = 200, body = ContractNoteResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn add_contract_note(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1876,7 +2330,19 @@ async fn add_contract_note(
     Ok(Json(ContractNoteResponse::from(&note)))
 }
 
-// GET /api/v1/projects/{project_id}/contracts/{id}/notes
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/contracts/{id}/notes",
+    params(("project_id" = i64, Path), ("id" = i64, Path), ListContractNotesQuery),
+    responses(
+        (status = 200, body = ListContractNotesPageResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "contracts",
+)]
 async fn list_contract_notes(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1897,7 +2363,12 @@ async fn list_contract_notes(
     }))
 }
 
-// GET /auth/config (public, no auth required)
+#[utoipa::path(
+    get,
+    path = "/auth/config",
+    responses((status = 200, body = AuthConfigResponse)),
+    tag = "auth",
+)]
 async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigResponse> {
     let (auth_mode, oidc) = match state.auth_mode.as_deref() {
         Some(AuthMode::Token(_)) if state.oidc_config.is_configured() => (
@@ -1931,12 +2402,26 @@ async fn get_auth_config(State(state): State<AppState>) -> Json<AuthConfigRespon
     Json(AuthConfigResponse { auth_mode, oidc })
 }
 
-// GET /api/v1/config
-// GET /api/v1/health
+#[utoipa::path(
+    get,
+    path = "/api/v1/health",
+    responses((status = 200, body = Object, description = "Health status")),
+    tag = "server",
+)]
 async fn health_check() -> Json<serde_json::Value> {
     Json(serde_json::json!({"status": "ok"}))
 }
 
+#[utoipa::path(
+    get,
+    path = "/api/v1/config",
+    responses(
+        (status = 200, body = ConfigResponse),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "server",
+)]
 async fn get_config(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1952,7 +2437,18 @@ async fn get_config(
     Ok(Json(ConfigResponse::from(config)))
 }
 
-// GET /api/v1/projects/{project_id}/stats
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/stats",
+    params(("project_id" = i64, Path)),
+    responses(
+        (status = 200, body = HashMap<String, i64>),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "projects",
+)]
 async fn get_stats(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1969,7 +2465,18 @@ async fn get_stats(
 
 // --- User Handlers ---
 
-// GET /api/v1/users
+#[utoipa::path(
+    get,
+    path = "/api/v1/users",
+    params(ListUsersQuery),
+    responses(
+        (status = 200, body = ListUsersPageResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "users",
+)]
 async fn list_users(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -1989,7 +2496,19 @@ async fn list_users(
     }))
 }
 
-// POST /api/v1/users
+#[utoipa::path(
+    post,
+    path = "/api/v1/users",
+    request_body = CreateUserParams,
+    responses(
+        (status = 201, body = UserResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "users",
+)]
 async fn create_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2004,7 +2523,19 @@ async fn create_user(
     Ok((StatusCode::CREATED, Json(UserResponse::from(user))))
 }
 
-// GET /api/v1/users/{user_id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{user_id}",
+    params(("user_id" = i64, Path)),
+    responses(
+        (status = 200, body = UserResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "users",
+)]
 async fn get_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2020,12 +2551,28 @@ async fn get_user(
 }
 
 // PUT /api/v1/users/{user_id}
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateUserBody {
     username: Option<crate::domain::user::Username>,
+    #[schema(value_type = Option<String>)]
     display_name: Option<Option<String>>,
 }
 
+#[utoipa::path(
+    put,
+    path = "/api/v1/users/{user_id}",
+    params(("user_id" = i64, Path)),
+    request_body = UpdateUserBody,
+    responses(
+        (status = 200, body = UserResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "users",
+)]
 async fn update_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2045,7 +2592,19 @@ async fn update_user(
     Ok(Json(UserResponse::from(user)))
 }
 
-// DELETE /api/v1/users/{user_id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/users/{user_id}",
+    params(("user_id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "users",
+)]
 async fn delete_user(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2062,18 +2621,29 @@ async fn delete_user(
 
 // --- Member Handlers ---
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct AddMemberBody {
     user_id: UserId,
     role: Option<Role>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct UpdateRoleBody {
     role: Role,
 }
 
-// GET /api/v1/projects/{project_id}/members
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/members",
+    params(("project_id" = i64, Path), ListMembersQuery),
+    responses(
+        (status = 200, body = ListMembersPageResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "members",
+)]
 async fn list_members(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2099,7 +2669,20 @@ async fn list_members(
     }))
 }
 
-// POST /api/v1/projects/{project_id}/members
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/members",
+    params(("project_id" = i64, Path)),
+    request_body = AddMemberBody,
+    responses(
+        (status = 201, body = ProjectMemberResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "members",
+)]
 async fn add_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2121,7 +2704,19 @@ async fn add_member(
     ))
 }
 
-// GET /api/v1/projects/{project_id}/members/{user_id}
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/members/{user_id}",
+    params(("project_id" = i64, Path), ("user_id" = i64, Path)),
+    responses(
+        (status = 200, body = ProjectMemberResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "members",
+)]
 async fn get_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2140,7 +2735,21 @@ async fn get_member(
     )))
 }
 
-// PUT /api/v1/projects/{project_id}/members/{user_id}
+#[utoipa::path(
+    put,
+    path = "/api/v1/projects/{project_id}/members/{user_id}",
+    params(("project_id" = i64, Path), ("user_id" = i64, Path)),
+    request_body = UpdateRoleBody,
+    responses(
+        (status = 200, body = ProjectMemberResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "members",
+)]
 async fn update_member_role(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2161,7 +2770,19 @@ async fn update_member_role(
     )))
 }
 
-// DELETE /api/v1/projects/{project_id}/members/{user_id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}/members/{user_id}",
+    params(("project_id" = i64, Path), ("user_id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "members",
+)]
 async fn remove_member(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2179,7 +2800,20 @@ async fn remove_member(
 
 // --- MetadataField Handlers ---
 
-// POST /api/v1/projects/{project_id}/metadata-fields
+#[utoipa::path(
+    post,
+    path = "/api/v1/projects/{project_id}/metadata-fields",
+    params(("project_id" = i64, Path)),
+    request_body = CreateMetadataFieldParams,
+    responses(
+        (status = 201, body = MetadataFieldResponse),
+        (status = 400, body = ErrorBody),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "metadata-fields",
+)]
 async fn create_metadata_field(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2198,7 +2832,18 @@ async fn create_metadata_field(
     ))
 }
 
-// GET /api/v1/projects/{project_id}/metadata-fields
+#[utoipa::path(
+    get,
+    path = "/api/v1/projects/{project_id}/metadata-fields",
+    params(("project_id" = i64, Path), ListMetadataFieldsQuery),
+    responses(
+        (status = 200, body = ListMetadataFieldsPageResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "metadata-fields",
+)]
 async fn list_metadata_fields(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2223,7 +2868,19 @@ async fn list_metadata_fields(
     }))
 }
 
-// DELETE /api/v1/projects/{project_id}/metadata-fields/{name}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/projects/{project_id}/metadata-fields/{name}",
+    params(("project_id" = i64, Path), ("name" = String, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "metadata-fields",
+)]
 async fn delete_metadata_field_handler(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2240,7 +2897,18 @@ async fn delete_metadata_field_handler(
 
 // --- API Key Handlers ---
 
-// GET /api/v1/users/{user_id}/api-keys
+#[utoipa::path(
+    get,
+    path = "/api/v1/users/{user_id}/api-keys",
+    params(("user_id" = i64, Path)),
+    responses(
+        (status = 200, body = Vec<ApiKeyResponse>),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "api-keys",
+)]
 async fn list_api_keys(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2255,7 +2923,19 @@ async fn list_api_keys(
     Ok(Json(keys.into_iter().map(ApiKeyResponse::from).collect()))
 }
 
-// POST /api/v1/users/{user_id}/api-keys
+#[utoipa::path(
+    post,
+    path = "/api/v1/users/{user_id}/api-keys",
+    params(("user_id" = i64, Path)),
+    request_body(content = CreateApiKeyParams, description = "Optional name and device_name."),
+    responses(
+        (status = 201, body = ApiKeyWithSecretResponse),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "api-keys",
+)]
 async fn create_api_key(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2286,7 +2966,19 @@ async fn create_api_key(
     ))
 }
 
-// DELETE /api/v1/users/{user_id}/api-keys/{key_id}
+#[utoipa::path(
+    delete,
+    path = "/api/v1/users/{user_id}/api-keys/{key_id}",
+    params(("user_id" = i64, Path), ("key_id" = i64, Path)),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 403, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "api-keys",
+)]
 async fn delete_api_key(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2311,7 +3003,16 @@ async fn delete_api_key(
 
 // --- Auth / Session Management Handlers ---
 
-// GET /auth/me — current user + session info
+#[utoipa::path(
+    get,
+    path = "/auth/me",
+    responses(
+        (status = 200, body = MeResponse),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth",
+)]
 async fn get_me(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
@@ -2376,12 +3077,22 @@ async fn get_me(
     })
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 struct CreateTokenRequest {
     device_name: Option<String>,
 }
 
-// POST /auth/token — JWT → API key exchange
+#[utoipa::path(
+    post,
+    path = "/auth/token",
+    request_body(content = CreateTokenRequest, description = "Optional device_name."),
+    responses(
+        (status = 201, body = TokenResponse),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth",
+)]
 async fn create_token(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -2442,7 +3153,17 @@ fn compute_expires_at(
     Some(expires.to_rfc3339())
 }
 
-// GET /auth/sessions — list caller's active sessions
+#[utoipa::path(
+    get,
+    path = "/auth/sessions",
+    params(ListSessionsQuery),
+    responses(
+        (status = 200, body = ListSessionsPageResponse),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth",
+)]
 async fn list_sessions(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -2461,7 +3182,18 @@ async fn list_sessions(
     }))
 }
 
-// DELETE /auth/sessions/{id} — revoke a specific session
+#[utoipa::path(
+    delete,
+    path = "/auth/sessions/{id}",
+    params(("id" = i64, Path, description = "Session/api-key id")),
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+        (status = 404, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth",
+)]
 async fn revoke_session(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -2475,7 +3207,16 @@ async fn revoke_session(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// DELETE /auth/sessions — revoke all sessions
+#[utoipa::path(
+    delete,
+    path = "/auth/sessions",
+    responses(
+        (status = 204),
+        (status = 401, body = ErrorBody),
+    ),
+    security(("bearer_auth" = [])),
+    tag = "auth",
+)]
 async fn revoke_all_sessions(
     State(state): State<AppState>,
     auth: AuthUser,

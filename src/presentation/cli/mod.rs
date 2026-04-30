@@ -206,6 +206,28 @@ pub enum Command {
         #[command(subcommand)]
         action: ContractAction,
     },
+    /// Generate the OpenAPI specification for the senko remote API
+    Openapi {
+        #[command(subcommand)]
+        action: OpenapiAction,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OpenapiAction {
+    /// Write the OpenAPI 3.x JSON document to disk.
+    ///
+    /// Default path: `docs/openapi/openapi.json` (relative to the current
+    /// working directory). The file is overwritten atomically.
+    //
+    // The flag is named `--out` (not `--output`) to avoid shadowing the
+    // top-level global `--output {json,text}` flag, which clap routes through
+    // the parent `Cli::output` field.
+    Dump {
+        /// Destination path for the generated openapi.json.
+        #[arg(long, value_name = "PATH")]
+        out: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -1330,6 +1352,9 @@ pub async fn run(cli: Cli) -> Result<()> {
             AuthCommand::Revoke { id, all } => handlers::cmd_auth_revoke(&cli, *id, *all).await,
         },
         Command::Contract { ref action } => handlers::cmd_contract(&cli, action).await,
+        Command::Openapi { ref action } => match action {
+            OpenapiAction::Dump { out } => handlers::cmd_openapi_dump(out.as_deref()),
+        },
     }
 }
 

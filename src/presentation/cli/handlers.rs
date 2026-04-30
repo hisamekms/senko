@@ -1189,6 +1189,45 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     Ok(())
 }
 
+/// Generate the OpenAPI 3.x JSON document and write it to disk.
+///
+/// Default output: `docs/openapi/openapi.json` (relative to the current
+/// working directory). Writes the file via a tmp-then-rename so partial
+/// writes never leave a half-baked artifact behind.
+pub fn cmd_openapi_dump(output: Option<&std::path::Path>) -> Result<()> {
+    use std::io::Write;
+
+    let default_path = std::path::PathBuf::from("docs/openapi/openapi.json");
+    let path = output
+        .map(std::path::Path::to_path_buf)
+        .unwrap_or(default_path);
+
+    let api = crate::presentation::api::build_openapi();
+    let body = serde_json::to_string_pretty(&api)
+        .context("failed to serialize OpenAPI document to JSON")?;
+
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create directory {parent:?}"))?;
+    }
+
+    let tmp_path = path.with_extension("json.tmp");
+    {
+        let mut tmp = std::fs::File::create(&tmp_path)
+            .with_context(|| format!("failed to open {tmp_path:?} for writing"))?;
+        tmp.write_all(body.as_bytes())
+            .with_context(|| format!("failed to write {tmp_path:?}"))?;
+        tmp.write_all(b"\n").ok();
+    }
+    std::fs::rename(&tmp_path, &path)
+        .with_context(|| format!("failed to rename {tmp_path:?} -> {path:?}"))?;
+
+    println!("wrote OpenAPI spec to {}", path.display());
+    Ok(())
+}
+
 pub async fn cmd_hooks(cli: &Cli, command: &HooksCommand) -> Result<()> {
     match command {
         HooksCommand::Log {

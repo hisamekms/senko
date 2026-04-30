@@ -24,8 +24,21 @@ use super::validator::{MAX_USERNAME_LEN, validate_string_length};
 /// PK), `UserId` is the DB primary key itself. The infrastructure layer
 /// implements `rusqlite` / `sqlx` traits directly on `UserId` (see
 /// `src/infra/mod.rs`), so no separate sealed newtype is needed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
 #[serde(transparent)]
+#[schema(value_type = i64)]
 pub struct UserId(pub i64);
 
 impl fmt::Display for UserId {
@@ -211,8 +224,9 @@ pub enum UserEvent {
 /// DB reads skip the validation on purpose (see `src/infra/mod.rs`): rows were
 /// validated on write, and re-validating on read would cause historical data
 /// to surface as errors.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, utoipa::ToSchema)]
 #[serde(transparent)]
+#[schema(value_type = String)]
 pub struct Username(pub String);
 
 impl Username {
@@ -291,7 +305,7 @@ impl<'de> Deserialize<'de> for Username {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Role {
     Owner,
@@ -381,7 +395,7 @@ impl User {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateUserParams {
     pub username: Username,
     #[serde(default)]
@@ -590,7 +604,7 @@ impl ApiKeyWithSecret {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct CreateApiKeyParams {
     pub name: Option<String>,
     pub device_name: Option<String>,

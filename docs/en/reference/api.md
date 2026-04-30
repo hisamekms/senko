@@ -2,6 +2,8 @@
 
 Every HTTP endpoint exposed by `senko serve`. The CLI and all remote clients talk to the server through this API.
 
+The machine-readable OpenAPI 3.x specification lives at [`docs/openapi/openapi.json`](../../openapi/openapi.json) and is also served at `/api/v1/openapi.json` (with Swagger UI at `/api/v1/docs`) when `senko serve` runs in remote mode. Regenerate the file with `senko openapi dump`.
+
 ## Authentication
 
 Every `/api/v1/*` endpoint requires authentication (except `/api/v1/health`). The auth mode is server-configured and is **one of three** (pairwise exclusive):
@@ -92,6 +94,7 @@ Clients can use it to check server compatibility.
 | GET | `/api/v1/projects` | Projects I'm a member of |
 | POST | `/api/v1/projects` | Create |
 | GET | `/api/v1/projects/{id}` | Get |
+| PUT | `/api/v1/projects/{id}` | Update (admin role required) |
 | DELETE | `/api/v1/projects/{id}` | Delete (owner required) |
 | GET | `/api/v1/projects/{id}/stats` | `{draft,todo,in_progress,completed}` counts |
 
@@ -120,8 +123,9 @@ Clients can use it to check server compatibility.
 | GET | `/api/v1/projects/{project_id}/tasks/{id}/preview-transition` | Which transitions are currently allowed |
 | POST | `/api/v1/projects/{project_id}/tasks/next` | Equivalent of `senko task next` |
 | GET | `/api/v1/projects/{project_id}/tasks/preview-next` | Peek at the task that would be picked |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/ready` | draft → todo |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/publish` | draft → todo |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/start` | todo → in_progress |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/resume` | refresh in_progress assignment without state change |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/complete` | in_progress → completed |
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/cancel` | → canceled |
 | GET | `/api/v1/projects/{project_id}/tasks/{id}/deps` | List dependencies |

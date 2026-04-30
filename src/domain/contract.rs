@@ -26,8 +26,21 @@ use super::validator::{
 /// key itself. The infrastructure layer implements `rusqlite` / `sqlx` traits
 /// directly on `ContractId` (see `src/infra/mod.rs`), so no separate sealed
 /// newtype is needed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Ord, PartialOrd, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    utoipa::ToSchema,
+)]
 #[serde(transparent)]
+#[schema(value_type = i64)]
 pub struct ContractId(pub i64);
 
 impl fmt::Display for ContractId {
