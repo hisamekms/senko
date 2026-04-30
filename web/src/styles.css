@@ -1,0 +1,19 @@
+@layer reset, base, tokens, recipes, utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: token(colors.bg);
+  color: token(colors.fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  transition: background-color 120ms ease, color 120ms ease;
+}

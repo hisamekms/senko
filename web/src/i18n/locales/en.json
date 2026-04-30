@@ -1,0 +1,25 @@
+{
+  "app": {
+    "title": "senko Web (skeleton)",
+    "subtitle": "Bootstrapped scaffold for the senko web frontend.",
+    "tagline": "TanStack Start + Panda CSS + Ark UI"
+  },
+  "header": {
+    "theme": "Theme",
+    "language": "Language"
+  },
+  "theme": {
+    "light": "Light",
+    "dark": "Dark",
+    "toggle": "Toggle theme"
+  },
+  "language": {
+    "en": "English",
+    "ja": "Japanese"
+  },
+  "skeleton": {
+    "deferred": "Auth, API integration, and feature pages are deferred to follow-up tasks.",
+    "current_theme": "Current theme: {{theme}}",
+    "current_language": "Current language: {{language}}"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "app": {
+    "title": "senko Web (skeleton)",
+    "subtitle": "senko Web フロントエンドのスケルトンです。",
+    "tagline": "TanStack Start + Panda CSS + Ark UI"
+  },
+  "header": {
+    "theme": "テーマ",
+    "language": "言語"
+  },
+  "theme": {
+    "light": "ライト",
+    "dark": "ダーク",
+    "toggle": "テーマを切り替え"
+  },
+  "language": {
+    "en": "英語",
+    "ja": "日本語"
+  },
+  "skeleton": {
+    "deferred": "認証・API 連携・機能画面は後続タスクで実装されます。",
+    "current_theme": "現在のテーマ: {{theme}}",
+    "current_language": "現在の言語: {{language}}"
+  }
+}

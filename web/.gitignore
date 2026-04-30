@@ -1,0 +1,21 @@
+node_modules
+.DS_Store
+dist
+dist-ssr
+*.local
+.env
+.env.*
+.nitro
+.tanstack
+.wrangler
+.output
+.vinxi
+.vite
+__unconfig*
+todos.json
+
+# Panda CSS codegen output
+styled-system
+
+# TanStack Router auto-generated
+src/routeTree.gen.ts
