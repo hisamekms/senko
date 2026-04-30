@@ -8,6 +8,8 @@ pub mod metadata_field_operations;
 pub mod pr_verifier;
 pub mod project_operations;
 pub mod project_query;
+#[cfg(feature = "dev-tools")]
+pub mod seeder;
 pub mod task_operations;
 pub mod task_query;
 pub mod task_transition;
@@ -24,6 +26,8 @@ pub use metadata_field_operations::MetadataFieldOperations;
 pub use pr_verifier::PrVerifier;
 pub use project_operations::ProjectOperations;
 pub use project_query::ProjectQueryPort;
+#[cfg(feature = "dev-tools")]
+pub use seeder::SeederPort;
 pub use task_operations::{CompleteResult, PreviewResult, TaskOperations};
 pub use task_query::TaskQueryPort;
 pub use task_transition::TaskTransitionPort;

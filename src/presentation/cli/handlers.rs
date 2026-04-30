@@ -3184,6 +3184,21 @@ fn build_project_ops_pair(
     create_task_operations(root, config, cli_attrs)
 }
 
+#[cfg(feature = "dev-tools")]
+pub async fn cmd_dev_seed(cli: &Cli, mode: crate::dev::seeder::SeedMode) -> Result<()> {
+    let root = resolve_project_root(cli.project_root.as_deref())?;
+    let config = load_config(cli, &root)?;
+
+    if config.cli.remote.url.is_some() {
+        anyhow::bail!(
+            "senko dev seed targets the local backend; refusing to run against a remote URL"
+        );
+    }
+
+    let (backend, seeder) = crate::bootstrap::create_seeder_backends(&root, &config)?;
+    crate::dev::seeder::run(backend, seeder, mode).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::{Command, OutputFormat, TaskAction};

@@ -211,6 +211,13 @@ pub enum Command {
         #[command(subcommand)]
         action: OpenapiAction,
     },
+    /// Developer-only utilities. Available only when senko is built with
+    /// the `dev-tools` cargo feature.
+    #[cfg(feature = "dev-tools")]
+    Dev {
+        #[command(subcommand)]
+        action: DevAction,
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -227,6 +234,19 @@ pub enum OpenapiAction {
         /// Destination path for the generated openapi.json.
         #[arg(long, value_name = "PATH")]
         out: Option<PathBuf>,
+    },
+}
+
+#[cfg(feature = "dev-tools")]
+#[derive(Debug, Subcommand)]
+pub enum DevAction {
+    /// Load deterministic sample data into the configured backend.
+    Seed {
+        /// `append` (default) is a noop on an already-seeded DB. `reset`
+        /// wipes every senko-managed row (preserving project id=1 and
+        /// user id=1) and then loads the fixtures.
+        #[arg(default_value = "append")]
+        mode: crate::dev::seeder::SeedMode,
     },
 }
 
@@ -1354,6 +1374,10 @@ pub async fn run(cli: Cli) -> Result<()> {
         Command::Contract { ref action } => handlers::cmd_contract(&cli, action).await,
         Command::Openapi { ref action } => match action {
             OpenapiAction::Dump { out } => handlers::cmd_openapi_dump(out.as_deref()),
+        },
+        #[cfg(feature = "dev-tools")]
+        Command::Dev { ref action } => match action {
+            DevAction::Seed { mode } => handlers::cmd_dev_seed(&cli, *mode).await,
         },
     }
 }

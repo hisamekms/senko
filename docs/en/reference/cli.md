@@ -32,6 +32,7 @@ Complete list of `senko` subcommands.
 | Auth | `senko auth login/token/status/logout/sessions/revoke` |
 | Hooks | `senko hooks log/test` |
 | Mode commands | `senko serve` / `senko web` / `senko config` / `senko doctor` / `senko skill-install` |
+| Developer-only (`dev-tools` feature) | `senko dev seed [reset\|append]` |
 
 ## `senko task`
 
@@ -282,6 +283,29 @@ senko skill-install [--output-dir .claude] [--yes] [--force]
 - Default: install `SKILL.md` under the current project at `.claude/skills/senko/`.
 - `--yes`: skip confirmation prompts.
 - `--force`: wipe senko-owned directories before installing, for a clean install.
+
+## `senko dev` (developer-only, `dev-tools` feature)
+
+> **Not available in the public binary.** `senko dev` is compiled in only when senko is built with `cargo build --features dev-tools`. The release binary published via `cargo install senko` does not contain it.
+
+### `senko dev seed [reset|append]`
+
+Loads a deterministic sample dataset (3 users / 5 contracts / 60 tasks / 30 dependency edges / 15 contract notes / DoD) for local development and the e2e test harness.
+
+```bash
+# Keep existing data; load fixtures only if the DB has no seeded data yet (default).
+senko dev seed
+senko dev seed append
+
+# Wipe all senko-managed rows and load the fixtures fresh
+# (the bootstrap rows for the default project/user with id=1 are preserved).
+senko dev seed reset
+```
+
+- **Backends**: works against SQLite and PostgreSQL. Refused if the config points at a remote URL (`cli.remote.url`).
+- **Idempotency**: every seeded entity carries the `seed` tag, so `append` short-circuits to a noop on an already-seeded DB.
+- **Reset is destructive**: deletes rows from `tasks`, `contracts`, `contract_notes`, `task_dependencies`, `task_definition_of_done`, `task_tags`, `metadata_fields`, `api_keys`, `project_members`, `users (id != 1)`, `projects (id != 1)`, etc. Do NOT run it against a production database.
+- **Write path**: calls domain repositories directly and bypasses the application/service layer, so no hook events or event-store entries are emitted by the seed itself.
 
 ## Environment Variables (Selection)
 

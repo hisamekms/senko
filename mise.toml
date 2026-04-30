@@ -10,16 +10,16 @@ gh = "latest"
 "cargo:mdbook-mermaid" = "latest"
 
 [tasks.build]
-description = "Build senko binary"
-run = "cargo build -q --bin senko"
+description = "Build senko binary (with dev-tools for the e2e seeder)"
+run = "cargo build -q --bin senko --features dev-tools"
 
 [tasks.test]
 description = "Run unit tests"
 run = "cargo test"
 
 [tasks.build-pg]
-description = "Build senko binary with postgres feature"
-run = "cargo build -q --bin senko --example pg_test_server --features postgres"
+description = "Build senko binary with postgres feature (and dev-tools for the e2e seeder)"
+run = "cargo build -q --bin senko --example pg_test_server --features postgres,dev-tools"
 
 [tasks.build-mock-otel-collector]
 description = "Build embedded OTLP mock collector for e2e"

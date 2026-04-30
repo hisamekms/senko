@@ -32,6 +32,7 @@
 | Auth | `senko auth login/token/status/logout/sessions/revoke` |
 | Hooks | `senko hooks log/test` |
 | モード系 | `senko serve` / `senko web` / `senko config` / `senko doctor` / `senko skill-install` |
+| 開発用 (`dev-tools` feature 限定) | `senko dev seed [reset\|append]` |
 
 ## `senko task`
 
@@ -282,6 +283,29 @@ senko skill-install [--output-dir .claude] [--yes] [--force]
 - 既定: カレントプロジェクト直下の `.claude/skills/senko/` に SKILL.md を配置
 - `--yes`: 確認プロンプトをスキップ
 - `--force`: 既存の senko 所有ディレクトリを削除してクリーン配置
+
+## `senko dev` (開発用、`dev-tools` feature 限定)
+
+> **公開バイナリには含まれません。** `senko dev` は `cargo build --features dev-tools` でビルドした場合だけ存在します。`cargo install senko` で配布される通常バイナリには登場しません。
+
+### `senko dev seed [reset|append]`
+
+ローカル開発と E2E テスト用に、決定的なサンプルデータ (3 ユーザー / 5 contract / 60 task / 30 依存エッジ / 15 contract note / DoD) を投入します。
+
+```bash
+# 既存データを残しつつ未シード状態のときだけ投入する (既定)
+senko dev seed
+senko dev seed append
+
+# senko 管理テーブルの行を削除してから投入する
+# (default project/user (id=1) の bootstrap 行は保持)
+senko dev seed reset
+```
+
+- **対象 backend**: SQLite と PostgreSQL の両方。リモート (`cli.remote.url`) を指す設定では拒否します。
+- **idempotency**: 投入された entity には `seed` タグが付くため、`append` は既存シードを検知して noop で抜けます。
+- **reset の破壊性**: `tasks`, `contracts`, `contract_notes`, `task_dependencies`, `task_definition_of_done`, `task_tags`, `metadata_fields`, `api_keys`, `project_members`, `users (id != 1)`, `projects (id != 1)` などを削除します。本番 DB に対しては実行しないでください。
+- **書き込み経路**: domain repository を直接呼び出し application service 層をバイパスするため、hook event / event store にシード起源のレコードは残りません。
 
 ## 環境変数 (抜粋)
 

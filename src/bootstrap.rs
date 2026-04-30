@@ -115,6 +115,46 @@ pub fn create_backend(project_root: &Path, config: &Config) -> Result<Arc<dyn Ta
     Ok(Arc::new(sqlite))
 }
 
+/// Construct a concrete backend and expose it as both `TaskBackend` and
+/// `SeederPort` for the dev-tools seeder.
+///
+/// The two Arcs share the same underlying connection/pool — this just gives
+/// the seeder access to both the repository surface and the wipe helpers
+/// without re-opening the database.
+#[cfg(feature = "dev-tools")]
+pub fn create_seeder_backends(
+    project_root: &Path,
+    config: &Config,
+) -> Result<(
+    Arc<dyn TaskBackend>,
+    Arc<dyn crate::application::port::SeederPort>,
+)> {
+    #[cfg(feature = "postgres")]
+    {
+        use crate::infra::postgres::PostgresBackend;
+
+        if let Some(ref pg_config) = config.backend.postgres
+            && let Some(ref database_url) = pg_config.url
+        {
+            let pg = Arc::new(PostgresBackend::new(
+                database_url.clone(),
+                pg_config.max_connections,
+            ));
+            return Ok((pg.clone(), pg));
+        }
+    }
+
+    let sqlite = crate::infra::sqlite::SqliteBackend::new(
+        project_root,
+        None,
+        config.backend.sqlite.db_path.as_deref(),
+        &config.xdg,
+    )?;
+    sqlite.sync_config_defaults(config)?;
+    let arc = Arc::new(sqlite);
+    Ok((arc.clone(), arc))
+}
+
 /// Resolve the backend info from config for hook envelope metadata.
 /// Mirrors the priority logic of `create_backend`.
 pub fn resolve_backend_info(config: &Config, project_root: &Path) -> BackendInfo {

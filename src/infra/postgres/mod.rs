@@ -2326,6 +2326,68 @@ async fn set_contract_dod_checked_pg(
 
 crate::impl_task_transition_default!(PostgresBackend);
 
+#[cfg(feature = "dev-tools")]
+#[async_trait]
+impl crate::application::port::SeederPort for PostgresBackend {
+    async fn wipe_for_seed(&self) -> Result<()> {
+        let pool = self.pool().await?;
+        // TRUNCATE ... RESTART IDENTITY CASCADE wipes data + resets sequences
+        // in a single statement, leaving the schema intact. The bootstrap rows
+        // (project id=1, user id=1, the matching project_member) are
+        // re-inserted afterwards so they survive the wipe semantically.
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "TRUNCATE TABLE \
+             task_dependencies, task_definition_of_done, task_in_scope, task_out_of_scope, task_tags, \
+             contract_definition_of_done, contract_tags, contract_notes, \
+             tasks, contracts, metadata_fields, api_keys, project_members, users, projects \
+             RESTART IDENTITY CASCADE",
+        )
+        .execute(&mut *tx)
+        .await
+        .context("failed to truncate senko tables")?;
+
+        // Re-seed the bootstrap rows that migrations originally inserted.
+        // `sub` is set to the username here, mirroring the
+        // `20260413000000_add_user_sub.sql` migration's backfill — without
+        // it, downstream queries trip over a NULL sub.
+        sqlx::query(
+            "INSERT INTO projects (id, name, description) VALUES (1, 'default', 'Default project')",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO users (id, username, display_name, sub) VALUES (1, 'default', 'Default User', 'default')",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO project_members (project_id, user_id, role) VALUES (1, 1, 'owner')",
+        )
+        .execute(&mut *tx)
+        .await?;
+        // RESTART IDENTITY reset sequences to 1, but we just used id=1, so bump
+        // them to start the next allocation at 2.
+        sqlx::query("SELECT setval(pg_get_serial_sequence('projects', 'id'), 1, true)")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SELECT setval(pg_get_serial_sequence('users', 'id'), 1, true)")
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn has_seeded_data(&self) -> Result<bool> {
+        let pool = self.pool().await?;
+        let row = sqlx::query("SELECT COUNT(*)::BIGINT AS n FROM task_tags WHERE tag = 'seed'")
+            .fetch_one(pool)
+            .await?;
+        let n: i64 = row.try_get("n")?;
+        Ok(n > 0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

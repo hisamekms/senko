@@ -3095,6 +3095,55 @@ impl ContractRepository for SqliteBackend {
 
 crate::impl_task_transition_default!(SqliteBackend);
 
+#[cfg(feature = "dev-tools")]
+#[async_trait]
+impl crate::application::port::SeederPort for SqliteBackend {
+    async fn wipe_for_seed(&self) -> Result<()> {
+        blocking!(self, |conn: &Connection| {
+            // Order matters: child rows first, then parents. The bootstrap rows
+            // (project id=1, user id=1, the matching project_member) must
+            // survive so subsequent senko operations keep working.
+            let stmts = [
+                "DELETE FROM task_dependencies",
+                "DELETE FROM task_definition_of_done",
+                "DELETE FROM task_in_scope",
+                "DELETE FROM task_out_of_scope",
+                "DELETE FROM task_tags",
+                "DELETE FROM contract_definition_of_done",
+                "DELETE FROM contract_tags",
+                "DELETE FROM contract_notes",
+                "DELETE FROM tasks",
+                "DELETE FROM contracts",
+                "DELETE FROM metadata_fields",
+                "DELETE FROM api_keys",
+                "DELETE FROM project_members WHERE NOT (project_id = 1 AND user_id = 1)",
+                "DELETE FROM users WHERE id != 1",
+                "DELETE FROM projects WHERE id != 1",
+                // Reset AUTOINCREMENT counters for tables we just emptied so a
+                // fresh seed always produces the same id sequence.
+                "DELETE FROM sqlite_sequence WHERE name IN ('tasks','contracts','contract_notes','metadata_fields','api_keys')",
+            ];
+            conn.execute_batch("BEGIN")?;
+            for s in stmts {
+                conn.execute(s, [])?;
+            }
+            conn.execute_batch("COMMIT")?;
+            Ok(())
+        })
+    }
+
+    async fn has_seeded_data(&self) -> Result<bool> {
+        blocking!(self, |conn: &Connection| {
+            let n: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM task_tags WHERE tag = 'seed'",
+                [],
+                |r| r.get(0),
+            )?;
+            Ok(n > 0)
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -13,6 +13,10 @@ path = "src/main.rs"
 [features]
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
 postgres = ["dep:sqlx"]
+# Build-time switch that enables developer-only commands such as `senko dev seed`.
+# This feature is intentionally NOT enabled by default; release binaries built via
+# `cargo install senko` must not contain dev-only subcommands.
+dev-tools = []
 
 [dependencies]
 clap = { version = "4.5.60", features = ["derive", "env"] }

@@ -36,6 +36,7 @@ PG_SUPPORTED_TESTS=(
   "test_metadata_fields_api.sh"
   "test_user_api.sh"
   "test_list_filter.sh"
+  "test_dev_seed.sh"
 )
 
 is_pg_supported() {
