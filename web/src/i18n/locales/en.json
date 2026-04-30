@@ -18,8 +18,14 @@
     "ja": "Japanese"
   },
   "skeleton": {
-    "deferred": "Auth, API integration, and feature pages are deferred to follow-up tasks.",
+    "deferred": "API integration and feature pages are deferred to follow-up tasks.",
     "current_theme": "Current theme: {{theme}}",
     "current_language": "Current language: {{language}}"
+  },
+  "auth": {
+    "signIn": "Sign in with OIDC",
+    "signOut": "Sign out",
+    "loginTitle": "Sign in",
+    "loginRedirectNotice": "You will be redirected to your identity provider to complete sign-in."
   }
 }

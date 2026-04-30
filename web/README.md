@@ -4,8 +4,8 @@ The Web frontend for senko. This is a TanStack Start application that talks to
 the senko remote API. The directory is intentionally placed **outside the Cargo
 workspace** so it has no impact on Rust builds or `mise test` / `mise run e2e`.
 
-> Status: skeleton only. Authentication (Auth.js BFF), API client, and feature
-> pages are delivered by follow-up sub-tasks of Contract 10.
+> Status: Auth.js OIDC BFF is wired up. The senko API client (typed) and the
+> real feature pages are delivered by follow-up sub-tasks of Contract 10.
 
 ## Stack
 
@@ -47,32 +47,133 @@ language switcher.
 
 ## Environment variables
 
-| Variable        | Default | Description                                              |
-| --------------- | ------- | -------------------------------------------------------- |
-| `WEB_DEV_PORT`  | `3000`  | Port for the Vite dev server (and `vite preview`). Override per Contract 10 Interfaces. |
+Copy `web/.env.example` to `web/.env` and fill in real values. The TanStack
+Start server reads them at runtime.
 
-Auth and API-related variables (`SENKO_API_BASE_URL`, `AUTH_OIDC_*`,
-`AUTH_SECRET`, `WEB_DEV_AUTH_BYPASS`) are introduced by sub-tasks 390 and 391;
-this skeleton does not consume them yet.
+| Variable                | Default | Description                                              |
+| ----------------------- | ------- | -------------------------------------------------------- |
+| `WEB_DEV_PORT`          | `3000`  | Port for the Vite dev server (and `vite preview`).        |
+| `AUTH_SECRET`           | —       | Auth.js cookie + JWT secret (≥32 bytes; `openssl rand -base64 32`). |
+| `AUTH_URL`              | —       | Auth.js base URL including the auth path (e.g. `http://localhost:3000/api/auth`). |
+| `AUTH_OIDC_ISSUER`      | —       | OIDC issuer URL of your IdP. Must match the senko backend's IdP. |
+| `AUTH_OIDC_CLIENT_ID`   | —       | OIDC client ID for the web app. |
+| `AUTH_OIDC_CLIENT_SECRET` | —     | OIDC client secret. |
+| `SENKO_API_BASE_URL`    | —       | Origin of `senko serve` (e.g. `http://localhost:8080`). The BFF proxy forwards to it. |
+
+`WEB_DEV_AUTH_BYPASS` is reserved for the dev-bypass path introduced in a
+separate sub-task (see Contract 10) and is not consumed here.
+
+## Authentication & BFF
+
+This app uses [Auth.js](https://authjs.dev/) (`@auth/core` + `start-authjs`,
+the official TanStack Start wrapper) with a generic OIDC provider so it can
+point at any OIDC IdP (Keycloak, Authentik, Auth0, …) configured via the
+`AUTH_OIDC_*` env vars.
+
+**Flow:**
+
+1. The browser visits any protected route — anything under the pathless
+   `/_authed` layout (`web/src/routes/_authed/`).
+2. The root route's `beforeLoad` calls `getSession()` from `start-authjs` and
+   exposes the session through the router context.
+3. `_authed` redirects to `/login` when there is no session.
+4. The login form POSTs `csrfToken` + `callbackUrl` to
+   `/api/auth/signin/oidc`; Auth.js drives the OIDC PKCE round-trip and lands
+   the user back on `/`.
+5. The OAuth `access_token` is bridged from the OAuth account into the JWT
+   and exposed on the session via Auth.js callbacks (`web/src/utils/auth.ts`).
+6. Sign-out is the standard Auth.js GET handler at `/api/auth/signout`.
+
+**BFF proxy:** `/api/senko/*` (`web/src/routes/api/senko/$.ts`)
+
+- Reads the session via `getSession(request, authConfig)`. Returns `401` if
+  no session or no `access_token`.
+- Strips the `/api/senko` prefix and forwards the remaining path + query to
+  `${SENKO_API_BASE_URL}`.
+- Sets `Authorization: Bearer ${access_token}` and drops the inbound `cookie`
+  header so browser cookies are never leaked upstream.
+- Streams the upstream response body back unchanged (minus hop-by-hop
+  headers).
+
+So a browser fetch to `/api/senko/api/v1/projects` ends up at
+`${SENKO_API_BASE_URL}/api/v1/projects` with the Bearer attached.
+
+## Local OIDC setup (Keycloak)
+
+Any OIDC IdP works, but Keycloak in Docker is a quick way to get going:
+
+```bash
+# Start Keycloak in dev mode on :8081
+docker run --rm -p 8081:8080 \
+  -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin \
+  quay.io/keycloak/keycloak:latest start-dev
+```
+
+Then in the admin console (`http://localhost:8081`):
+
+1. Create a realm `senko`.
+2. In `Clients`, create `senko-web` (OpenID Connect, confidential).
+3. Set **Valid redirect URIs** to `http://localhost:3000/api/auth/callback/oidc`.
+4. In `Credentials`, copy the client secret.
+5. Create a user, set a password, log in once at the account console to
+   prime it.
+
+Use these values in `web/.env`:
+
+```
+AUTH_OIDC_ISSUER=http://localhost:8081/realms/senko
+AUTH_OIDC_CLIENT_ID=senko-web
+AUTH_OIDC_CLIENT_SECRET=<from Keycloak credentials>
+```
+
+Configure `senko serve` to trust the same issuer (see top-level
+`docs/...`).
+
+### End-to-end smoke test
+
+1. Start the IdP and `senko serve` (configured against the same issuer).
+2. `cp web/.env.example web/.env` and fill in real values.
+3. `npm run dev` (from `web/`).
+4. Visit `http://localhost:3000/` — you should be redirected to `/login`.
+5. Click **Sign in with OIDC** → IdP login → land back on `/`.
+6. Open devtools and run:
+   ```js
+   await fetch('/api/auth/session').then(r => r.json())
+   ```
+   Confirms a session JSON is returned. Without a session it returns `{}`.
+7. Hit a senko endpoint via the BFF, e.g.
+   ```js
+   await fetch('/api/senko/api/v1/projects').then(r => r.status)
+   ```
+   `200` confirms the Bearer made it through.
+8. Click **Sign out** → redirected; `/api/auth/session` again returns `{}`,
+   `/` redirects back to `/login`.
 
 ## Project layout
 
 ```
 web/
 ├── src/
-│   ├── routes/          # File-based TanStack Router routes
-│   │   ├── __root.tsx   # Shell document, theme bootstrap, i18n provider
-│   │   └── index.tsx    # Skeleton home page
-│   ├── components/      # Reusable UI components (theme/lang switchers)
-│   ├── hooks/           # Reusable hooks (e.g. useTheme)
-│   ├── i18n/            # react-i18next setup; subsequent tasks import from here
+│   ├── routes/                   # File-based TanStack Router routes
+│   │   ├── __root.tsx            # Shell + session beforeLoad
+│   │   ├── _authed.tsx           # Pathless auth gate (redirects to /login)
+│   │   ├── _authed/index.tsx     # Authenticated home
+│   │   ├── login.tsx             # OIDC sign-in form
+│   │   └── api/
+│   │       ├── auth/$.ts         # Auth.js handlers (/api/auth/*)
+│   │       └── senko/$.ts        # BFF proxy to senko (Bearer-attached)
+│   ├── components/               # Reusable UI components (theme/lang switchers)
+│   ├── hooks/                    # Reusable hooks (e.g. useTheme)
+│   ├── i18n/                     # react-i18next setup; canonical entrypoint
 │   │   ├── index.ts
 │   │   └── locales/{en,ja}.json
-│   ├── router.tsx       # TanStack Router instance factory
-│   └── styles.css       # Panda CSS @layers entry point
-├── panda.config.ts      # Panda CSS preset, tokens, dark-mode condition
-├── postcss.config.cjs   # Wires Panda's PostCSS plugin
-├── vite.config.ts       # TanStack Start + WEB_DEV_PORT integration
+│   ├── utils/auth.ts             # Auth.js (StartAuthJSConfig) + OIDC provider
+│   ├── router.tsx                # TanStack Router instance factory
+│   └── styles.css                # Panda CSS @layers entry point
+├── .env.example                  # Sample environment variables
+├── panda.config.ts               # Panda CSS preset, tokens, dark-mode condition
+├── postcss.config.cjs            # Wires Panda's PostCSS plugin
+├── vite.config.ts                # TanStack Start + WEB_DEV_PORT integration
 └── tsconfig.json
 ```
 
@@ -103,12 +204,12 @@ A small inline script in the document `<head>` (defined in
 unstyled / wrong-themed content. Sub-tasks adding new components should style
 them using Panda's `_dark` condition.
 
-## What is NOT in this skeleton
+## What is NOT here yet
 
-These are explicitly deferred to other sub-tasks of Contract 10:
+Still deferred to follow-up sub-tasks of Contract 10:
 
-- Authentication (Auth.js OIDC + BFF): sub-task 390
-- senko API client (`/api/senko/*` proxy + generated types): sub-task 391
+- Typed senko API client (generated from OpenAPI; the BFF proxy itself is in
+  place — sub-task 391 generates the typed wrappers that consume it)
 - Real screens (dashboard, tasks, contracts, graph): sub-tasks 392–395
 - Combined dev command (`senko serve` + web + seeder): sub-task 399
 - Playwright E2E suite: sub-task 400

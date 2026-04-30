@@ -4,9 +4,9 @@ import { useTranslation } from 'react-i18next'
 import { LanguageSwitcher } from '#/components/LanguageSwitcher'
 import { ThemeToggle } from '#/components/ThemeToggle'
 import { useTheme } from '#/hooks/useTheme'
-import { css } from '../../styled-system/css'
+import { css } from '../../../styled-system/css'
 
-export const Route = createFileRoute('/')({ component: Home })
+export const Route = createFileRoute('/_authed/')({ component: Home })
 
 const pageStyle = css({
   minHeight: '100vh',
@@ -38,6 +38,20 @@ const headerTitleStyle = css({
   fontSize: 'lg',
   fontWeight: 'semibold',
   color: 'fg',
+})
+
+const userInfoStyle = css({
+  fontSize: 'sm',
+  color: 'fg',
+  opacity: '0.8',
+})
+
+const signOutStyle = css({
+  fontSize: 'sm',
+  fontWeight: 'medium',
+  color: 'accent',
+  textDecoration: 'underline',
+  _hover: { opacity: '0.8' },
 })
 
 const mainStyle = css({
@@ -91,13 +105,19 @@ const metaStyle = css({
 function Home() {
   const { t, i18n } = useTranslation()
   const { theme, hydrated } = useTheme()
+  const { session } = Route.useRouteContext()
   const language = i18n.resolvedLanguage ?? i18n.language ?? 'en'
+  const userLabel = session?.user?.name ?? session?.user?.email ?? ''
 
   return (
     <div className={pageStyle}>
       <header className={headerStyle}>
         <span className={headerTitleStyle}>senko Web</span>
         <div className={headerActionsStyle}>
+          {userLabel ? <span className={userInfoStyle}>{userLabel}</span> : null}
+          <a href="/api/auth/signout" className={signOutStyle}>
+            {t('auth.signOut')}
+          </a>
           <LanguageSwitcher />
           <ThemeToggle />
         </div>

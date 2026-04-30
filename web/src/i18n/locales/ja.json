@@ -18,8 +18,14 @@
     "ja": "日本語"
   },
   "skeleton": {
-    "deferred": "認証・API 連携・機能画面は後続タスクで実装されます。",
+    "deferred": "API 連携・機能画面は後続タスクで実装されます。",
     "current_theme": "現在のテーマ: {{theme}}",
     "current_language": "現在の言語: {{language}}"
+  },
+  "auth": {
+    "signIn": "OIDC でサインイン",
+    "signOut": "サインアウト",
+    "loginTitle": "サインイン",
+    "loginRedirectNotice": "サインインを完了するため、ID プロバイダにリダイレクトします。"
   }
 }
