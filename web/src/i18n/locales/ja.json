@@ -109,6 +109,35 @@
       "canceled": "キャンセル日時"
     }
   },
+  "contracts": {
+    "list": {
+      "title": "Contract 一覧",
+      "empty": "Contract がありません。",
+      "count": "{{count}} 件",
+      "tasks": "タスク {{count}} 件",
+      "noTasks": "関連タスクなし"
+    },
+    "detail": {
+      "notFound": "Contract が見つかりません。",
+      "description": "説明",
+      "descriptionEmpty": "説明はありません。",
+      "dod": "Definition of Done",
+      "dodEmpty": "DoD はありません。",
+      "tags": "タグ",
+      "metadata": "メタデータ",
+      "completed": "完了",
+      "inProgress": "進行中",
+      "relatedTasks": "関連タスク",
+      "relatedTasksEmpty": "関連タスクはありません。",
+      "notes": "Notes",
+      "notesEmpty": "Notes はまだありません。",
+      "noteSource": "#{{id}} より",
+      "loadMore": "さらに読み込む",
+      "timestamps": "タイムスタンプ",
+      "created": "作成日時",
+      "updated": "更新日時"
+    }
+  },
   "errors": {
     "projectNotFound": "プロジェクトが見つからない、またはアクセス権がありません。"
   }

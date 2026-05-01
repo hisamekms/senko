@@ -109,6 +109,35 @@
       "canceled": "Canceled"
     }
   },
+  "contracts": {
+    "list": {
+      "title": "Contracts",
+      "empty": "No contracts yet.",
+      "count": "{{count}} contracts",
+      "tasks": "{{count}} tasks",
+      "noTasks": "No related tasks"
+    },
+    "detail": {
+      "notFound": "Contract not found.",
+      "description": "Description",
+      "descriptionEmpty": "No description.",
+      "dod": "Definition of Done",
+      "dodEmpty": "No DoD items.",
+      "tags": "Tags",
+      "metadata": "Metadata",
+      "completed": "Completed",
+      "inProgress": "In progress",
+      "relatedTasks": "Related tasks",
+      "relatedTasksEmpty": "No related tasks.",
+      "notes": "Notes",
+      "notesEmpty": "No notes yet.",
+      "noteSource": "from #{{id}}",
+      "loadMore": "Load more",
+      "timestamps": "Timestamps",
+      "created": "Created",
+      "updated": "Updated"
+    }
+  },
   "errors": {
     "projectNotFound": "Project not found or access denied."
   }
