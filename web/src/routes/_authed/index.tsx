@@ -1,57 +1,35 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createServerFn } from '@tanstack/react-start'
+import { getRequest } from '@tanstack/react-start/server'
 import { useTranslation } from 'react-i18next'
 
-import { LanguageSwitcher } from '#/components/LanguageSwitcher'
-import { ThemeToggle } from '#/components/ThemeToggle'
-import { useTheme } from '#/hooks/useTheme'
+import { AppHeader } from '#/components/AppHeader'
 import { css } from '../../../styled-system/css'
 
-export const Route = createFileRoute('/_authed/')({ component: Home })
+interface ProjectSummary {
+  id: number
+  name: string
+}
+
+const fetchAccessibleProjects = createServerFn({ method: 'GET' }).handler(
+  async (): Promise<ProjectSummary[]> => {
+    const request = getRequest()
+    const url = new URL('/api/senko/api/v1/projects', request.url)
+    const headers = new Headers()
+    const cookie = request.headers.get('cookie')
+    if (cookie) headers.set('cookie', cookie)
+    const response = await fetch(url, { headers })
+    if (!response.ok) return []
+    const body = (await response.json()) as { items: ProjectSummary[] }
+    return body.items ?? []
+  },
+)
 
 const pageStyle = css({
   minHeight: '100vh',
   display: 'flex',
   flexDirection: 'column',
-})
-
-const headerStyle = css({
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'space-between',
-  paddingX: '6',
-  paddingY: '4',
-  borderBottom: '1px solid',
-  borderColor: 'border',
-  backgroundColor: 'surface',
-  gap: '4',
-  flexWrap: 'wrap',
-})
-
-const headerActionsStyle = css({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: '4',
-  flexWrap: 'wrap',
-})
-
-const headerTitleStyle = css({
-  fontSize: 'lg',
-  fontWeight: 'semibold',
-  color: 'fg',
-})
-
-const userInfoStyle = css({
-  fontSize: 'sm',
-  color: 'fg',
-  opacity: '0.8',
-})
-
-const signOutStyle = css({
-  fontSize: 'sm',
-  fontWeight: 'medium',
-  color: 'accent',
-  textDecoration: 'underline',
-  _hover: { opacity: '0.8' },
+  backgroundColor: 'bg',
 })
 
 const mainStyle = css({
@@ -62,83 +40,48 @@ const mainStyle = css({
   flexDirection: 'column',
   gap: '4',
   maxWidth: '720px',
-  margin: '0 auto',
+  marginX: 'auto',
   width: '100%',
 })
 
-const titleStyle = css({
-  fontSize: '3xl',
+const headingStyle = css({
+  fontSize: '2xl',
   fontWeight: 'bold',
   color: 'fg',
 })
 
-const subtitleStyle = css({
+const messageStyle = css({
   fontSize: 'md',
   color: 'fg',
   opacity: '0.8',
 })
 
-const taglineStyle = css({
-  fontSize: 'sm',
-  color: 'accent',
-  fontWeight: 'medium',
+export const Route = createFileRoute('/_authed/')({
+  beforeLoad: async () => {
+    const projects = await fetchAccessibleProjects()
+    if (projects.length > 0) {
+      throw redirect({
+        to: '/p/$projectId',
+        params: { projectId: String(projects[0].id) },
+      })
+    }
+    return { projects }
+  },
+  component: NoProjects,
 })
 
-const calloutStyle = css({
-  padding: '4',
-  borderRadius: 'md',
-  border: '1px solid',
-  borderColor: 'border',
-  backgroundColor: 'surface',
-  color: 'fg',
-})
-
-const metaStyle = css({
-  fontSize: 'sm',
-  color: 'fg',
-  opacity: '0.7',
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '1',
-})
-
-function Home() {
-  const { t, i18n } = useTranslation()
-  const { theme, hydrated } = useTheme()
+function NoProjects() {
+  const { t } = useTranslation()
   const { session } = Route.useRouteContext()
-  const language = i18n.resolvedLanguage ?? i18n.language ?? 'en'
-  const userLabel = session?.user?.name ?? session?.user?.email ?? ''
+  const userLabel = session?.user?.name ?? session?.user?.email ?? null
 
   return (
     <div className={pageStyle}>
-      <header className={headerStyle}>
-        <span className={headerTitleStyle}>senko Web</span>
-        <div className={headerActionsStyle}>
-          {userLabel ? <span className={userInfoStyle}>{userLabel}</span> : null}
-          <a href="/api/auth/signout" className={signOutStyle}>
-            {t('auth.signOut')}
-          </a>
-          <LanguageSwitcher />
-          <ThemeToggle />
-        </div>
-      </header>
+      <AppHeader currentProjectId={null} userLabel={userLabel} />
       <main className={mainStyle}>
-        <h1 className={titleStyle}>{t('app.title')}</h1>
-        <p className={subtitleStyle}>{t('app.subtitle')}</p>
-        <p className={taglineStyle}>{t('app.tagline')}</p>
-        <div className={calloutStyle}>{t('skeleton.deferred')}</div>
-        <div className={metaStyle}>
-          <span suppressHydrationWarning>
-            {t('skeleton.current_theme', {
-              theme: hydrated ? t(`theme.${theme}`) : '…',
-            })}
-          </span>
-          <span suppressHydrationWarning>
-            {t('skeleton.current_language', {
-              language: t(`language.${language}`),
-            })}
-          </span>
-        </div>
+        <h1 className={headingStyle}>{t('dashboard.title')}</h1>
+        <p className={messageStyle}>{t('dashboard.empty.noProjects')}</p>
+        <p className={messageStyle}>{t('dashboard.empty.noProjectsHint')}</p>
       </main>
     </div>
   )

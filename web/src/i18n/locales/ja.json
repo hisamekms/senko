@@ -1,12 +1,14 @@
 {
   "app": {
-    "title": "senko Web (skeleton)",
-    "subtitle": "senko Web フロントエンドのスケルトンです。",
+    "title": "senko Web",
+    "subtitle": "senko プロジェクトトラッカーの読み取り専用ダッシュボード。",
     "tagline": "TanStack Start + Panda CSS + Ark UI"
   },
   "header": {
     "theme": "テーマ",
-    "language": "言語"
+    "language": "言語",
+    "project": "プロジェクト",
+    "projectPlaceholder": "プロジェクトを選択"
   },
   "theme": {
     "light": "ライト",
@@ -27,5 +29,41 @@
     "signOut": "サインアウト",
     "loginTitle": "サインイン",
     "loginRedirectNotice": "サインインを完了するため、ID プロバイダにリダイレクトします。"
+  },
+  "dashboard": {
+    "title": "ダッシュボード",
+    "loading": "読み込み中…",
+    "error": "読み込みに失敗しました",
+    "retry": "再試行",
+    "empty": {
+      "noProjects": "所属しているプロジェクトがありません。",
+      "noProjectsHint": "プロジェクトのオーナーに追加を依頼してから、再読み込みしてください。"
+    },
+    "status": {
+      "title": "ステータス別タスク件数",
+      "draft": "下書き",
+      "todo": "未着手",
+      "in_progress": "進行中",
+      "completed": "完了",
+      "canceled": "キャンセル",
+      "empty": "タスクがありません"
+    },
+    "recent": {
+      "title": "最近更新されたタスク",
+      "empty": "タスクがありません"
+    },
+    "ready": {
+      "title": "Ready なタスク",
+      "empty": "Ready なタスクがありません"
+    },
+    "contracts": {
+      "title": "Contract 一覧",
+      "progress": "{{done}}/{{total}}",
+      "completed": "完了",
+      "empty": "Contract がありません"
+    }
+  },
+  "errors": {
+    "projectNotFound": "プロジェクトが見つからない、またはアクセス権がありません。"
   }
 }

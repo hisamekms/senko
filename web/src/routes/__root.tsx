@@ -20,6 +20,13 @@ export interface RouterContext {
 }
 
 const fetchSession = createServerFn({ method: 'GET' }).handler(async () => {
+  if (process.env.WEB_DEV_AUTH_BYPASS === 'true') {
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    return {
+      user: { name: 'dev-user', email: 'dev@localhost' },
+      expires,
+    } satisfies AuthSession
+  }
   const request = getRequest()
   return await getSession(request, authConfig)
 })

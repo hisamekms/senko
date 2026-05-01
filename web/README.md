@@ -61,7 +61,7 @@ Start server reads them at runtime.
 | `AUTH_OIDC_CLIENT_ID`   | —       | OIDC client ID for the web app. |
 | `AUTH_OIDC_CLIENT_SECRET` | —     | OIDC client secret. |
 | `SENKO_API_BASE_URL`    | —       | Origin of `senko serve` (e.g. `http://localhost:8080`). The BFF proxy forwards to it. |
-| `WEB_DEV_AUTH_BYPASS`   | `false` | When `true`, the BFF proxy at `/api/senko/*` skips the Auth.js session check and forwards without an `Authorization` header. Pair with `senko serve --dev-no-auth`. **Local development only — never enable in production.** |
+| `WEB_DEV_AUTH_BYPASS`   | `false` | When `true`, both the BFF proxy at `/api/senko/*` and the `_authed` page gate are bypassed: the proxy forwards without an `Authorization` header, and the root route injects a fake dev session so protected pages render without OIDC. Pair with `senko serve --dev-no-auth`. **Local development only — never enable in production.** |
 
 ## Authentication & BFF
 
@@ -96,7 +96,9 @@ point at any OIDC IdP (Keycloak, Authentik, Auth0, …) configured via the
   headers).
 - When `WEB_DEV_AUTH_BYPASS=true`, the session check is skipped and no
   `Authorization` header is attached — pair with `senko serve --dev-no-auth`
-  for a no-login local round-trip.
+  for a no-login local round-trip. In this mode the root route also injects a
+  fake `{ user: { name: 'dev-user' }, expires }` session so the `_authed`
+  gate lets the dashboard render without an IdP.
 
 So a browser fetch to `/api/senko/api/v1/projects` ends up at
 `${SENKO_API_BASE_URL}/api/v1/projects` with the Bearer attached.
