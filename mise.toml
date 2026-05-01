@@ -51,3 +51,21 @@ run = "docs serve"
 [tasks."docs:stop"]
 description = "Stop the backgrounded mdbook docs server"
 run = "docs stop"
+
+[tasks."web:dev"]
+description = "Start senko serve (dev bypass) + web Vite dev server in background. See web/README.md."
+depends = ["build"]
+run = "web-dev start"
+
+[tasks."web:dev:stop"]
+description = "Stop the web dev stack started by `mise run web:dev`"
+run = "web-dev stop"
+
+[tasks."web:dev:reset"]
+description = "Wipe + reseed the dev DB, then start the web dev stack"
+depends = ["build"]
+run = "web-dev reset"
+
+[tasks."web:dev:status"]
+description = "Show status of the web dev stack"
+run = "web-dev status"

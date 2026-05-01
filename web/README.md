@@ -26,6 +26,13 @@ workspace** so it has no impact on Rust builds or `mise test` / `mise run e2e`.
 
 ## Setup
 
+The fastest way to bring up the full local stack (senko API + Vite dev
+server + sample data) is the bundled mise launcher — see [Combined dev
+workflow](#combined-dev-workflow-recommended) below.
+
+For the bare web-only setup (e.g. when you'll point at an existing senko
+instance):
+
 ```bash
 cd web
 npm install
@@ -35,6 +42,51 @@ npm run dev
 The dev server starts on **http://localhost:3000** by default. Open it in a
 browser; you should see the skeleton page with a working theme toggle and
 language switcher.
+
+## Combined dev workflow (recommended)
+
+`mise run web:dev` boots `senko serve --dev-no-auth` and the Vite dev server
+together against an isolated dev DB seeded with the standard fixture, so the
+dashboard, task views, contract views, and graph all render real data on
+first run — no IdP, no manual seeding, no `.env` setup.
+
+```bash
+mise run web:dev          # → open http://localhost:3000
+mise run web:dev:stop     # tear down both processes
+mise run web:dev:reset    # wipe + reseed the dev DB, then start
+mise run web:dev:status   # show live/dead state
+```
+
+What it does:
+
+1. Builds `senko` with `--features dev-tools` (idempotent).
+2. Runs `senko dev seed append` against an isolated dev DB at
+   `.local/web-dev/senko.db`. Fresh DB → loads 60 tasks / 5 contracts /
+   notes / dependencies / DoD. Already-seeded DB → noop.
+3. Starts `senko --db-path … serve --dev-no-auth` on `127.0.0.1:3142`.
+   PID + log under `.local/web-dev/`.
+4. Starts `vite dev` from `web/` with `WEB_DEV_AUTH_BYPASS=true` and
+   `SENKO_API_BASE_URL=http://127.0.0.1:3142` exported, so the BFF proxy
+   skips Auth.js and the root route injects a fake dev session.
+
+The dev DB lives at `.local/web-dev/senko.db` — **outside** `.senko/senko.db`,
+so `web:dev:reset` cannot wipe real project tasks.
+
+Override knobs:
+
+| Env var          | Default | Effect |
+| ---------------- | ------- | ------ |
+| `WEB_DEV_PORT`   | `3000`  | Vite dev server port. |
+| `SENKO_DEV_PORT` | `3142`  | senko serve port (also rewrites the BFF target). |
+
+```bash
+WEB_DEV_PORT=4000 mise run web:dev
+SENKO_DEV_PORT=3200 mise run web:dev
+```
+
+`mise run web:dev:stop` is idempotent. `web:dev` refuses to start if either
+PID file is alive — run `web:dev:stop` first. Logs are tailable at
+`.local/web-dev/senko.log` and `.local/web-dev/vite.log`.
 
 ## Available scripts
 
@@ -161,8 +213,10 @@ hand-written and stable across regenerations.
 
 ### Local smoke test (no OIDC required)
 
-To verify the client + BFF + senko round-trip without standing up an IdP,
-use the dev bypass:
+`mise run web:dev` is the one-command equivalent of the recipe below — see
+[Combined dev workflow](#combined-dev-workflow-recommended). Use the manual
+three-terminal version when you want to drive the senko binary or the Vite
+dev server with non-default flags:
 
 ```bash
 # Terminal A — senko API with bypass mode (default port 3142)
@@ -295,6 +349,4 @@ them using Panda's `_dark` condition.
 
 Still deferred to follow-up sub-tasks of Contract 10:
 
-- Real screens (dashboard, tasks, contracts, graph): sub-tasks 392–395
-- Combined dev command (`senko serve` + web + seeder): sub-task 399
 - Playwright E2E suite: sub-task 400

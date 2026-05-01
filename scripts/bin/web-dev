@@ -1,0 +1,354 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[web-dev] %s\n' "$*"
+}
+
+on_error() {
+  local exit_code=$?
+  log "FAILED (exit=${exit_code}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}"
+  exit "$exit_code"
+}
+
+trap on_error ERR
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+LOCAL_DIR="${PROJECT_ROOT}/.local/web-dev"
+DEV_DB="${LOCAL_DIR}/senko.db"
+
+SENKO_BIN="${PROJECT_ROOT}/target/debug/senko"
+SENKO_PID_FILE="${LOCAL_DIR}/senko.pid"
+SENKO_LOG_FILE="${LOCAL_DIR}/senko.log"
+SENKO_PORT_DEFAULT=3142
+SENKO_PORT="${SENKO_DEV_PORT:-$SENKO_PORT_DEFAULT}"
+
+VITE_PID_FILE="${LOCAL_DIR}/vite.pid"
+VITE_LOG_FILE="${LOCAL_DIR}/vite.log"
+VITE_PORT_DEFAULT=3000
+VITE_PORT="${WEB_DEV_PORT:-$VITE_PORT_DEFAULT}"
+WEB_DIR="${PROJECT_ROOT}/web"
+
+usage() {
+  cat <<'EOF'
+Usage: web-dev <command>
+
+Commands:
+  start    Build senko (if missing), seed the dev DB (idempotent), then start
+           `senko serve --dev-no-auth` and `npm run dev` in the background.
+           Refuses to start if either PID file is alive.
+  stop     Idempotent: SIGTERM (grace) → SIGKILL on both PIDs, remove PID files.
+  status   Print live/dead state of both processes and the URLs.
+  reset    Stop if running, wipe + reseed the dev DB, then start.
+  help     Show this message.
+
+Files:
+  .local/web-dev/senko.pid   First line: PID. Second line: port.
+  .local/web-dev/senko.log   senko serve stdout/stderr.
+  .local/web-dev/vite.pid    First line: PID. Second line: port.
+  .local/web-dev/vite.log    npm run dev stdout/stderr.
+  .local/web-dev/senko.db    Sandboxed dev SQLite DB (separate from .senko/).
+
+Env overrides:
+  SENKO_DEV_PORT  Override the senko serve port (default 3142).
+  WEB_DEV_PORT    Override the Vite dev server port (default 3000).
+
+Example:
+  mise run web:dev
+  mise run web:dev:stop
+  WEB_DEV_PORT=4000 mise run web:dev
+EOF
+}
+
+port_in_use() {
+  local port="$1"
+  if (exec 3<>"/dev/tcp/127.0.0.1/${port}") 2>/dev/null; then
+    exec 3<&-
+    return 0
+  fi
+  return 1
+}
+
+process_alive() {
+  kill -0 "$1" 2>/dev/null
+}
+
+read_pid_file() {
+  # Prints "PID PORT" if the file exists, "" otherwise.
+  local file="$1"
+  [ -f "$file" ] || { printf ''; return 0; }
+  local pid port
+  pid="$(sed -n '1p' "$file" || true)"
+  port="$(sed -n '2p' "$file" || true)"
+  printf '%s %s' "${pid:-}" "${port:-}"
+}
+
+write_pid_file() {
+  local file="$1"
+  local pid="$2"
+  local port="$3"
+  printf '%s\n%s\n' "$pid" "$port" >"$file"
+}
+
+stop_one() {
+  # $1 = label, $2 = pid file. Best-effort: try -PID (process group) first
+  # so that if the leader did spawn children, they go too. Falls back to
+  # plain PID. Both senko serve (single Rust process) and the directly
+  # launched `vite dev` are normally single-process, so the fallback path
+  # is the common one.
+  local label="$1"
+  local pid_file="$2"
+  if [ ! -f "$pid_file" ]; then
+    log "${label}: not running"
+    return 0
+  fi
+  local pid
+  pid="$(sed -n '1p' "$pid_file" || true)"
+  if [ -z "$pid" ]; then
+    log "${label}: pid file empty, removing"
+    rm -f "$pid_file"
+    return 0
+  fi
+  if ! process_alive "$pid"; then
+    log "${label}: stale pid file (pid=${pid}), cleaning up"
+    rm -f "$pid_file"
+    return 0
+  fi
+  log "${label}: stopping (pid=${pid})"
+  kill -TERM "-${pid}" 2>/dev/null || true
+  kill -TERM "$pid" 2>/dev/null || true
+  local i
+  for ((i=0; i<25; i++)); do
+    if ! process_alive "$pid"; then
+      break
+    fi
+    sleep 0.2
+  done
+  if process_alive "$pid"; then
+    log "${label}: did not exit on TERM, sending KILL (pid=${pid})"
+    kill -KILL "-${pid}" 2>/dev/null || true
+    kill -KILL "$pid" 2>/dev/null || true
+    sleep 0.2
+  fi
+  rm -f "$pid_file"
+  log "${label}: stopped (pid=${pid})"
+}
+
+assert_not_running() {
+  local label="$1"
+  local pid_file="$2"
+  if [ ! -f "$pid_file" ]; then
+    return 0
+  fi
+  local pid
+  pid="$(sed -n '1p' "$pid_file" || true)"
+  if [ -n "$pid" ] && process_alive "$pid"; then
+    log "error: ${label} is already running (pid=${pid}). Run 'mise run web:dev:stop' first."
+    exit 1
+  fi
+  log "${label}: stale pid file detected, cleaning up"
+  rm -f "$pid_file"
+}
+
+ensure_port_free() {
+  local label="$1"
+  local port="$2"
+  if port_in_use "$port"; then
+    log "error: ${label} port ${port} is already in use"
+    exit 1
+  fi
+}
+
+ensure_senko_binary() {
+  if [ -x "$SENKO_BIN" ]; then
+    return 0
+  fi
+  log "senko binary not found at ${SENKO_BIN}; building (cargo build --bin senko --features dev-tools)"
+  ( cd "$PROJECT_ROOT" && cargo build -q --bin senko --features dev-tools )
+  if [ ! -x "$SENKO_BIN" ]; then
+    log "error: build did not produce ${SENKO_BIN}"
+    exit 1
+  fi
+}
+
+ensure_node_modules() {
+  if [ -d "${WEB_DIR}/node_modules" ]; then
+    return 0
+  fi
+  # `--legacy-peer-deps` is required: typescript@^6 in package.json conflicts
+  # with openapi-typescript's typescript@^5 peer. The lockfile resolves both
+  # via the legacy algorithm; npm 7+ defaults to strict peer resolution.
+  log "web/node_modules missing; running 'npm ci --legacy-peer-deps' in ${WEB_DIR}"
+  ( cd "$WEB_DIR" && npm ci --legacy-peer-deps )
+}
+
+probe_url() {
+  # $1 = url, $2 = label, $3 = pid file, $4 = log file.
+  # We accept ANY HTTP response (including 3xx/4xx) — readiness == TCP
+  # accepted + at least one HTTP reply parsed. Vite responds with 307 to
+  # `/` (router redirect) on cold-start; the dashboard SSR can also take
+  # several seconds before the first response, so the timeout is generous.
+  local url="$1"
+  local label="$2"
+  local pid_file="$3"
+  local log_file="$4"
+  local i
+  for ((i=0; i<120; i++)); do
+    if curl -sS -o /dev/null --max-time 3 -w '%{http_code}' "$url" 2>/dev/null \
+        | grep -qE '^[1-5][0-9][0-9]$'; then
+      return 0
+    fi
+    # If process died early, fail fast.
+    if [ -f "$pid_file" ]; then
+      local pid
+      pid="$(sed -n '1p' "$pid_file" || true)"
+      if [ -n "$pid" ] && ! process_alive "$pid"; then
+        log "error: ${label} exited unexpectedly. Tail of log:"
+        tail -n 30 "$log_file" >&2 || true
+        exit 1
+      fi
+    fi
+    sleep 0.5
+  done
+  log "error: ${label} did not become ready at ${url} within 60s. Tail of log:"
+  tail -n 30 "$log_file" >&2 || true
+  exit 1
+}
+
+cmd_start() {
+  mkdir -p "$LOCAL_DIR"
+
+  assert_not_running "senko serve" "$SENKO_PID_FILE"
+  assert_not_running "vite dev"    "$VITE_PID_FILE"
+  ensure_port_free   "senko serve" "$SENKO_PORT"
+  ensure_port_free   "vite dev"    "$VITE_PORT"
+
+  ensure_senko_binary
+  ensure_node_modules
+
+  # Seed the sandbox DB. `append` is idempotent: it skips when seed data is
+  # already present and creates the bootstrap rows on a fresh DB.
+  log "seeding dev DB (append): ${DEV_DB}"
+  "$SENKO_BIN" --db-path "$DEV_DB" dev seed append >>"$SENKO_LOG_FILE" 2>&1 || {
+    log "error: 'senko dev seed append' failed. Tail of log:"
+    tail -n 30 "$SENKO_LOG_FILE" >&2 || true
+    exit 1
+  }
+
+  log "starting senko serve on http://127.0.0.1:${SENKO_PORT} (--dev-no-auth, db=${DEV_DB})"
+  nohup "$SENKO_BIN" --db-path "$DEV_DB" \
+    serve --host 127.0.0.1 --port "$SENKO_PORT" --dev-no-auth \
+    >>"$SENKO_LOG_FILE" 2>&1 < /dev/null &
+  local senko_pid=$!
+  write_pid_file "$SENKO_PID_FILE" "$senko_pid" "$SENKO_PORT"
+
+  probe_url "http://127.0.0.1:${SENKO_PORT}/auth/config" "senko serve" \
+    "$SENKO_PID_FILE" "$SENKO_LOG_FILE"
+  log "senko serve ready (pid=${senko_pid})"
+
+  # Launch vite directly (not via `npm run dev`) so we end up with a
+  # single supervised process: cleanup is just `kill <pid>` instead of
+  # chasing npm → sh → node grandchildren.
+  log "running panda codegen (one-shot)"
+  ( cd "$WEB_DIR" && npm run panda:codegen >>"$VITE_LOG_FILE" 2>&1 ) || {
+    log "error: 'panda codegen' failed. Tail of log:"
+    tail -n 30 "$VITE_LOG_FILE" >&2 || true
+    exit 1
+  }
+
+  local vite_bin="${WEB_DIR}/node_modules/.bin/vite"
+  if [ ! -x "$vite_bin" ]; then
+    log "error: vite binary not found at ${vite_bin}"
+    exit 1
+  fi
+
+  log "starting Vite dev server on http://localhost:${VITE_PORT} (WEB_DEV_AUTH_BYPASS=true)"
+  (
+    cd "$WEB_DIR"
+    WEB_DEV_AUTH_BYPASS=true \
+    SENKO_API_BASE_URL="http://127.0.0.1:${SENKO_PORT}" \
+    WEB_DEV_PORT="${VITE_PORT}" \
+    nohup "$vite_bin" dev >>"$VITE_LOG_FILE" 2>&1 < /dev/null &
+    echo $! >"${LOCAL_DIR}/.vite.pid.tmp"
+  )
+  local vite_pid
+  vite_pid="$(cat "${LOCAL_DIR}/.vite.pid.tmp")"
+  rm -f "${LOCAL_DIR}/.vite.pid.tmp"
+  write_pid_file "$VITE_PID_FILE" "$vite_pid" "$VITE_PORT"
+
+  probe_url "http://localhost:${VITE_PORT}/" "vite dev" \
+    "$VITE_PID_FILE" "$VITE_LOG_FILE"
+  log "vite dev ready (pid=${vite_pid})"
+
+  cat <<EOF
+
+  Open: http://localhost:${VITE_PORT}
+  senko API: http://127.0.0.1:${SENKO_PORT} (dev_bypass)
+  Stop:  mise run web:dev:stop
+
+EOF
+}
+
+cmd_stop() {
+  if [ ! -d "$LOCAL_DIR" ]; then
+    log "not running"
+    return 0
+  fi
+  stop_one "vite dev"    "$VITE_PID_FILE"
+  stop_one "senko serve" "$SENKO_PID_FILE"
+}
+
+cmd_status() {
+  local senko_state="not running"
+  local vite_state="not running"
+  if [ -f "$SENKO_PID_FILE" ]; then
+    local pid port
+    pid="$(sed -n '1p' "$SENKO_PID_FILE" || true)"
+    port="$(sed -n '2p' "$SENKO_PID_FILE" || true)"
+    if [ -n "$pid" ] && process_alive "$pid"; then
+      senko_state="running (pid=${pid}, port=${port})"
+    else
+      senko_state="stale pid file (pid=${pid:-?})"
+    fi
+  fi
+  if [ -f "$VITE_PID_FILE" ]; then
+    local pid port
+    pid="$(sed -n '1p' "$VITE_PID_FILE" || true)"
+    port="$(sed -n '2p' "$VITE_PID_FILE" || true)"
+    if [ -n "$pid" ] && process_alive "$pid"; then
+      vite_state="running (pid=${pid}, port=${port})"
+    else
+      vite_state="stale pid file (pid=${pid:-?})"
+    fi
+  fi
+  printf '  senko serve : %s\n' "$senko_state"
+  printf '  vite dev    : %s\n' "$vite_state"
+  printf '  dev DB      : %s\n' "$DEV_DB"
+}
+
+cmd_reset() {
+  cmd_stop
+  mkdir -p "$LOCAL_DIR"
+  ensure_senko_binary
+  log "wiping + reseeding dev DB (reset): ${DEV_DB}"
+  "$SENKO_BIN" --db-path "$DEV_DB" dev seed reset >>"$SENKO_LOG_FILE" 2>&1 || {
+    log "error: 'senko dev seed reset' failed. Tail of log:"
+    tail -n 30 "$SENKO_LOG_FILE" >&2 || true
+    exit 1
+  }
+  cmd_start
+}
+
+case "${1:-}" in
+  start)  shift; cmd_start  "$@" ;;
+  stop)   shift; cmd_stop   "$@" ;;
+  status) shift; cmd_status "$@" ;;
+  reset)  shift; cmd_reset  "$@" ;;
+  help|--help|-h) usage ;;
+  "") usage >&2; exit 1 ;;
+  *)
+    log "error: unknown command: $1"
+    usage >&2
+    exit 1
+    ;;
+esac
