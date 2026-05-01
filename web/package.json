@@ -19,11 +19,13 @@
   "dependencies": {
     "@ark-ui/react": "^5.0.0",
     "@auth/core": "^0.41.1",
+    "@dagrejs/dagre": "^3.0.0",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",
     "@tanstack/react-router-devtools": "latest",
     "@tanstack/react-start": "latest",
     "@tanstack/router-plugin": "^1.132.0",
+    "@xyflow/react": "^12.10.2",
     "i18next": "^26.0.0",
     "i18next-browser-languagedetector": "^8.0.0",
     "openapi-fetch": "^0.14.0",

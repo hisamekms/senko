@@ -138,6 +138,14 @@
       "updated": "Updated"
     }
   },
+  "graph": {
+    "title": "Dependency graph",
+    "count": "Showing {{visible}} of {{total}}",
+    "empty": "No tasks match the current filters.",
+    "detailTitle": "Selected task",
+    "selectHint": "Click a node to see task details.",
+    "openDetail": "Open detail"
+  },
   "errors": {
     "projectNotFound": "Project not found or access denied."
   }

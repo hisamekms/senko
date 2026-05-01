@@ -138,6 +138,14 @@
       "updated": "更新日時"
     }
   },
+  "graph": {
+    "title": "依存グラフ",
+    "count": "{{total}} 件中 {{visible}} 件を表示",
+    "empty": "条件に合致するタスクはありません。",
+    "detailTitle": "選択中のタスク",
+    "selectHint": "ノードをクリックするとタスク詳細が表示されます。",
+    "openDetail": "詳細を開く"
+  },
   "errors": {
     "projectNotFound": "プロジェクトが見つからない、またはアクセス権がありません。"
   }
