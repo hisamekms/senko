@@ -21,8 +21,6 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub cli: CliConfig,
-    #[serde(default)]
-    pub web: WebConfig,
     /// Resolved XDG directories. Not serialized; populated at runtime by
     /// `bootstrap::load_config`. Tests and programmatic Config construction
     /// can leave this at `XdgDirs::default()` when XDG paths are not needed.
@@ -342,14 +340,6 @@ impl WorkflowStageConfig {
             .get(key)
             .and_then(|v| serde_json::from_value(v.clone()).ok())
     }
-}
-
-// --- Web config ---
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WebConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
 }
 
 // --- CLI config ---
@@ -718,8 +708,6 @@ pub struct RawConfig {
     pub server: RawServerConfig,
     #[serde(default)]
     pub cli: RawCliConfig,
-    #[serde(default)]
-    pub web: RawWebConfig,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -819,12 +807,6 @@ pub struct RawCliConfig {
 pub struct RawCliRemoteConfig {
     pub url: Option<String>,
     pub token: Option<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, Default)]
-pub struct RawWebConfig {
-    pub host: Option<String>,
-    pub port: Option<u16>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1129,10 +1111,6 @@ impl RawConfig {
                     overlay.cli.metadata_field_hooks,
                 ),
             },
-            web: RawWebConfig {
-                host: overlay.web.host.or(self.web.host),
-                port: overlay.web.port.or(self.web.port),
-            },
         }
     }
 
@@ -1238,10 +1216,6 @@ impl RawConfig {
                 project_hooks: self.cli.project_hooks,
                 user_hooks: self.cli.user_hooks,
                 metadata_field_hooks: self.cli.metadata_field_hooks,
-            },
-            web: WebConfig {
-                host: self.web.host,
-                port: self.web.port,
             },
             xdg: XdgDirs::default(),
         }
@@ -1371,8 +1345,6 @@ pub struct CliOverrides {
     pub postgres_url: Option<String>,
     pub project: Option<String>,
     pub user: Option<String>,
-    pub port: Option<u16>,
-    pub host: Option<String>,
     pub server_port: Option<u16>,
     pub server_host: Option<String>,
     /// DEVELOPMENT-ONLY: enable auth bypass via `--dev-no-auth`. Cannot be reset by lower-priority sources.
@@ -1670,19 +1642,7 @@ impl Config {
             }
         }
 
-        // Web settings
-        if let Ok(val) = std::env::var("SENKO_PORT")
-            && let Ok(port) = val.parse::<u16>()
-        {
-            self.web.port = Some(port);
-        }
-        if let Ok(val) = std::env::var("SENKO_HOST")
-            && !val.is_empty()
-        {
-            self.web.host = Some(val);
-        }
-
-        // Server settings (same env vars apply to both web and server)
+        // Server settings
         if let Ok(val) = std::env::var("SENKO_PORT")
             && let Ok(port) = val.parse::<u16>()
         {
@@ -1717,12 +1677,6 @@ impl Config {
         if let Some(ref name) = overrides.user {
             self.user.name = Some(name.clone());
         }
-        if let Some(port) = overrides.port {
-            self.web.port = Some(port);
-        }
-        if let Some(ref host) = overrides.host {
-            self.web.host = Some(host.clone());
-        }
         if let Some(port) = overrides.server_port {
             self.server.port = Some(port);
         }
@@ -1732,21 +1686,6 @@ impl Config {
         if overrides.dev_no_auth {
             self.server.auth.dev_bypass.enabled = true;
         }
-    }
-
-    pub fn web_port_or(&self, default: u16) -> u16 {
-        self.web.port.unwrap_or(default)
-    }
-
-    pub fn web_port_is_explicit(&self) -> bool {
-        self.web.port.is_some()
-    }
-
-    pub fn effective_host(&self) -> String {
-        self.web
-            .host
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string())
     }
 
     pub fn server_port_or(&self, default: u16) -> u16 {
@@ -2578,17 +2517,6 @@ mod tests {
     }
 
     #[test]
-    fn web_config_deser() {
-        let toml_str = r#"
-            host = "0.0.0.0"
-            port = 8080
-        "#;
-        let config: WebConfig = toml::from_str(toml_str).unwrap();
-        assert_eq!(config.host.as_deref(), Some("0.0.0.0"));
-        assert_eq!(config.port, Some(8080));
-    }
-
-    #[test]
     fn server_auth_deser() {
         let toml_str = r#"
             host = "127.0.0.1"
@@ -2700,10 +2628,6 @@ mod tests {
             [cli.remote]
             url = "http://localhost:3141"
 
-            [web]
-            host = "0.0.0.0"
-            port = 8080
-
             [server]
             host = "127.0.0.1"
             port = 3142
@@ -2731,8 +2655,6 @@ mod tests {
             config.cli.remote.url.as_deref(),
             Some("http://localhost:3141")
         );
-        assert_eq!(config.web.host.as_deref(), Some("0.0.0.0"));
-        assert_eq!(config.web.port, Some(8080));
         assert_eq!(config.server.host.as_deref(), Some("127.0.0.1"));
         assert_eq!(config.server.port, Some(3142));
         assert_eq!(
@@ -2780,30 +2702,6 @@ mod tests {
     }
 
     #[test]
-    fn web_port_helpers() {
-        let mut config = Config::default();
-        assert_eq!(config.web_port_or(3141), 3141);
-        assert!(!config.web_port_is_explicit());
-
-        config.web.port = Some(8080);
-        assert_eq!(config.web_port_or(3141), 8080);
-        assert!(config.web_port_is_explicit());
-    }
-
-    #[test]
-    fn effective_host_default() {
-        let config = Config::default();
-        assert_eq!(config.effective_host(), "127.0.0.1");
-    }
-
-    #[test]
-    fn effective_host_custom() {
-        let mut config = Config::default();
-        config.web.host = Some("0.0.0.0".to_string());
-        assert_eq!(config.effective_host(), "0.0.0.0");
-    }
-
-    #[test]
     fn server_port_helpers() {
         let mut config = Config::default();
         assert_eq!(config.server_port_or(3142), 3142);
@@ -2837,9 +2735,6 @@ mod tests {
         });
         assert_eq!(config.server.port, Some(5000));
         assert_eq!(config.server.host.as_deref(), Some("10.0.0.1"));
-        // web should remain unset
-        assert!(config.web.port.is_none());
-        assert!(config.web.host.is_none());
     }
 
     #[test]

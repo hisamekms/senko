@@ -127,12 +127,6 @@ Stage-specific keys (unknown keys are preserved as pass-through extras):
 |---|---|---|---|
 | `name` | `null` (auto-detected) | string | User name for task assignment. |
 
-**web**
-| Key | Default | Options | Description |
-|---|---|---|---|
-| `host` | `127.0.0.1` | IP address | Bind address for `senko web`. |
-| `port` | `null` (auto) | port number | Port for `senko web`. |
-
 **hooks**
 
 Hooks live under three runtime roots (fired only on the matching process) plus workflow stages:
@@ -219,8 +213,8 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 | `SENKO_LOG_DIR` | `log.dir` | |
 | `SENKO_LOG_LEVEL` | `log.level` | |
 | `SENKO_LOG_FORMAT` | `log.format` | |
-| `SENKO_HOST` | `web.host` + `server.host` | Applies to both web and server |
-| `SENKO_PORT` | `web.port` + `server.port` | Applies to both web and server |
+| `SENKO_HOST` | `server.host` | Bind address for `senko serve` |
+| `SENKO_PORT` | `server.port` | Port for `senko serve` |
 
 ### Step 4: Present to User
 

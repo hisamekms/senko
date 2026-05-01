@@ -1,4 +1,4 @@
-# `[project]` / `[user]` / `[log]` / `[web]` 設定
+# `[project]` / `[user]` / `[log]` 設定
 
 runtime に関わらず常時読まれる共通 section。
 
@@ -43,16 +43,3 @@ CLI override: `--log-dir <path>`
 - `both`: 両方
 
 デバッグ時は `--log-dir` + `[log] level = "debug"` が便利。
-
-## `[web]`
-
-`senko web` (読み取り専用 Web ビューア) 用。
-
-| キー | 型 | 既定 | 説明 |
-|---|---|---|---|
-| `host` | string | `127.0.0.1` | バインドアドレス |
-| `port` | u16 | `3141` | ポート |
-
-env override: `SENKO_HOST` / `SENKO_PORT` (`serve` とも兼用)
-
-> `senko web` は **認証なしの read-only ビューア**。LAN 外には晒さない前提。

@@ -30,14 +30,12 @@ axum-extra = { version = "0.12", features = ["query"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 toml = "1.1"
 uuid = { version = "1", features = ["v4"] }
-pulldown-cmark = "0.13"
 ammonia = "4"
 async-trait = "0.1"
 jsonwebtoken = "9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter"] }
-tower-http = { version = "0.6", features = ["trace"] }
 sha2 = "0.11"
 subtle = "2"
 thiserror = "2"

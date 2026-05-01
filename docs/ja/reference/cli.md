@@ -31,7 +31,7 @@
 | User | `senko user list/create/update/delete` |
 | Auth | `senko auth login/token/status/logout/sessions/revoke` |
 | Hooks | `senko hooks log/test` |
-| モード系 | `senko serve` / `senko web` / `senko config` / `senko doctor` / `senko skill-install` |
+| モード系 | `senko serve` / `senko config` / `senko doctor` / `senko skill-install` |
 | 開発用 (`dev-tools` feature 限定) | `senko dev seed [reset\|append]` |
 
 ## `senko task`
@@ -245,11 +245,10 @@ event_name の取り得る値:
 `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
 `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
-## `senko serve` / `senko web`
+## `senko serve`
 
 ```bash
 senko serve [--port 3142] [--host 127.0.0.1]            # REST API サーバ
-senko web   [--port 3141] [--host 127.0.0.1]            # 読み取り専用 Web ビューア
 ```
 
 > relay モードで起動するための専用フラグはない。`[server.relay] url` (env: `SENKO_SERVER_RELAY_URL`) が設定された状態で `senko serve` を起動すると自動的に上流へ中継する relay として動く。
@@ -258,10 +257,10 @@ senko web   [--port 3141] [--host 127.0.0.1]            # 読み取り専用 Web
 
 | 変数 | 用途 | 既定値 |
 |---|---|---|
-| `SENKO_PORT` | `web` / `serve` 両方のポート | 3141 (web) / 3142 (serve) |
-| `SENKO_HOST` | `web` / `serve` 両方のバインド | 127.0.0.1 |
-| `SENKO_SERVER_PORT` | `serve` 専用ポート | 3142 |
-| `SENKO_SERVER_HOST` | `serve` 専用バインド | 127.0.0.1 |
+| `SENKO_PORT` | `senko serve` のポート | 3142 |
+| `SENKO_HOST` | `senko serve` のバインド | 127.0.0.1 |
+| `SENKO_SERVER_PORT` | `serve` 専用ポート (`SENKO_PORT` を上書き) | 3142 |
+| `SENKO_SERVER_HOST` | `serve` 専用バインド (`SENKO_HOST` を上書き) | 127.0.0.1 |
 
 ## `senko config`
 

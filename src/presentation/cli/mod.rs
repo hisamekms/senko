@@ -138,15 +138,6 @@ pub enum Command {
         #[command(subcommand)]
         action: TaskAction,
     },
-    /// Start a read-only web viewer
-    Web {
-        /// Port to listen on (env: SENKO_PORT, default: 3141)
-        #[arg(long)]
-        port: Option<u16>,
-        /// Bind address, e.g. 0.0.0.0 or 192.168.1.5 (env: SENKO_HOST, default: 127.0.0.1)
-        #[arg(long)]
-        host: Option<String>,
-    },
     /// Start a JSON REST API server
     Serve {
         /// Port to listen on (env: SENKO_PORT, default: 3142)
@@ -1051,10 +1042,6 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 
 [log]
 # dir = "/custom/path/to/logs"
-
-[web]
-# host = "127.0.0.1"
-# port = 8080
 "#;
 
 pub fn print_dry_run(output: &OutputFormat, ops: &DryRunOperation) -> Result<()> {
@@ -1244,41 +1231,6 @@ pub async fn run(cli: Cli) -> Result<()> {
             TaskAction::Dod { command } => handlers::cmd_dod(&cli, command).await,
             TaskAction::Deps { command } => handlers::cmd_deps(&cli, command).await,
         },
-        Command::Web { port, host } => {
-            let root = resolve_project_root(cli.project_root.as_deref())?;
-            let xdg = crate::infra::xdg::XdgDirs::from_env();
-            let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
-            config.apply_cli(&CliOverrides {
-                log_dir: cli
-                    .log_dir
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned()),
-                db_path: cli
-                    .db_path
-                    .as_ref()
-                    .map(|p| p.to_string_lossy().into_owned()),
-                port,
-                host,
-                ..Default::default()
-            });
-            #[cfg(feature = "aws-secrets")]
-            config.resolve_secrets().await?;
-            let (task_ops, project_ops) =
-                crate::bootstrap::create_task_operations(&root, &config, &cli.attr)?;
-            let project_id = crate::bootstrap::resolve_project_id(&*project_ops, &config).await?;
-            let port_is_explicit = config.web_port_is_explicit();
-            let effective_port = config.web_port_or(3141);
-            crate::presentation::web::serve(
-                root,
-                effective_port,
-                port_is_explicit,
-                &config,
-                task_ops,
-                project_id,
-            )
-            .await?;
-            Ok(())
-        }
         Command::Serve {
             port,
             host,

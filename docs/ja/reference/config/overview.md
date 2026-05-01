@@ -25,7 +25,7 @@ senko config --init > .senko/config.toml
 
 | Section | 効くタイミング | 詳細ページ |
 |---|---|---|
-| `[project]` / `[user]` / `[log]` / `[web]` | 常時 (`[web]` は `senko web` 時のみ) | [`[project]` / `[user]` / `[log]` / `[web]` 設定](common.md) |
+| `[project]` / `[user]` / `[log]` | 常時 | [`[project]` / `[user]` / `[log]` 設定](common.md) |
 | `[backend.sqlite]` / `[backend.postgres]` | direct backend 利用時 | [`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](server-remote.md) |
 | `[cli]` / `[cli.remote]` | ローカル CLI (= `serve` 以外) | [`[cli.*]` 設定](cli.md) |
 | `[server]` / `[server.auth.*]` / `[server.remote]` | `senko serve` direct mode | [`[server.*]` / `[backend.*]` / `[server.auth.*]` 設定](server-remote.md) |

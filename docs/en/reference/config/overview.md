@@ -25,7 +25,7 @@ senko config --init > .senko/config.toml
 
 | Section | Active when | Details |
 |---|---|---|
-| `[project]` / `[user]` / `[log]` / `[web]` | Always (`[web]` only during `senko web`) | [`[project]` / `[user]` / `[log]` / `[web]` Config](common.md) |
+| `[project]` / `[user]` / `[log]` | Always | [`[project]` / `[user]` / `[log]` Config](common.md) |
 | `[backend.sqlite]` / `[backend.postgres]` | With a direct backend | [`[server.*]` / `[backend.*]` / `[server.auth.*]` Config](server-remote.md) |
 | `[cli]` / `[cli.remote]` | Local CLI (anything other than `serve`) | [`[cli.*]` Config](cli.md) |
 | `[server]` / `[server.auth.*]` / `[server.remote]` | `senko serve` direct mode | [`[server.*]` / `[backend.*]` / `[server.auth.*]` Config](server-remote.md) |

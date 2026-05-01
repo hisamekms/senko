@@ -1,7 +1,6 @@
 pub mod api;
 pub mod cli;
 pub mod dto;
-pub mod web;
 
 use std::net::IpAddr;
 

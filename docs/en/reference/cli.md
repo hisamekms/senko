@@ -31,7 +31,7 @@ Complete list of `senko` subcommands.
 | User | `senko user list/create/update/delete` |
 | Auth | `senko auth login/token/status/logout/sessions/revoke` |
 | Hooks | `senko hooks log/test` |
-| Mode commands | `senko serve` / `senko web` / `senko config` / `senko doctor` / `senko skill-install` |
+| Mode commands | `senko serve` / `senko config` / `senko doctor` / `senko skill-install` |
 | Developer-only (`dev-tools` feature) | `senko dev seed [reset\|append]` |
 
 ## `senko task`
@@ -245,11 +245,10 @@ Accepted `event_name` values:
 `task_add` / `task_publish` / `task_start` / `task_complete` / `task_cancel` / `task_select` /
 `contract_add` / `contract_edit` / `contract_delete` / `contract_dod_check` / `contract_dod_uncheck` / `contract_note_add`
 
-## `senko serve` / `senko web`
+## `senko serve`
 
 ```bash
 senko serve [--port 3142] [--host 127.0.0.1]            # REST API server
-senko web   [--port 3141] [--host 127.0.0.1]            # read-only web viewer
 ```
 
 > There's no dedicated flag to enable relay mode. When `[server.relay] url` (env: `SENKO_SERVER_RELAY_URL`) is set, `senko serve` automatically runs as a relay that forwards to the upstream.
@@ -258,10 +257,10 @@ Environment variables:
 
 | Variable | Purpose | Default |
 |---|---|---|
-| `SENKO_PORT` | Port for both `web` and `serve` | 3141 (web) / 3142 (serve) |
-| `SENKO_HOST` | Bind address for both `web` and `serve` | 127.0.0.1 |
-| `SENKO_SERVER_PORT` | Server-only port | 3142 |
-| `SENKO_SERVER_HOST` | Server-only bind address | 127.0.0.1 |
+| `SENKO_PORT` | Port for `senko serve` | 3142 |
+| `SENKO_HOST` | Bind address for `senko serve` | 127.0.0.1 |
+| `SENKO_SERVER_PORT` | Server-only port (overrides `SENKO_PORT`) | 3142 |
+| `SENKO_SERVER_HOST` | Server-only bind address (overrides `SENKO_HOST`) | 127.0.0.1 |
 
 ## `senko config`
 

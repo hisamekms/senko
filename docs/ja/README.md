@@ -91,7 +91,7 @@ senko skill-install
   - [`[server.remote.*]` / `[backend.*]` / `[server.auth.*]`](reference/config/server-remote.md)
   - [`[server.relay.*]`](reference/config/server-relay.md)
   - [`[workflow.*]`](reference/config/workflow.md)
-  - [`[project]` / `[user]` / `[log]` / `[web]`](reference/config/common.md)
+  - [`[project]` / `[user]` / `[log]`](reference/config/common.md)
 
 ### コントリビュート — [contributing/](contributing/)
 

@@ -40,7 +40,7 @@
 - [Tracing](ja/reference/tracing.md)
 - [設定ファイル]()
   - [概論](ja/reference/config/overview.md)
-  - [`[project]` / `[user]` / `[log]` / `[web]`](ja/reference/config/common.md)
+  - [`[project]` / `[user]` / `[log]`](ja/reference/config/common.md)
   - [`[cli.*]`](ja/reference/config/cli.md)
   - [`[server.relay.*]`](ja/reference/config/server-relay.md)
   - [`[server.*]` / `[backend.*]` / `[server.auth.*]`](ja/reference/config/server-remote.md)

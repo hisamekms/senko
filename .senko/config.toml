@@ -28,10 +28,6 @@ on_failure = "abort"
 # format = "json"
 # dir = "/custom/path/to/logs"
 
-# [web]
-# host = "127.0.0.1"
-# port = 3141
-
 # Example CLI hook:
 # [cli.task_complete.hooks.notify]
 # command = "echo 'task completed'"

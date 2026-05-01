@@ -1,4 +1,4 @@
-# `[project]` / `[user]` / `[log]` / `[web]` Config
+# `[project]` / `[user]` / `[log]` Config
 
 Common sections that are always read regardless of runtime.
 
@@ -43,16 +43,3 @@ CLI override: `--log-dir <path>`.
 - `both`: both.
 
 For debugging, `--log-dir` + `[log] level = "debug"` is handy.
-
-## `[web]`
-
-For `senko web` (the read-only web viewer).
-
-| Key | Type | Default | Description |
-|---|---|---|---|
-| `host` | string | `127.0.0.1` | Bind address |
-| `port` | u16 | `3141` | Port |
-
-env overrides: `SENKO_HOST` / `SENKO_PORT` (shared with `serve`).
-
-> `senko web` is **an unauthenticated read-only viewer**. It's intended for internal networks, not public exposure.
