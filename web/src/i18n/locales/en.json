@@ -63,6 +63,52 @@
       "empty": "No contracts yet"
     }
   },
+  "tasks": {
+    "list": {
+      "title": "Tasks",
+      "empty": "No tasks match the current filters.",
+      "loadMore": "Load more",
+      "count": "{{count}} tasks"
+    },
+    "filter": {
+      "status": "Status",
+      "tag": "Tag",
+      "tagPlaceholder": "e.g. backend",
+      "ready": "Ready only",
+      "contract": "Contract",
+      "reset": "Reset filters"
+    },
+    "priority": {
+      "P0": "P0",
+      "P1": "P1",
+      "P2": "P2",
+      "P3": "P3"
+    },
+    "detail": {
+      "notFound": "Task not found.",
+      "background": "Background",
+      "description": "Description",
+      "plan": "Plan",
+      "planEmpty": "No plan yet.",
+      "inScope": "In scope",
+      "outOfScope": "Out of scope",
+      "dod": "Definition of Done",
+      "dependencies": "Depends on",
+      "dependents": "Blocked by this",
+      "metadata": "Metadata",
+      "timestamps": "Timestamps",
+      "contract": "Contract",
+      "assignee": "Assignee",
+      "branch": "Branch",
+      "prUrl": "PR",
+      "priority": "Priority",
+      "created": "Created",
+      "updated": "Updated",
+      "started": "Started",
+      "completed": "Completed",
+      "canceled": "Canceled"
+    }
+  },
   "errors": {
     "projectNotFound": "Project not found or access denied."
   }

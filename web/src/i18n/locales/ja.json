@@ -63,6 +63,52 @@
       "empty": "Contract がありません"
     }
   },
+  "tasks": {
+    "list": {
+      "title": "タスク一覧",
+      "empty": "条件に合致するタスクはありません。",
+      "loadMore": "さらに読み込む",
+      "count": "{{count}} 件"
+    },
+    "filter": {
+      "status": "ステータス",
+      "tag": "タグ",
+      "tagPlaceholder": "例: backend",
+      "ready": "Ready のみ",
+      "contract": "Contract",
+      "reset": "フィルタをリセット"
+    },
+    "priority": {
+      "P0": "P0",
+      "P1": "P1",
+      "P2": "P2",
+      "P3": "P3"
+    },
+    "detail": {
+      "notFound": "タスクが見つかりません。",
+      "background": "背景",
+      "description": "説明",
+      "plan": "計画",
+      "planEmpty": "計画はまだありません。",
+      "inScope": "スコープ",
+      "outOfScope": "スコープ外",
+      "dod": "Definition of Done",
+      "dependencies": "依存先",
+      "dependents": "依存元",
+      "metadata": "メタデータ",
+      "timestamps": "タイムスタンプ",
+      "contract": "Contract",
+      "assignee": "アサイン",
+      "branch": "ブランチ",
+      "prUrl": "PR",
+      "priority": "優先度",
+      "created": "作成日時",
+      "updated": "更新日時",
+      "started": "開始日時",
+      "completed": "完了日時",
+      "canceled": "キャンセル日時"
+    }
+  },
   "errors": {
     "projectNotFound": "プロジェクトが見つからない、またはアクセス権がありません。"
   }
