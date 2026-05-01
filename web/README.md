@@ -4,8 +4,9 @@ The Web frontend for senko. This is a TanStack Start application that talks to
 the senko remote API. The directory is intentionally placed **outside the Cargo
 workspace** so it has no impact on Rust builds or `mise test` / `mise run e2e`.
 
-> Status: Auth.js OIDC BFF is wired up. The senko API client (typed) and the
-> real feature pages are delivered by follow-up sub-tasks of Contract 10.
+> Status: Auth.js OIDC BFF and the typed senko API client are wired up. The
+> real feature pages (dashboard, task views, contracts, graph) are delivered
+> by follow-up sub-tasks of Contract 10.
 
 ## Stack
 
@@ -44,6 +45,7 @@ language switcher.
 | `npm run start`       | Run the production build.                            |
 | `npm run typecheck`   | Run `tsc --noEmit`.                                  |
 | `npm run panda:codegen` | Run Panda codegen explicitly (writes `styled-system/`). |
+| `npm run gen:api`     | Regenerate `src/api/types.gen.ts` from `../docs/openapi/openapi.json`. Run after the senko OpenAPI spec changes. |
 
 ## Environment variables
 
@@ -59,9 +61,7 @@ Start server reads them at runtime.
 | `AUTH_OIDC_CLIENT_ID`   | —       | OIDC client ID for the web app. |
 | `AUTH_OIDC_CLIENT_SECRET` | —     | OIDC client secret. |
 | `SENKO_API_BASE_URL`    | —       | Origin of `senko serve` (e.g. `http://localhost:8080`). The BFF proxy forwards to it. |
-
-`WEB_DEV_AUTH_BYPASS` is reserved for the dev-bypass path introduced in a
-separate sub-task (see Contract 10) and is not consumed here.
+| `WEB_DEV_AUTH_BYPASS`   | `false` | When `true`, the BFF proxy at `/api/senko/*` skips the Auth.js session check and forwards without an `Authorization` header. Pair with `senko serve --dev-no-auth`. **Local development only — never enable in production.** |
 
 ## Authentication & BFF
 
@@ -94,9 +94,89 @@ point at any OIDC IdP (Keycloak, Authentik, Auth0, …) configured via the
   header so browser cookies are never leaked upstream.
 - Streams the upstream response body back unchanged (minus hop-by-hop
   headers).
+- When `WEB_DEV_AUTH_BYPASS=true`, the session check is skipped and no
+  `Authorization` header is attached — pair with `senko serve --dev-no-auth`
+  for a no-login local round-trip.
 
 So a browser fetch to `/api/senko/api/v1/projects` ends up at
 `${SENKO_API_BASE_URL}/api/v1/projects` with the Bearer attached.
+
+## senko API client (typed)
+
+`src/api/` exposes a TypeScript client over the BFF proxy:
+
+```ts
+import { apiClient, paginate, collectAll } from '#/api'
+
+const { data, error } = await apiClient.GET('/api/v1/projects', {
+  params: { query: { limit: 20 } },
+})
+
+// Async generator over pages — yields each page's items as the cursor advances.
+for await (const tasks of paginate<Task>(async (cursor) => {
+  const r = await apiClient.GET('/api/v1/projects/{id}/tasks', {
+    params: {
+      path: { id: projectId },
+      query: { after: cursor ?? undefined, limit: 50 },
+    },
+  })
+  if (r.error || !r.data) throw r.error ?? new Error('list_tasks failed')
+  return r.data
+})) {
+  // …consume tasks
+}
+
+// Or eagerly collect all pages into one array.
+const all = await collectAll<Task>(async (cursor) => /* same shape */)
+```
+
+| Module / export                   | Purpose                                              |
+| --------------------------------- | ---------------------------------------------------- |
+| `apiClient`                       | Default singleton; `baseUrl` is `/api/senko` (the BFF). |
+| `createApiClient(options)`        | Factory for custom configs (test fetch, alt baseUrl, custom 401 handler). |
+| `paginate(fetchPage)`             | Async generator over `{ items, next_cursor }` pages. |
+| `collectAll(fetchPage)`           | Eager helper — flattens all pages into one array.    |
+| `paths`, `components`, `operations` | Generated OpenAPI types.                           |
+
+A 401 from the API triggers a redirect to `/login` (browser only); supply
+`onUnauthorized` to `createApiClient` to override.
+
+### Generating the API client
+
+The TypeScript types are generated from the senko OpenAPI spec emitted by
+sub-task 388 at `docs/openapi/openapi.json` (committed to the repo).
+
+```bash
+cd web
+npm run gen:api
+```
+
+This rewrites `src/api/types.gen.ts` (committed to git so downstream
+sub-tasks 392–395 import it without re-running the generator). Re-run
+whenever the spec changes — for example after `cargo run -- openapi`. The
+runtime helpers (`client.ts`, `pagination.ts`, `index.ts`) are
+hand-written and stable across regenerations.
+
+### Local smoke test (no OIDC required)
+
+To verify the client + BFF + senko round-trip without standing up an IdP,
+use the dev bypass:
+
+```bash
+# Terminal A — senko API with bypass mode (default port 3142)
+cargo run --bin senko -- serve --dev-no-auth
+
+# Terminal B — web dev server with BFF bypass
+cd web
+WEB_DEV_AUTH_BYPASS=true \
+SENKO_API_BASE_URL=http://localhost:3142 \
+  npm run dev
+
+# Terminal C
+curl -fsS http://localhost:3000/api/senko/api/v1/projects | jq '.items, .next_cursor'
+```
+
+Expect HTTP `200` and a JSON body shaped `{ items: [...], next_cursor: ... }`.
 
 ## Local OIDC setup (Keycloak)
 
@@ -154,6 +234,11 @@ Configure `senko serve` to trust the same issuer (see top-level
 ```
 web/
 ├── src/
+│   ├── api/                      # Typed senko API client
+│   │   ├── client.ts             # createApiClient + 401 → /login middleware
+│   │   ├── pagination.ts         # paginate / collectAll over { items, next_cursor }
+│   │   ├── types.gen.ts          # Generated by `npm run gen:api`; committed
+│   │   └── index.ts              # Public re-exports
 │   ├── routes/                   # File-based TanStack Router routes
 │   │   ├── __root.tsx            # Shell + session beforeLoad
 │   │   ├── _authed.tsx           # Pathless auth gate (redirects to /login)
@@ -208,8 +293,6 @@ them using Panda's `_dark` condition.
 
 Still deferred to follow-up sub-tasks of Contract 10:
 
-- Typed senko API client (generated from OpenAPI; the BFF proxy itself is in
-  place — sub-task 391 generates the typed wrappers that consume it)
 - Real screens (dashboard, tasks, contracts, graph): sub-tasks 392–395
 - Combined dev command (`senko serve` + web + seeder): sub-task 399
 - Playwright E2E suite: sub-task 400

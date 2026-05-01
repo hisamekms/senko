@@ -11,14 +11,19 @@ const HOP_BY_HOP_RESPONSE_HEADERS = [
 ]
 
 async function proxy({ request }: { request: Request }): Promise<Response> {
-  const session = await getSession(request, authConfig)
-  const accessToken = session?.access_token
+  const devBypass = process.env.WEB_DEV_AUTH_BYPASS === 'true'
 
-  if (!accessToken) {
-    return new Response(JSON.stringify({ error: 'unauthorized' }), {
-      status: 401,
-      headers: { 'content-type': 'application/json' },
-    })
+  let accessToken: string | undefined
+  if (!devBypass) {
+    const session = await getSession(request, authConfig)
+    accessToken = session?.access_token
+
+    if (!accessToken) {
+      return new Response(JSON.stringify({ error: 'unauthorized' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
   }
 
   const baseUrl = process.env.SENKO_API_BASE_URL
@@ -36,7 +41,11 @@ async function proxy({ request }: { request: Request }): Promise<Response> {
   const headers = new Headers(request.headers)
   for (const name of HOP_BY_HOP_REQUEST_HEADERS) headers.delete(name)
   headers.delete('cookie')
-  headers.set('authorization', `Bearer ${accessToken}`)
+  if (accessToken) {
+    headers.set('authorization', `Bearer ${accessToken}`)
+  } else {
+    headers.delete('authorization')
+  }
 
   const hasBody = !['GET', 'HEAD'].includes(request.method)
   const init: RequestInit & { duplex?: 'half' } = {
