@@ -20,3 +20,9 @@ styled-system
 
 # TanStack Router auto-generated
 src/routeTree.gen.ts
+
+# Playwright artifacts
+playwright-report/
+test-results/
+blob-report/
+.playwright/

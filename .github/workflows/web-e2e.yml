@@ -1,0 +1,92 @@
+name: Web E2E
+
+on:
+  pull_request:
+    paths:
+      - 'web/**'
+      - 'src/dev/seeder/**'
+      - 'scripts/bin/web-dev'
+      - 'mise.toml'
+      - '.github/workflows/web-e2e.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'web/**'
+      - 'src/dev/seeder/**'
+      - 'scripts/bin/web-dev'
+      - 'mise.toml'
+      - '.github/workflows/web-e2e.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: web-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: jdx/mise-action@v2
+
+      - name: Cache cargo registry + git
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-deps-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-deps-
+
+      - name: Cache cargo build artifacts
+        uses: actions/cache@v4
+        with:
+          path: target
+          key: cargo-build-web-e2e-${{ hashFiles('Cargo.lock') }}
+          restore-keys: |
+            cargo-build-web-e2e-
+
+      - name: Build senko binary (with dev-tools)
+        run: mise run build
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install npm deps
+        working-directory: web
+        run: npm ci --legacy-peer-deps
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('web/package-lock.json') }}
+          restore-keys: |
+            playwright-
+
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright suite
+        working-directory: web
+        env:
+          E2E_FRESH: '1'
+          CI: 'true'
+        run: npm run e2e
+
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            web/playwright-report/
+            web/test-results/
+          retention-days: 7

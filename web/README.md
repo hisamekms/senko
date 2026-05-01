@@ -345,8 +345,63 @@ A small inline script in the document `<head>` (defined in
 unstyled / wrong-themed content. Sub-tasks adding new components should style
 them using Panda's `_dark` condition.
 
-## What is NOT here yet
+## End-to-end tests (Playwright)
 
-Still deferred to follow-up sub-tasks of Contract 10:
+Browser-driven E2E coverage for the v1 surface lives under `web/tests/e2e/`.
+The suite exercises the dashboard, project switcher, task list/detail,
+contract list/detail/notes, dependency graph, i18n switching, dark mode
+toggle, and authenticated/unauthenticated redirect behavior.
 
-- Playwright E2E suite: sub-task 400
+### One-time setup
+
+```bash
+mise run web:e2e:install        # downloads chromium browser binaries (~150 MB)
+```
+
+This is also what CI does (cached between runs).
+
+### Running the suite
+
+```bash
+mise run web:e2e                # headless run, html report at web/playwright-report/
+mise run web:e2e:ui             # headed UI mode (interactive)
+mise run web:e2e:report         # open the most recent HTML report
+```
+
+The bundled `globalSetup` boots `mise run web:dev` (senko serve `--dev-no-auth`
+on :3142 + Vite on :3000 with `WEB_DEV_AUTH_BYPASS=true`) against the same
+isolated dev DB at `.local/web-dev/senko.db` that manual exploration uses,
+so **don't run a manual `mise run web:dev` session in parallel** — the suite
+will refuse to start (port 3000 / 3142 already in use) or worse, share a DB
+that you might be inspecting.
+
+`globalTeardown` stops both processes when the run ends.
+
+### Knobs
+
+| Env var       | Default | Effect                                                                                         |
+| ------------- | ------- | ---------------------------------------------------------------------------------------------- |
+| `E2E_FRESH`   | unset   | Force `web:dev:reset` even if the stack is already running. CI sets this to start from scratch. |
+| `E2E_KEEP`    | unset   | Skip `globalTeardown`; useful for poking at the stack with `mise run web:dev:status` after a run. |
+
+### Auth-redirect spec — second Vite
+
+`08-auth-redirect.spec.ts` cannot toggle `WEB_DEV_AUTH_BYPASS` per-request
+(it is read once at server start) so it spawns its own Vite on port `3001`
+with bypass off in `beforeAll`, kills it in `afterAll`, and runs against
+that. The other 7 specs pay no startup cost for this.
+
+### Failure artifacts
+
+On a failed run:
+
+- `web/playwright-report/` — HTML report (`mise run web:e2e:report` opens it).
+- `web/test-results/` — per-test trace, screenshot on failure, and video on
+  retry. CI uploads both as the `playwright-artifacts` workflow artifact.
+
+### Why the Playwright suite is independent of the Rust e2e umbrella
+
+`mise run e2e` runs the bash + senko CLI driven Rust e2e tests. The
+Playwright suite has different runtime requirements (Node + chromium) and
+gates a different surface (the web app). Keep them separate; CI runs them
+in parallel jobs.

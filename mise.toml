@@ -69,3 +69,21 @@ run = "web-dev reset"
 [tasks."web:dev:status"]
 description = "Show status of the web dev stack"
 run = "web-dev status"
+
+[tasks."web:e2e"]
+description = "Run the Playwright E2E suite for the web app. See web/README.md."
+depends = ["build"]
+run = "cd web && npm run e2e"
+
+[tasks."web:e2e:install"]
+description = "One-time install of Playwright browser binaries (chromium)."
+run = "cd web && npm run e2e:install"
+
+[tasks."web:e2e:ui"]
+description = "Run the Playwright E2E suite in headed UI mode."
+depends = ["build"]
+run = "cd web && npm run e2e:ui"
+
+[tasks."web:e2e:report"]
+description = "Open the most recent Playwright HTML report."
+run = "cd web && npm run e2e:report"

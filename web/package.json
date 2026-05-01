@@ -14,7 +14,12 @@
     "start": "node .output/server/index.mjs",
     "typecheck": "panda codegen && tsc --noEmit",
     "panda:codegen": "panda codegen",
-    "gen:api": "openapi-typescript ../docs/openapi/openapi.json -o src/api/types.gen.ts"
+    "gen:api": "openapi-typescript ../docs/openapi/openapi.json -o src/api/types.gen.ts",
+    "e2e": "panda codegen && playwright test",
+    "e2e:ui": "panda codegen && playwright test --ui",
+    "e2e:headed": "panda codegen && playwright test --headed",
+    "e2e:install": "playwright install --with-deps chromium",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@ark-ui/react": "^5.0.0",
@@ -39,6 +44,7 @@
   },
   "devDependencies": {
     "@pandacss/dev": "^1.10.0",
+    "@playwright/test": "^1.49.1",
     "@tanstack/devtools-vite": "latest",
     "@types/node": "^22.10.2",
     "@types/react": "^19.2.0",

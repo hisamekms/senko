@@ -2,15 +2,18 @@
 //!
 //! Hand-written so re-running the seeder produces the same shape of data:
 //! 3 extra users, 5 contracts (with notes and DoD), 60 tasks across all
-//! statuses with 30 dependency edges. No randomness anywhere — only the
-//! `created_at` timestamp drifts (it comes from the database default, which
-//! is "now").
+//! statuses with 30 dependency edges. A second project ("[seed] Secondary")
+//! with the same 4 members and 3 small draft tasks is also created so the
+//! web project switcher always has something to switch between. No randomness
+//! anywhere — only the `created_at` timestamp drifts (it comes from the
+//! database default, which is "now").
 
 use anyhow::Result;
 
 use crate::application::port::TaskBackend;
 use crate::domain::DEFAULT_PROJECT_ID;
 use crate::domain::contract::{ContractId, ContractNote, CreateContractParams};
+use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
     AssigneeUserId, CreateTaskParams, DodItem, Priority, Task, TaskId, TaskStatus,
 };
@@ -25,6 +28,7 @@ pub async fn load(backend: &dyn TaskBackend) -> Result<()> {
     let task_ids = create_tasks(backend, &contract_ids, &user_ids).await?;
     apply_task_states(backend, &task_ids, &contract_ids, &user_ids).await?;
     add_contract_notes(backend, &contract_ids, &task_ids).await?;
+    create_secondary_project(backend, &user_ids).await?;
     Ok(())
 }
 
@@ -1117,5 +1121,92 @@ async fn add_contract_notes(
             )
             .await?;
     }
+    Ok(())
+}
+
+// --- secondary project ---
+
+const SECONDARY_TASKS: &[(&str, &str, &str)] = &[
+    (
+        "[seed] Draft a roadmap for the secondary workstream",
+        "Outline the goals so the team can prioritise.",
+        "planning",
+    ),
+    (
+        "[seed] Set up a parking-lot of cross-team requests",
+        "Triage incoming asks before they pile up.",
+        "triage",
+    ),
+    (
+        "[seed] Schedule the kick-off review",
+        "Pick a time that works across timezones.",
+        "ops",
+    ),
+];
+
+/// Create a second project so the web project switcher always has at least
+/// two entries to switch between. The bootstrap user (DEFAULT_USER_ID) is
+/// added as Owner and the three seeded users (alice/bob/carol) as Members,
+/// mirroring the membership of the primary project.
+async fn create_secondary_project(backend: &dyn TaskBackend, user_ids: &[UserId]) -> Result<()> {
+    use crate::domain::DEFAULT_USER_ID;
+
+    let project = backend
+        .create_project(&CreateProjectParams {
+            name: "[seed] Secondary".to_string(),
+            description: Some(
+                "Auxiliary project surfaced by the seeder so the web project switcher has \
+                 something to switch between."
+                    .to_string(),
+            ),
+        })
+        .await?;
+    let project_id = project.id();
+
+    backend
+        .add_project_member(
+            project_id,
+            &AddProjectMemberParams {
+                user_id: DEFAULT_USER_ID,
+                role: Role::Owner,
+            },
+        )
+        .await?;
+    for &uid in user_ids {
+        backend
+            .add_project_member(
+                project_id,
+                &AddProjectMemberParams {
+                    user_id: uid,
+                    role: Role::Member,
+                },
+            )
+            .await?;
+    }
+
+    for (title, description, extra_tag) in SECONDARY_TASKS {
+        backend
+            .create_task(
+                project_id,
+                &CreateTaskParams {
+                    title: (*title).to_string(),
+                    background: None,
+                    description: Some((*description).to_string()),
+                    priority: Some(Priority::P2),
+                    definition_of_done: Vec::new(),
+                    in_scope: Vec::new(),
+                    out_of_scope: Vec::new(),
+                    branch: None,
+                    pr_url: None,
+                    metadata: None,
+                    tags: vec![SEED_TAG.to_string(), (*extra_tag).to_string()],
+                    dependencies: Vec::new(),
+                    assignee_user_id: Some(AssigneeUserId::Id(DEFAULT_USER_ID)),
+                    contract_id: None,
+                },
+            )
+            .await?;
+    }
+
     Ok(())
 }
