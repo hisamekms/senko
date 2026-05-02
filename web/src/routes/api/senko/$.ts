@@ -1,7 +1,5 @@
+import { getToken } from '@auth/core/jwt'
 import { createFileRoute } from '@tanstack/react-router'
-import { getSession } from 'start-authjs'
-
-import { authConfig } from '#/utils/auth'
 
 const HOP_BY_HOP_REQUEST_HEADERS = ['host', 'connection', 'content-length']
 const HOP_BY_HOP_RESPONSE_HEADERS = [
@@ -15,8 +13,13 @@ async function proxy({ request }: { request: Request }): Promise<Response> {
 
   let accessToken: string | undefined
   if (!devBypass) {
-    const session = await getSession(request, authConfig)
-    accessToken = session?.access_token
+    const secureCookie = new URL(request.url).protocol === 'https:'
+    const token = await getToken({
+      req: request,
+      secret: process.env.AUTH_SECRET,
+      secureCookie,
+    })
+    accessToken = token?.access_token
 
     if (!accessToken) {
       return new Response(JSON.stringify({ error: 'unauthorized' }), {

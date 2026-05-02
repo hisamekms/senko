@@ -8,18 +8,6 @@ declare module '@auth/core/jwt' {
   }
 }
 
-declare module '@auth/core/types' {
-  interface Session {
-    access_token?: string
-  }
-}
-
-declare module 'start-authjs' {
-  interface AuthSession {
-    access_token?: string
-  }
-}
-
 const oidcProvider: OIDCConfig<Profile> = {
   id: 'oidc',
   name: 'OIDC',
@@ -27,6 +15,7 @@ const oidcProvider: OIDCConfig<Profile> = {
   issuer: process.env.AUTH_OIDC_ISSUER,
   clientId: process.env.AUTH_OIDC_CLIENT_ID,
   clientSecret: process.env.AUTH_OIDC_CLIENT_SECRET,
+  checks: ['pkce', 'state', 'nonce'],
   authorization: {
     params: {
       scope: 'openid profile email',
@@ -43,12 +32,6 @@ export const authConfig: StartAuthJSConfig = {
         token.access_token = account.access_token
       }
       return token
-    },
-    async session({ session, token }) {
-      if (token.access_token) {
-        session.access_token = token.access_token
-      }
-      return session
     },
   },
 }
