@@ -27,6 +27,7 @@
   "dependencies": {
     "@ark-ui/react": "^5.0.0",
     "@auth/core": "^0.41.1",
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
     "@dagrejs/dagre": "^3.0.0",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-router": "latest",

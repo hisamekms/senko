@@ -44,13 +44,28 @@ senko-web ランタイムが起動時に参照する環境変数の正典リス�
 | 変数名 | 必須 | 例 | 説明 |
 | --- | --- | --- | --- |
 | `SENKO_API_BASE_URL` | ✅ | `https://api.senko.example.com` | senko backend (`senko serve`) の HTTPS エンドポイント (API Gateway URL など) |
-| `AUTH_SECRET` | ✅ | `openssl rand -base64 32` の出力 | Auth.js session の署名・暗号化用シークレット (32 bytes 以上) |
+| `AUTH_SECRET` | ✅※ | `openssl rand -base64 32` の出力 | Auth.js session の署名・暗号化用シークレット (32 bytes 以上)。`AUTH_SECRET_ARN` を使う場合は不要 |
 | `AUTH_URL` | ✅ | `https://app.senko.example.com/api/auth` | senko-web の公開 URL + `/api/auth` |
 | `AUTH_OIDC_ISSUER` | ✅ | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` | OIDC IdP の issuer URL |
 | `AUTH_OIDC_CLIENT_ID` | ✅ | `(IdP の app client ID)` | OIDC アプリクライアント ID |
-| `AUTH_OIDC_CLIENT_SECRET` | ✅ | `(Secrets Manager 等から注入)` | OIDC アプリクライアントシークレット |
+| `AUTH_OIDC_CLIENT_SECRET` | ✅※ | `(Secrets Manager 等から注入)` | OIDC アプリクライアントシークレット。`AUTH_OIDC_CLIENT_SECRET_ARN` を使う場合は不要 |
+| `AUTH_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
+| `AUTH_OIDC_CLIENT_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_OIDC_CLIENT_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
 
 > `AUTH_URL` と `AUTH_OIDC_ISSUER` は **HTTPS スキーム必須**。`http://` を渡すと起動時に fail-fast する。
+>
+> ※ AUTH_SECRET / AUTH_OIDC_CLIENT_SECRET は **どちらか一方** (生値 or `_ARN`) を必ず本番で設定する。両方未設定だと起動時に fail-fast する。
+
+### Secrets Manager ARN による runtime 解決 (AWS Lambda 向け)
+
+`AUTH_SECRET_ARN` / `AUTH_OIDC_CLIENT_SECRET_ARN` を設定すると、senko-web は env の生値ではなく ARN を読んでリクエスト時に AWS Secrets Manager から `GetSecretValue` で取得する。値はプロセス内で **15 分間キャッシュ** され、同一 ARN への同時呼び出しは Promise レベルで dedupe される。
+
+- **目的**: AWS Lambda の `lambda:GetFunctionConfiguration` 経由で env が読める範囲を狭める。env には ARN (機密ではない) のみが残る。
+- **AWS SnapStart との整合性**: 解決はモジュール初期化時ではなくリクエスト時に行うため、SnapStart スナップショットに古い値が焼き込まれない。
+- **優先順位**: `*_ARN` と生値の両方が設定された場合は **ARN が優先** され、初回解決時に `console.warn` が一度だけ出る。
+- **後方互換**: `*_ARN` を未設定にしておけば、従来どおり生値の env がそのまま使われる (SDK 呼び出しなし)。
+- **必要な IAM 権限**: Lambda 実行ロールに対象 ARN への `secretsmanager:GetSecretValue` を許可する (CDK では `secret.grantRead(fn)`)。
+- **format 検証**: `*_ARN` は `arn:aws:secretsmanager:<region>:<account-id>:secret:<name>` 形式。production で形式が崩れていると起動時に fail-fast する。
 
 ## tarball の入手と検証
 

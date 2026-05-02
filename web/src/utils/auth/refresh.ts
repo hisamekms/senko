@@ -1,4 +1,5 @@
 import { getTokenEndpoint as defaultGetTokenEndpoint } from '#/utils/security/oidc-discovery'
+import { resolveSecret } from '#/utils/secrets/resolve'
 
 export type RefreshResult =
   | {
@@ -29,7 +30,8 @@ export async function refreshAccessToken(
   const fetchImpl = deps.fetchImpl ?? fetch
   const getEndpoint = deps.getTokenEndpoint ?? defaultGetTokenEndpoint
   const clientId = deps.clientId ?? process.env.AUTH_OIDC_CLIENT_ID
-  const clientSecret = deps.clientSecret ?? process.env.AUTH_OIDC_CLIENT_SECRET
+  const clientSecret =
+    deps.clientSecret ?? (await resolveSecret('AUTH_OIDC_CLIENT_SECRET'))
 
   if (!clientId || !clientSecret) return { ok: false }
 

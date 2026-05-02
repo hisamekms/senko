@@ -1,6 +1,8 @@
 import { getToken } from '@auth/core/jwt'
 import { createFileRoute } from '@tanstack/react-router'
 
+import { resolveSecret } from '#/utils/secrets/resolve'
+
 const HOP_BY_HOP_REQUEST_HEADERS = ['host', 'connection', 'content-length']
 const HOP_BY_HOP_RESPONSE_HEADERS = [
   'connection',
@@ -18,7 +20,7 @@ async function proxy({ request }: { request: Request }): Promise<Response> {
     const secureCookie = new URL(request.url).protocol === 'https:'
     const token = await getToken({
       req: request,
-      secret: process.env.AUTH_SECRET,
+      secret: await resolveSecret('AUTH_SECRET'),
       secureCookie,
     })
 

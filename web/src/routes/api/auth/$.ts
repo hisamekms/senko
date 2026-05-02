@@ -2,10 +2,11 @@ import { getToken } from '@auth/core/jwt'
 import { createFileRoute } from '@tanstack/react-router'
 import { StartAuthJS } from 'start-authjs'
 
-import { authConfig } from '#/utils/auth'
+import { getAuthConfig } from '#/utils/auth'
 import { getEndSessionEndpoint } from '#/utils/security/oidc-discovery'
+import { resolveSecret } from '#/utils/secrets/resolve'
 
-const { GET, POST } = StartAuthJS(authConfig)
+const { GET, POST } = StartAuthJS(() => getAuthConfig())
 
 function isSignoutPath(pathname: string): boolean {
   return /\/signout(?:\/[^/]+)?$/.test(pathname)
@@ -17,7 +18,7 @@ async function rpInitiatedSignout(request: Request): Promise<Response> {
 
   const token = await getToken({
     req: request,
-    secret: process.env.AUTH_SECRET,
+    secret: await resolveSecret('AUTH_SECRET'),
     secureCookie,
   })
   const idToken = token?.id_token

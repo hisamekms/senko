@@ -12,7 +12,7 @@ import { I18nextProvider } from 'react-i18next'
 import { getSession, type AuthSession } from 'start-authjs'
 
 import i18n from '#/i18n'
-import { authConfig } from '#/utils/auth'
+import { getAuthConfig } from '#/utils/auth'
 import appCss from '../styles.css?url'
 
 export interface RouterContext {
@@ -31,7 +31,7 @@ const fetchSession = createServerFn({ method: 'GET' }).handler(async () => {
     } satisfies AuthSession
   }
   const request = getRequest()
-  return await getSession(request, authConfig)
+  return await getSession(request, await getAuthConfig())
 })
 
 const themeBootstrap = `(function(){try{var k='senko.web.theme';var t=localStorage.getItem(k);if(t!=='light'&&t!=='dark'){t=window.matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';}document.documentElement.dataset.theme=t;}catch(e){document.documentElement.dataset.theme='light';}})();`

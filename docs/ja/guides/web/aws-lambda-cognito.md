@@ -184,10 +184,12 @@ export class SenkoWebStack extends Stack {
         AUTH_URL: `${props.webPublicUrl}/api/auth`,
         AUTH_OIDC_ISSUER: props.oidcIssuer,
         AUTH_OIDC_CLIENT_ID: props.oidcClientId,
-        // unsafeUnwrap() は CFN 上で {{resolve:secretsmanager:arn}} の
-        // dynamic reference に展開される。合成テンプレートに literal は出ない。
-        AUTH_SECRET: authSecret.secretValue.unsafeUnwrap(),
-        AUTH_OIDC_CLIENT_SECRET: oidcSecret.secretValue.unsafeUnwrap(),
+        // ARN を渡すだけ — senko-web (>=0.43) はリクエスト時に
+        // SecretsManager.GetSecretValue を呼んで値を取得し、プロセス内で
+        // 15 分キャッシュする。env には ARN しか残らないため、
+        // lambda:GetFunctionConfiguration で env を覗かれても秘密値は漏れない。
+        AUTH_SECRET_ARN: props.authSecretArn,
+        AUTH_OIDC_CLIENT_SECRET_ARN: props.oidcClientSecretArn,
       },
     })
 
@@ -345,15 +347,19 @@ env 変数の正典リスト (必須 / 例 / 説明) は [README の env 表](./
 | `AUTH_URL` | `` `${props.webPublicUrl}/api/auth` `` | HTTPS 必須 |
 | `AUTH_OIDC_ISSUER` | `props.oidcIssuer` (リテラル) | HTTPS 必須。例: `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` |
 | `AUTH_OIDC_CLIENT_ID` | `props.oidcClientId` (リテラル) | secret ではない |
-| `AUTH_OIDC_CLIENT_SECRET` | `oidcSecret.secretValue.unsafeUnwrap()` | Secrets Manager dynamic ref |
-| `AUTH_SECRET` | `authSecret.secretValue.unsafeUnwrap()` | Secrets Manager dynamic ref |
+| `AUTH_OIDC_CLIENT_SECRET_ARN` | `props.oidcClientSecretArn` (リテラル ARN) | senko-web が runtime に SecretsManager から fetch |
+| `AUTH_SECRET_ARN` | `props.authSecretArn` (リテラル ARN) | senko-web が runtime に SecretsManager から fetch |
 
-`unsafeUnwrap()` は名前に反して "literal がテンプレートに出る" 意味ではなく、CDK の token を unwrap してそのまま `{{resolve:secretsmanager:arn}}` の CFN dynamic reference 文字列を埋め込みます。実際の値は Lambda の environment へ deploy 時に CFN が解決して渡すため、合成 template に平文は出ません。
+env に渡るのは ARN 文字列のみ (機密ではない)。実際の `AUTH_SECRET` / `AUTH_OIDC_CLIENT_SECRET` 値は Lambda 実行中に `SecretsManagerClient.send(GetSecretValueCommand)` で取得され、プロセス内で 15 分キャッシュされる。`secret.grantRead(fn)` によって Lambda 実行ロールに `secretsmanager:GetSecretValue` が付与されるので追加 IAM 設定は不要。
+
+> **以前のバージョン (`<= 0.42`) との違い**: 0.42 までは `AUTH_SECRET` / `AUTH_OIDC_CLIENT_SECRET` を `secretValue.unsafeUnwrap()` で CFN dynamic reference 経由 env に渡していたため、deploy 後の env には生値が残っていた。`lambda:GetFunctionConfiguration` 権限を持つ IAM principal が env を読むと秘密値が漏れるリスクがあった。`AUTH_SECRET_ARN` 形式に切り替えると env には ARN しか残らないため、この経路の漏洩リスクを排除できる。0.42 以前と互換のため、生値の env (`AUTH_SECRET` / `AUTH_OIDC_CLIENT_SECRET`) を渡す形は引き続きサポートされる。
 
 ## よくある失敗とその対処
 
 - **`redirect_uri_mismatch`** — Cognito 側で登録した callback URL と Auth.js が要求する URL が完全一致していません (`scheme + host + port + path` まで)。Auth.js の OIDC provider id は `oidc` 固定なので、callback path は **必ず** `/api/auth/callback/oidc` になります。
-- **Lambda 起動時に `AUTH_SECRET is required` で fail-fast** — Secrets Manager の値が空 / Lambda role に `secretsmanager:GetSecretValue` 権限がない / ARN 文字列が typo、のいずれか。`aws lambda get-function-configuration --function-name <fn>` で env が解決済か確認。
+- **Lambda 起動時に `AUTH_SECRET is required in production` で fail-fast** — `AUTH_SECRET` / `AUTH_SECRET_ARN` のどちらも未設定。`aws lambda get-function-configuration --function-name <fn>` で env が渡っているか確認。
+- **`AUTH_SECRET_ARN does not look like a Secrets Manager ARN` で fail-fast** — ARN 文字列が typo (例: `arn:aws:s3:...`)。期待形式は `arn:aws:secretsmanager:<region>:<account-id>:secret:<name>`。
+- **request 処理中に `AccessDeniedException` / `ResourceNotFoundException`** — Lambda 実行ロールに `secretsmanager:GetSecretValue` がない、または ARN が指す Secret が別アカウント / 別 region。CDK の `secret.grantRead(fn)` を実行ロールに反映 (`cdk deploy` 後に IAM role の inline policy を確認)。
 - **`AUTH_URL must be an HTTPS URL` / `AUTH_OIDC_ISSUER must be an HTTPS URL`** — Task #406 で追加された起動時 fail-fast。HTTP API GW の `execute-api` ドメインは HTTPS なので素直に渡せば通ります。
 - **`Set-Cookie` ヘッダが大きすぎる / セッションが立たない** — Cognito の ID/Access token に大量の claim が乗ると Auth.js が cookie を分割しても収まりません。Cognito 側で custom scope / 渡す claim を絞ってください。
 - **SnapStart の効果が出ない (cold start のまま)** — Alias を作らず `$LATEST` を呼んでいないか確認。SnapStart は published version 単位でスナップショットされるため、必ず alias 経由で呼びます。
