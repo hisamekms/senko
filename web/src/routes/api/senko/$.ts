@@ -19,6 +19,14 @@ async function proxy({ request }: { request: Request }): Promise<Response> {
       secret: process.env.AUTH_SECRET,
       secureCookie,
     })
+
+    if (token?.error === 'RefreshAccessTokenError') {
+      return new Response(
+        JSON.stringify({ error: 'RefreshAccessTokenError' }),
+        { status: 401, headers: { 'content-type': 'application/json' } },
+      )
+    }
+
     accessToken = token?.access_token
 
     if (!accessToken) {

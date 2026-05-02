@@ -15,6 +15,8 @@
     "typecheck": "panda codegen && tsc --noEmit",
     "panda:codegen": "panda codegen",
     "gen:api": "openapi-typescript ../docs/openapi/openapi.json -o src/api/types.gen.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "e2e": "panda codegen && playwright test",
     "e2e:ui": "panda codegen && playwright test --ui",
     "e2e:headed": "panda codegen && playwright test --headed",
@@ -54,6 +56,7 @@
     "openapi-typescript": "^7.6.0",
     "postcss": "^8.4.49",
     "typescript": "^6.0.2",
-    "vite": "^8.0.0"
+    "vite": "^8.0.0",
+    "vitest": "^4.0.0"
   }
 }

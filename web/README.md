@@ -251,7 +251,12 @@ Then in the admin console (`http://localhost:8081`):
 2. In `Clients`, create `senko-web` (OpenID Connect, confidential).
 3. Set **Valid redirect URIs** to `http://localhost:3000/api/auth/callback/oidc`.
 4. In `Credentials`, copy the client secret.
-5. Create a user, set a password, log in once at the account console to
+5. In `Client Scopes` → `senko-web`, ensure `offline_access` is listed under
+   **Default** or **Optional Client Scopes** (Keycloak ships it as a default
+   realm-level scope, but new clients sometimes need it added explicitly).
+   This is required for refresh-token rotation — see
+   [IdP requirements](#idp-requirements) below.
+6. Create a user, set a password, log in once at the account console to
    prime it.
 
 Use these values in `web/.env`:
@@ -264,6 +269,39 @@ AUTH_OIDC_CLIENT_SECRET=<from Keycloak credentials>
 
 Configure `senko serve` to trust the same issuer (see top-level
 `docs/...`).
+
+### IdP requirements
+
+The web app asks the IdP for a few capabilities at signin time. If the IdP is
+not configured to grant them, the corresponding flow falls back gracefully but
+some features stop working.
+
+- **`offline_access` scope** — required for **refresh-token rotation**
+  (`web/src/utils/auth/refresh.ts`). The web app requests scope
+  `openid profile email offline_access` from the authorization endpoint. When
+  the IdP grants `offline_access`, the OIDC provider returns a `refresh_token`
+  alongside the `access_token`, and the Auth.js `jwt` callback transparently
+  refreshes the access token via the IdP's `token_endpoint` once the previous
+  one is within 60 seconds of expiry. Without this scope the app **still
+  works**, but every short-lived `access_token` expiry forces the user back
+  to `/login`.
+  - **Keycloak**: enabled by default at the realm level. Make sure the client's
+    `Client Scopes` tab lists `offline_access` under Default or Optional.
+  - **Auth0**: in the application settings, enable **Allow Offline Access**
+    (under APIs → your API), and tick **Allow Offline Access** for the
+    application's grant types.
+  - **Authentik**: add `offline_access` to the provider's `Scopes` list.
+
+  When refresh fails (e.g. the IdP revoked the refresh token), the web app
+  surfaces this as `session.error = 'RefreshAccessTokenError'`. The protected
+  routes redirect to `/login` and the BFF (`/api/senko/*`) returns
+  `401 {error: "RefreshAccessTokenError"}`.
+
+- **`post_logout_redirect_uri`** — required for **RP-Initiated Logout**
+  (`web/src/routes/api/auth/$.ts`). Register `http://localhost:3000/login` (or
+  your production equivalent) as a Valid post-logout redirect URI on the IdP
+  client. Without it, sign-out still clears the local session cookie but the
+  browser stays on the IdP-side logout page instead of returning to `/login`.
 
 ### End-to-end smoke test
 

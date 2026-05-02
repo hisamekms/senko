@@ -1,5 +1,6 @@
 interface DiscoveryDocument {
   end_session_endpoint?: string
+  token_endpoint?: string
 }
 
 interface CacheEntry {
@@ -50,4 +51,9 @@ async function getDiscovery(): Promise<DiscoveryDocument | null> {
 export async function getEndSessionEndpoint(): Promise<string | null> {
   const doc = await getDiscovery()
   return doc?.end_session_endpoint ?? null
+}
+
+export async function getTokenEndpoint(): Promise<string | null> {
+  const doc = await getDiscovery()
+  return doc?.token_endpoint ?? null
 }
