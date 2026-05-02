@@ -8,12 +8,12 @@ import { test, expect } from '@playwright/test'
 //   - NO Strict-Transport-Security (HSTS is prod-only)
 //   - NO X-Frame-Options (CSP `frame-ancestors 'none'` covers it for all
 //     browsers we support)
-// Three base header families are always present (Referrer-Policy,
-// X-Content-Type-Options, Permissions-Policy); CSP variant and HSTS depend
-// on environment.
+// Five base header families are always present (Referrer-Policy,
+// X-Content-Type-Options, Permissions-Policy, Cross-Origin-Opener-Policy,
+// Cross-Origin-Resource-Policy); CSP variant and HSTS depend on environment.
 
 test.describe('Security headers', () => {
-  test('dev sends 3 base security headers + Report-Only CSP and no HSTS / X-Frame-Options', async ({
+  test('dev sends 5 base security headers + Report-Only CSP and no HSTS / X-Frame-Options', async ({
     request,
   }) => {
     const res = await request.get('/p/1', { maxRedirects: 0 })
@@ -23,9 +23,25 @@ test.describe('Security headers', () => {
     )
     expect(res.headers()['x-content-type-options']).toBe('nosniff')
     const permissions = res.headers()['permissions-policy'] ?? ''
-    expect(permissions).toContain('camera=()')
-    expect(permissions).toContain('microphone=()')
-    expect(permissions).toContain('geolocation=()')
+    for (const feature of [
+      'camera',
+      'microphone',
+      'geolocation',
+      'payment',
+      'usb',
+      'midi',
+      'serial',
+      'bluetooth',
+      'magnetometer',
+      'accelerometer',
+      'gyroscope',
+      'interest-cohort',
+    ]) {
+      expect(permissions).toContain(`${feature}=()`)
+    }
+
+    expect(res.headers()['cross-origin-opener-policy']).toBe('same-origin')
+    expect(res.headers()['cross-origin-resource-policy']).toBe('same-origin')
 
     // Dev uses Report-Only mode so HMR violations are logged but not blocked.
     const csp = res.headers()['content-security-policy-report-only']

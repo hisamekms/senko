@@ -46,6 +46,21 @@ export function buildCspHeader({ nonce, isDev }: CspOptions): string {
   ].join('; ')
 }
 
+const PERMISSIONS_POLICY = [
+  'camera=()',
+  'microphone=()',
+  'geolocation=()',
+  'payment=()',
+  'usb=()',
+  'midi=()',
+  'serial=()',
+  'bluetooth=()',
+  'magnetometer=()',
+  'accelerometer=()',
+  'gyroscope=()',
+  'interest-cohort=()',
+].join(', ')
+
 export function buildSecurityHeaders({
   nonce,
   isDev,
@@ -54,7 +69,9 @@ export function buildSecurityHeaders({
   const headers: Record<string, string> = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Content-Type-Options': 'nosniff',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
+    'Permissions-Policy': PERMISSIONS_POLICY,
+    'Cross-Origin-Opener-Policy': 'same-origin',
+    'Cross-Origin-Resource-Policy': 'same-origin',
   }
   if (isDev) {
     headers['Content-Security-Policy-Report-Only'] = csp
