@@ -68,6 +68,10 @@ jobs:
 
   build-web:
     runs-on: ubuntu-latest
+    env:
+      # Skip installing senko itself: mise.toml pins github:hisamekms/senko
+      # to the version we are about to release, which doesn't exist yet.
+      MISE_DISABLE_TOOLS: github:hisamekms/senko
     steps:
       - uses: actions/checkout@v6
 
