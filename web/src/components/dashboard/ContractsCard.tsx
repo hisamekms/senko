@@ -3,7 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { DashboardCard } from '#/components/dashboard/DashboardCard'
 import { useApi } from '#/hooks/useApi'
 import { apiClient, collectAll, type components } from '#/api'
-import { css } from '../../../styled-system/css'
+import { pickFillWidthBucket } from '#/utils/style/fillWidthBuckets'
+import { css, cx } from '../../../styled-system/css'
 
 type Contract = components['schemas']['ContractResponse']
 
@@ -144,8 +145,7 @@ export function ContractsCard({ projectId }: ContractsCardProps) {
                   aria-valuemax={100}
                 >
                   <div
-                    className={fillStyle}
-                    style={{ width: `${percent}%` }}
+                    className={cx(fillStyle, pickFillWidthBucket(percent))}
                   />
                 </div>
               </a>

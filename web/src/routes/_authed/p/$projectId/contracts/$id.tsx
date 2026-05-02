@@ -8,7 +8,7 @@ import { TaskSummaryCard } from '#/components/tasks'
 import { useApi } from '#/hooks/useApi'
 import { useCursorList } from '#/hooks/useCursorList'
 import { apiClient, type components } from '#/api'
-import { css } from '../../../../../../styled-system/css'
+import { css, cx } from '../../../../../../styled-system/css'
 
 type Contract = components['schemas']['ContractResponse']
 type Task = components['schemas']['TaskResponse']
@@ -144,6 +144,11 @@ const skeletonRowStyle = css({
   animation: 'pulse 1.4s ease-in-out infinite',
 })
 
+const skeletonW40Style = css({ width: '40%' })
+const skeletonW60Style = css({ width: '60%' })
+const skeletonW80Style = css({ width: '80%' })
+const skeletonW90Style = css({ width: '90%' })
+
 const skeletonContainerStyle = css({
   display: 'flex',
   flexDirection: 'column',
@@ -247,9 +252,9 @@ function ContractDetailPage() {
   if (contractState.loading) {
     return (
       <div className={skeletonContainerStyle} aria-label={t('dashboard.loading')}>
-        <span className={skeletonRowStyle} style={{ width: '60%' }} />
-        <span className={skeletonRowStyle} style={{ width: '90%' }} />
-        <span className={skeletonRowStyle} style={{ width: '80%' }} />
+        <span className={cx(skeletonRowStyle, skeletonW60Style)} />
+        <span className={cx(skeletonRowStyle, skeletonW90Style)} />
+        <span className={cx(skeletonRowStyle, skeletonW80Style)} />
       </div>
     )
   }
@@ -365,7 +370,7 @@ function ContractDetailPage() {
             </button>
           </div>
         ) : tasksState.loading && tasksState.items.length === 0 ? (
-          <span className={skeletonRowStyle} style={{ width: '40%' }} />
+          <span className={cx(skeletonRowStyle, skeletonW40Style)} />
         ) : tasksState.items.length === 0 ? (
           <p className={stateStyle}>
             {t('contracts.detail.relatedTasksEmpty')}

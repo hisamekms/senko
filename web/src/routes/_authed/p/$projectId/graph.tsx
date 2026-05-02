@@ -7,7 +7,7 @@ import { TaskSummaryCard } from '#/components/tasks'
 import { useApi } from '#/hooks/useApi'
 import { useTheme } from '#/hooks/useTheme'
 import { apiClient, collectAll, type components } from '#/api'
-import { css } from '../../../../../styled-system/css'
+import { css, cx } from '../../../../../styled-system/css'
 
 type Task = components['schemas']['TaskResponse']
 
@@ -149,6 +149,8 @@ const stateStyle = css({
   color: 'fg',
   opacity: '0.7',
 })
+
+const padding1RemStyle = css({ padding: '1rem' })
 
 const errorStyle = css({
   fontSize: 'sm',
@@ -299,8 +301,7 @@ function GraphPage() {
           <div className={canvasWrapStyle} data-testid="graph-canvas">
             {visibleTasks.length === 0 ? (
               <p
-                className={stateStyle}
-                style={{ padding: '1rem' }}
+                className={cx(stateStyle, padding1RemStyle)}
                 data-testid="graph-empty"
               >
                 {t('graph.empty')}

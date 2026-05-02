@@ -93,3 +93,49 @@ test.describe('Security headers', () => {
     )
   })
 })
+
+// CSP enforce-readiness: under `style-src 'self'` (no 'unsafe-inline'),
+// senko-web's own components must render dynamic dimensions through
+// classNames (Panda CSS), not via the JSX `style={...}` attribute. The
+// progress fills are the canonical dynamic-width sink — assert that they
+// no longer carry an inline `style` attribute. Third-party libraries
+// (xyflow, ark-ui, react-markdown) may still emit inline styles internally;
+// those are out of scope here, and the `securitypolicyviolation` event
+// reports `sourceFile` as the page URL for inline-attribute violations,
+// so it cannot be used to programmatically distinguish own from third-party.
+test.describe('CSP enforce-readiness for own components', () => {
+  test('contract fill bars on /p/1 render without inline style attribute', async ({
+    page,
+  }) => {
+    await page.goto('/p/1', { waitUntil: 'networkidle' })
+
+    // Wait for at least one contract row — guarantees ContractsCard has
+    // finished its data fetch and rendered its fill bars.
+    const firstRow = page.locator('[data-testid^="contract-row-"]').first()
+    await expect(firstRow).toBeVisible()
+
+    // Each contract row contains a fill bar: `<div role="progressbar"><div .../></div>`.
+    // Count any fill divs that still carry an inline `style` attribute — should
+    // be zero now that the dynamic width comes from FILL_WIDTH_BUCKETS.
+    const offenders = await page
+      .locator(
+        '[data-testid^="contract-row-"] [role="progressbar"] > div[style]',
+      )
+      .count()
+    expect(offenders).toBe(0)
+  })
+
+  test('contract progress bar on /p/1/contracts/1 renders without inline style attribute', async ({
+    page,
+  }) => {
+    await page.goto('/p/1/contracts/1', { waitUntil: 'networkidle' })
+
+    // ContractProgressBar in the contract detail header.
+    await expect(page.getByRole('progressbar').first()).toBeVisible()
+
+    const offenders = await page
+      .locator('[role="progressbar"] > div[style]')
+      .count()
+    expect(offenders).toBe(0)
+  })
+})

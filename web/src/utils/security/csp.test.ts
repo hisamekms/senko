@@ -130,6 +130,21 @@ describe('buildCspHeader (defaults)', () => {
     expect(csp).toContain("form-action 'self'")
     expect(csp).toContain("default-src 'self'")
   })
+
+  // style-src must NOT contain 'unsafe-inline' — JSX `style={...}` attributes
+  // and any other inline-style sinks are expected to be expressed as classes
+  // (Panda CSS) instead, so the directive can be locked to 'self' only.
+  it.each([true, false])(
+    'pins style-src to a single source-expression and excludes unsafe-inline (isDev=%s)',
+    (isDev) => {
+      const csp = buildCspHeader({ nonce: NONCE, isDev })
+      const styleSrcMatch = csp.match(/style-src ([^;]+)/)
+      expect(styleSrcMatch).not.toBeNull()
+      const styleSrcValue = styleSrcMatch![1].trim()
+      expect(styleSrcValue).toBe("'self'")
+      expect(styleSrcValue).not.toContain("'unsafe-inline'")
+    },
+  )
 })
 
 describe('CSP_REPORT_ONLY', () => {
@@ -220,7 +235,7 @@ describe('CSP_EXTRA_* (additional origins)', () => {
       "img-src 'self' data: https://images.example.com",
     )
     expect(csp).toContain(
-      "style-src 'self' 'unsafe-inline' https://styles.example.com",
+      "style-src 'self' https://styles.example.com",
     )
     expect(csp).toContain(
       "font-src 'self' data: https://fonts.example.com",

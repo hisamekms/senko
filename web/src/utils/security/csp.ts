@@ -112,7 +112,7 @@ export function buildCspHeader({
     cspExtra?.['connect-src'],
   )
   const styleSrc = appendExtras(
-    "style-src 'self' 'unsafe-inline'",
+    "style-src 'self'",
     cspExtra?.['style-src'],
   )
   const imgSrc = appendExtras("img-src 'self' data:", cspExtra?.['img-src'])

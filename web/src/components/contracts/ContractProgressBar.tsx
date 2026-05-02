@@ -1,6 +1,7 @@
 import { useTranslation } from 'react-i18next'
 
-import { css } from '../../../styled-system/css'
+import { pickFillWidthBucket } from '#/utils/style/fillWidthBuckets'
+import { css, cx } from '../../../styled-system/css'
 
 const wrapperStyle = css({
   display: 'flex',
@@ -80,7 +81,7 @@ export function ContractProgressBar({
         aria-valuemin={0}
         aria-valuemax={100}
       >
-        <div className={fillStyle} style={{ width: `${percent}%` }} />
+        <div className={cx(fillStyle, pickFillWidthBucket(percent))} />
       </div>
     </div>
   )

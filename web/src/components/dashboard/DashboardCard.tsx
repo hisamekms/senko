@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { css } from '../../../styled-system/css'
+import { css, cx } from '../../../styled-system/css'
 
 const cardStyle = css({
   display: 'flex',
@@ -74,6 +74,10 @@ const skeletonContainerStyle = css({
   gap: '2',
 })
 
+const skeletonW70Style = css({ width: '70%' })
+const skeletonW80Style = css({ width: '80%' })
+const skeletonW90Style = css({ width: '90%' })
+
 const emptyStyle = css({
   fontSize: 'sm',
   color: 'fg',
@@ -111,9 +115,9 @@ export function DashboardCard({
       </div>
       {loading ? (
         <div className={skeletonContainerStyle} aria-label={t('dashboard.loading')}>
-          <span className={skeletonRowStyle} style={{ width: '90%' }} />
-          <span className={skeletonRowStyle} style={{ width: '70%' }} />
-          <span className={skeletonRowStyle} style={{ width: '80%' }} />
+          <span className={cx(skeletonRowStyle, skeletonW90Style)} />
+          <span className={cx(skeletonRowStyle, skeletonW70Style)} />
+          <span className={cx(skeletonRowStyle, skeletonW80Style)} />
         </div>
       ) : error ? (
         <div className={errorStyle} role="alert">
