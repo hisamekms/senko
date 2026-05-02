@@ -20,31 +20,40 @@ export function generateNonce(): string {
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 }
 
-export interface CspOptions {
+export const CSP_EXTRA_DIRECTIVES = [
+  'connect-src',
+  'img-src',
+  'script-src',
+  'style-src',
+  'font-src',
+] as const
+
+export type CspExtraDirective = (typeof CSP_EXTRA_DIRECTIVES)[number]
+
+export type CspExtraOrigins = Partial<Record<CspExtraDirective, string[]>>
+
+export interface SecurityHeadersEnvOptions {
+  cspReportOnly?: boolean
+  cspReportUri?: string
+  cspExtra?: CspExtraOrigins
+  hstsDisabled?: boolean
+  hstsMaxAge?: number
+  hstsPreload?: boolean
+  coopDisabled?: boolean
+  corpDisabled?: boolean
+}
+
+export interface SecurityHeadersOptions extends SecurityHeadersEnvOptions {
   nonce: string
   isDev: boolean
 }
 
-export function buildCspHeader({ nonce, isDev }: CspOptions): string {
-  const scriptSrc = isDev
-    ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
-    : `script-src 'self' 'nonce-${nonce}'`
-  const connectSrc = isDev
-    ? "connect-src 'self' ws: wss:"
-    : "connect-src 'self'"
-  return [
-    "default-src 'self'",
-    scriptSrc,
-    "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data:",
-    "font-src 'self' data:",
-    connectSrc,
-    "frame-ancestors 'none'",
-    "base-uri 'self'",
-    "object-src 'none'",
-    "form-action 'self'",
-  ].join('; ')
-}
+export type CspOptions = Pick<
+  SecurityHeadersOptions,
+  'nonce' | 'isDev' | 'cspReportUri' | 'cspExtra'
+>
+
+const HSTS_DEFAULT_MAX_AGE = 31_536_000
 
 const PERMISSIONS_POLICY = [
   'camera=()',
@@ -61,23 +70,168 @@ const PERMISSIONS_POLICY = [
   'interest-cohort=()',
 ].join(', ')
 
-export function buildSecurityHeaders({
+function sanitizeCspToken(input: string): string {
+  return input.replace(/[\s;,]+/g, '')
+}
+
+function sanitizeReportUri(input: string): string {
+  return input.replace(/[\s;]+/g, '').trim()
+}
+
+function parseExtraList(raw: string | undefined): string[] | undefined {
+  if (!raw) return undefined
+  const tokens = raw
+    .split(/[\s,]+/)
+    .map(sanitizeCspToken)
+    .filter((s) => s.length > 0)
+  return tokens.length > 0 ? tokens : undefined
+}
+
+function appendExtras(
+  directive: string,
+  extras: string[] | undefined,
+): string {
+  if (!extras || extras.length === 0) return directive
+  return `${directive} ${extras.join(' ')}`
+}
+
+export function buildCspHeader({
   nonce,
   isDev,
-}: CspOptions): Record<string, string> {
-  const csp = buildCspHeader({ nonce, isDev })
+  cspReportUri,
+  cspExtra,
+}: CspOptions): string {
+  const scriptSrc = appendExtras(
+    isDev
+      ? `script-src 'self' 'nonce-${nonce}' 'unsafe-eval'`
+      : `script-src 'self' 'nonce-${nonce}'`,
+    cspExtra?.['script-src'],
+  )
+  const connectSrc = appendExtras(
+    isDev ? "connect-src 'self' ws: wss:" : "connect-src 'self'",
+    cspExtra?.['connect-src'],
+  )
+  const styleSrc = appendExtras(
+    "style-src 'self' 'unsafe-inline'",
+    cspExtra?.['style-src'],
+  )
+  const imgSrc = appendExtras("img-src 'self' data:", cspExtra?.['img-src'])
+  const fontSrc = appendExtras("font-src 'self' data:", cspExtra?.['font-src'])
+
+  const directives = [
+    "default-src 'self'",
+    scriptSrc,
+    styleSrc,
+    imgSrc,
+    fontSrc,
+    connectSrc,
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "form-action 'self'",
+  ]
+  if (cspReportUri) {
+    const safe = sanitizeReportUri(cspReportUri)
+    if (safe) directives.push(`report-uri ${safe}`)
+  }
+  return directives.join('; ')
+}
+
+export function buildSecurityHeaders(
+  options: SecurityHeadersOptions,
+): Record<string, string> {
+  const {
+    nonce,
+    isDev,
+    cspReportOnly,
+    cspReportUri,
+    cspExtra,
+    hstsDisabled,
+    hstsMaxAge,
+    hstsPreload,
+    coopDisabled,
+    corpDisabled,
+  } = options
+  const csp = buildCspHeader({ nonce, isDev, cspReportUri, cspExtra })
   const headers: Record<string, string> = {
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Content-Type-Options': 'nosniff',
     'Permissions-Policy': PERMISSIONS_POLICY,
-    'Cross-Origin-Opener-Policy': 'same-origin',
-    'Cross-Origin-Resource-Policy': 'same-origin',
   }
-  if (isDev) {
+  if (!coopDisabled) headers['Cross-Origin-Opener-Policy'] = 'same-origin'
+  if (!corpDisabled) headers['Cross-Origin-Resource-Policy'] = 'same-origin'
+
+  const useReportOnly = isDev || Boolean(cspReportOnly)
+  if (useReportOnly) {
     headers['Content-Security-Policy-Report-Only'] = csp
   } else {
     headers['Content-Security-Policy'] = csp
-    headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
   }
+
+  if (!isDev && !hstsDisabled) {
+    const maxAge =
+      typeof hstsMaxAge === 'number' && Number.isFinite(hstsMaxAge) && hstsMaxAge >= 0
+        ? Math.floor(hstsMaxAge)
+        : HSTS_DEFAULT_MAX_AGE
+    const suffix = hstsPreload ? '; preload' : ''
+    headers['Strict-Transport-Security'] = `max-age=${maxAge}; includeSubDomains${suffix}`
+  }
+
   return headers
+}
+
+function readBool(env: NodeJS.ProcessEnv, name: string): boolean | undefined {
+  const v = env[name]
+  if (v === undefined) return undefined
+  return v === 'true'
+}
+
+function readNumber(
+  env: NodeJS.ProcessEnv,
+  name: string,
+): number | undefined {
+  const v = env[name]
+  if (v === undefined || v === '') return undefined
+  const n = Number(v)
+  if (!Number.isFinite(n) || n < 0) return undefined
+  return n
+}
+
+export function parseSecurityHeadersEnv(
+  env: NodeJS.ProcessEnv,
+): SecurityHeadersEnvOptions {
+  const cspExtraEntries: [CspExtraDirective, string[]][] = []
+  const extraEnvMap: Record<CspExtraDirective, string> = {
+    'connect-src': 'CSP_EXTRA_CONNECT_SRC',
+    'img-src': 'CSP_EXTRA_IMG_SRC',
+    'script-src': 'CSP_EXTRA_SCRIPT_SRC',
+    'style-src': 'CSP_EXTRA_STYLE_SRC',
+    'font-src': 'CSP_EXTRA_FONT_SRC',
+  }
+  for (const directive of CSP_EXTRA_DIRECTIVES) {
+    const tokens = parseExtraList(env[extraEnvMap[directive]])
+    if (tokens) cspExtraEntries.push([directive, tokens])
+  }
+  const cspExtra =
+    cspExtraEntries.length > 0
+      ? (Object.fromEntries(cspExtraEntries) as CspExtraOrigins)
+      : undefined
+
+  const reportUriRaw = env.CSP_REPORT_URI
+  let cspReportUri: string | undefined
+  if (reportUriRaw) {
+    const safe = sanitizeReportUri(reportUriRaw)
+    if (safe) cspReportUri = safe
+  }
+
+  return {
+    cspReportOnly: readBool(env, 'CSP_REPORT_ONLY'),
+    cspReportUri,
+    cspExtra,
+    hstsDisabled: readBool(env, 'HSTS_DISABLED'),
+    hstsMaxAge: readNumber(env, 'HSTS_MAX_AGE'),
+    hstsPreload: readBool(env, 'HSTS_PRELOAD'),
+    coopDisabled: readBool(env, 'COOP_DISABLED'),
+    corpDisabled: readBool(env, 'CORP_DISABLED'),
+  }
 }

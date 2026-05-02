@@ -67,6 +67,72 @@ senko-web ランタイムが起動時に参照する環境変数の正典リス�
 - **必要な IAM 権限**: Lambda 実行ロールに対象 ARN への `secretsmanager:GetSecretValue` を許可する (CDK では `secret.grantRead(fn)`)。
 - **format 検証**: `*_ARN` は `arn:aws:secretsmanager:<region>:<account-id>:secret:<name>` 形式。production で形式が崩れていると起動時に fail-fast する。
 
+## セキュリティヘッダ env vars (任意)
+
+senko-web ランタイムは Lambda で `Content-Security-Policy` / `Strict-Transport-Security` / `Permissions-Policy` / `Cross-Origin-Opener-Policy` / `Cross-Origin-Resource-Policy` などのセキュリティヘッダを既定で発行する。下記の env で挙動を切り替えられる (全て省略可、デフォルトは現状のセキュアな値)。
+
+| 変数名 | 効果 | 例 |
+| --- | --- | --- |
+| `CSP_REPORT_ONLY` | `true` で本番でも `Content-Security-Policy-Report-Only` を発行 (enforcing CSP は出さない)。CSP 変更の段階的 enforce 用 | `true` |
+| `CSP_REPORT_URI` | CSP に `report-uri <url>` を追加 (違反観測用) | `https://reports.example.com/csp` |
+| `CSP_EXTRA_CONNECT_SRC` | `connect-src` に追加する origin (カンマ or 空白区切り) | `https://api.example.com, https://logs.example.com` |
+| `CSP_EXTRA_IMG_SRC` | `img-src` に追加する origin | `https://images.example.com` |
+| `CSP_EXTRA_SCRIPT_SRC` | `script-src` に追加する origin | `https://cdn.example.com` |
+| `CSP_EXTRA_STYLE_SRC` | `style-src` に追加する origin | `https://fonts.googleapis.com` |
+| `CSP_EXTRA_FONT_SRC` | `font-src` に追加する origin | `https://fonts.gstatic.com` |
+| `HSTS_DISABLED` | `true` で Lambda は `Strict-Transport-Security` を一切出さない (CloudFront 等の前段に任せる用) | `true` |
+| `HSTS_MAX_AGE` | HSTS の `max-age` を秒単位で上書き (デフォルト `31536000` = 1年) | `63072000` |
+| `HSTS_PRELOAD` | `true` で HSTS に `; preload` を付与 (HSTS preload list 申請時) | `true` |
+| `COOP_DISABLED` | `true` で `Cross-Origin-Opener-Policy` を出さない | `true` |
+| `CORP_DISABLED` | `true` で `Cross-Origin-Resource-Policy` を出さない | `true` |
+
+> ヘッダ値の inject 攻撃を防ぐため、`CSP_EXTRA_*` の各 token と `CSP_REPORT_URI` からは `;` `\r` `\n` および内部の空白文字を strip する。proxy/CDN 経由で注入された不正値があっても CSP に他の directive を混入させることはできない。
+
+### 運用例 1: CloudFront との二重設定回避
+
+CloudFront の Response Headers Policy 等で HSTS や Permissions-Policy を一括上書きしている場合、Lambda 側からも同一ヘッダを送ると CloudFront 側が優先されるか衝突する可能性がある。Lambda 側を明示的に off にすると意図が明確になる。
+
+```bash
+# CloudFront 側で HSTS を発行する場合
+HSTS_DISABLED=true
+
+# CloudFront 側で COOP/CORP を上書きする場合
+COOP_DISABLED=true
+CORP_DISABLED=true
+```
+
+### 運用例 2: CSP の段階的 enforce (staged rollout)
+
+新しい CSP ポリシーを enforce 前に違反観測したい場合、まず Report-Only モードで発行して `report-uri` でテレメトリを集め、問題がなければ flag を外して enforce に昇格させる。
+
+```bash
+# Step 1: 候補ポリシーを Report-Only で観測
+CSP_REPORT_ONLY=true
+CSP_REPORT_URI=https://reports.example.com/csp
+
+# Step 2: テレメトリ確認後、CSP_REPORT_ONLY を消して enforce 昇格
+# (CSP_REPORT_URI は残しておけば enforcing CSP の違反も収集できる)
+```
+
+### 運用例 3: 外部 origin の追加 (CDN / アナリティクス等)
+
+senko-web は既定で `'self'` のみを許可する。外部 CDN や analytics SDK を追加する場合は CSP_EXTRA_* を使う。
+
+```bash
+CSP_EXTRA_SCRIPT_SRC=https://cdn.example.com
+CSP_EXTRA_CONNECT_SRC=https://api.example.com, https://logs.example.com
+CSP_EXTRA_IMG_SRC=https://images.example.com
+```
+
+### 運用例 4: HSTS preload list 申請
+
+Chromium の HSTS preload list 申請には `max-age >= 31536000` (1年) と `; preload` が必須。実運用では 2 年程度を推奨。
+
+```bash
+HSTS_MAX_AGE=63072000
+HSTS_PRELOAD=true
+```
+
 ## tarball の入手と検証
 
 GitHub Releases に `senko-web-${VERSION}.tar.gz` と `senko-web-${VERSION}.tar.gz.sha256` が attach されている (senko vX.Y.Z タグの Release に同梱)。

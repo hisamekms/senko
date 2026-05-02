@@ -4,6 +4,7 @@ import {
   REQUEST_NONCE_GLOBAL_KEY,
   buildSecurityHeaders,
   generateNonce,
+  parseSecurityHeadersEnv,
 } from '#/utils/security/csp'
 
 type RunWithNonce = <T>(nonce: string, fn: () => T | Promise<T>) => Promise<T>
@@ -25,7 +26,8 @@ const securityHeadersMiddleware = createMiddleware({ type: 'request' }).server(
     const nonce = generateNonce()
     const result = await runWithNonce(nonce, () => next())
     const isDev = process.env.NODE_ENV !== 'production'
-    const headers = buildSecurityHeaders({ nonce, isDev })
+    const envOpts = parseSecurityHeadersEnv(process.env)
+    const headers = buildSecurityHeaders({ nonce, isDev, ...envOpts })
     for (const [name, value] of Object.entries(headers)) {
       result.response.headers.set(name, value)
     }
