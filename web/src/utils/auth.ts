@@ -5,6 +5,7 @@ import type { StartAuthJSConfig } from 'start-authjs'
 declare module '@auth/core/jwt' {
   interface JWT {
     access_token?: string
+    id_token?: string
   }
 }
 
@@ -30,6 +31,9 @@ export const authConfig: StartAuthJSConfig = {
     async jwt({ token, account }) {
       if (account?.access_token) {
         token.access_token = account.access_token
+      }
+      if (account?.id_token) {
+        token.id_token = account.id_token
       }
       return token
     },
