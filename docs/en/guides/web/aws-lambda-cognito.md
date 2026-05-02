@@ -6,7 +6,7 @@ This page is the implementation example for the "officially supported v1 deploym
 
 ## What this guide builds
 
-- A Web Lambda (Node 20 / ARM_64 / SnapStart enabled) hosting both the TanStack Start SSR app and the Auth.js BFF in one function.
+- A Web Lambda (Node 24 / ARM_64 / SnapStart enabled) hosting both the TanStack Start SSR app and the Auth.js BFF in one function.
 - An HTTP API Gateway v2 with a `$default` route forwarding everything to the Lambda. **No Cognito Authorizer** — Auth.js handles the session via cookies.
 - Secrets Manager for `AUTH_SECRET` and `AUTH_OIDC_CLIENT_SECRET`.
 - A connection to your existing Cognito User Pool (with a Hosted UI domain configured).
@@ -33,7 +33,7 @@ Browser
 
 - An AWS account and an IAM principal with permission to create Lambda / API GW v2 / Secrets Manager / IAM resources.
 - `aws` CLI configured locally (`aws configure`).
-- Node.js 20+ and AWS CDK v2 (`npm i -g aws-cdk`).
+- Node.js 24+ and AWS CDK v2 (`npm i -g aws-cdk`).
 - CDK bootstrapped in the target account/region (`cdk bootstrap aws://<acct>/<region>`).
 - **An existing Cognito User Pool** + **Hosted UI domain (`*.auth.<region>.amazoncognito.com` or a custom domain)** + **app client**:
   - Without a Hosted UI domain, the issuer's OIDC discovery document (`<issuer>/.well-known/openid-configuration`) does not publish an `authorization_endpoint` and Auth.js fails at startup.
@@ -173,7 +173,7 @@ export class SenkoWebStack extends Stack {
     )
 
     const fn = new LambdaFunction(this, 'WebFunction', {
-      runtime: Runtime.NODEJS_20_X,
+      runtime: Runtime.NODEJS_24_X,
       architecture: Architecture.ARM_64,
       handler: 'aws-lambda-handler.handler',
       code: Code.fromAsset(path.join(__dirname, '..', 'cdk.out', 'senko-web')),
@@ -192,13 +192,16 @@ export class SenkoWebStack extends Stack {
       },
     })
 
-    // Apply SnapStart at the CFN level. As of aws-cdk-lib 2.252.x,
-    // Runtime.NODEJS_20_X still has supportsSnapStart=false, so passing
+    // Apply SnapStart at the CFN level. As of aws-cdk-lib 2.252.0,
+    // Runtime.NODEJS_24_X still has supportsSnapStart=false, so passing
     // the high-level `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS`
-    // prop fails CDK validation (AWS Lambda itself supports Node.js 20+
-    // SnapStart since the 2024-11 GA). Once the CDK runtime metadata
-    // catches up, the override below can be replaced with the regular
-    // `snapStart` prop without changing the synthesized template.
+    // prop fails CDK validation (AWS Lambda itself supports SnapStart on
+    // Node 20+ — including the Node 24 runtime). Once the CDK runtime
+    // metadata flips `supportsSnapStart` to true for NODEJS_24_X, the
+    // override below can be replaced with the regular `snapStart` prop
+    // without changing the synthesized template. See
+    // `docs/knowledge/aws-cdk-snapstart-nodejs24.md` for the observed
+    // status and the removal trigger.
     const cfnFn = fn.node.defaultChild as CfnFunction
     cfnFn.addPropertyOverride('SnapStart', { ApplyOn: 'PublishedVersions' })
 
@@ -229,7 +232,7 @@ Key points:
 
 - `code: Code.fromAsset('cdk.out/senko-web')` uploads the extracted tarball directory as-is. `aws-lambda-handler.mjs`, `dist/`, and `node_modules/` end up alongside each other in the Lambda package.
 - `handler: 'aws-lambda-handler.handler'` — invoke the `handler` exported by the top-level `aws-lambda-handler.mjs` from the tarball.
-- SnapStart is set with `addPropertyOverride('SnapStart', { ApplyOn: 'PublishedVersions' })` and invocations are routed through an `Alias`; calling `$LATEST` directly bypasses SnapStart. The `Runtime.NODEJS_20_X` constant in aws-cdk-lib 2.252.x does not yet expose a `supportsSnapStart` flag, so the high-level `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS` prop fails synth even though the synthesized CFN template would be identical.
+- SnapStart is set with `addPropertyOverride('SnapStart', { ApplyOn: 'PublishedVersions' })` and invocations are routed through an `Alias`; calling `$LATEST` directly bypasses SnapStart. The `Runtime.NODEJS_24_X` constant in aws-cdk-lib 2.252.0 does not yet expose a `supportsSnapStart` flag, so the high-level `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS` prop fails synth even though the synthesized CFN template would be identical. The override can be retired once CDK flips `supportsSnapStart` to true for `NODEJS_24_X` — see `docs/knowledge/aws-cdk-snapstart-nodejs24.md` for the current observation.
 - The HTTP API GW has **no Cognito Authorizer**. OIDC login is fully handled inside Auth.js under `/api/auth/*`.
 
 ### 5. `bin/app.ts`

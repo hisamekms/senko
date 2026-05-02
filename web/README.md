@@ -21,7 +21,7 @@ workspace** so it has no impact on Rust builds or `mise test` / `mise run e2e`.
 
 ## Requirements
 
-- **Node.js**: `>=20` (the devcontainer ships a recent Node — `node --version`).
+- **Node.js**: `>=24` (the devcontainer ships a recent Node — `node --version`).
 - **npm**: shipped with Node.
 
 ## Setup
