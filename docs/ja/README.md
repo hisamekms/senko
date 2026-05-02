@@ -78,6 +78,10 @@ senko skill-install
 - [トークン中継パターン](guides/server-relay/token-relay.md)
 - [`[server.relay.*]` hook の実例](guides/server-relay/hooks.md)
 
+**senko-web 運用者 (TanStack Start SSR)** — [guides/web/](guides/web/README.md)
+- [デプロイガイド](guides/web/README.md) — env 変数 / tarball 入手 / デプロイ先一覧
+- [AWS Lambda + Amazon Cognito](guides/web/aws-lambda-cognito.md) — v1 で公式サポート
+
 ### 仕様を引きたい — [reference/](reference/)
 
 - [CLI リファレンス](reference/cli.md) — サブコマンド全量

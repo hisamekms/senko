@@ -82,6 +82,10 @@ How-to guides organized by deployment shape.
 - [Token Relay Pattern](docs/en/guides/server-relay/token-relay.md)
 - [`[server.relay.*]` Hook Examples](docs/en/guides/server-relay/hooks.md)
 
+**senko-web operators (TanStack Start SSR)** — [docs/en/guides/web/](docs/en/guides/web/README.md)
+- [Deployment Guide](docs/en/guides/web/README.md) — env vars, tarball download, target overview
+- [AWS Lambda + Amazon Cognito](docs/en/guides/web/aws-lambda-cognito.md) — v1 supported target
+
 ### I want to look up a spec — [docs/en/reference/](docs/en/reference/)
 
 - [CLI Reference](docs/en/reference/cli.md) — every subcommand
