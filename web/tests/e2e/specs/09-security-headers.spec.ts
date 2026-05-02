@@ -6,15 +6,18 @@ import { test, expect } from '@playwright/test'
 // allowed under the strict CSP. Dev runs the e2e suite, so we expect:
 //   - Content-Security-Policy-Report-Only (NOT enforcing CSP)
 //   - NO Strict-Transport-Security (HSTS is prod-only)
-// The same six families of headers are always present.
+//   - NO X-Frame-Options (CSP `frame-ancestors 'none'` covers it for all
+//     browsers we support)
+// Three base header families are always present (Referrer-Policy,
+// X-Content-Type-Options, Permissions-Policy); CSP variant and HSTS depend
+// on environment.
 
 test.describe('Security headers', () => {
-  test('dev sends 5 security headers + Report-Only CSP and no HSTS', async ({
+  test('dev sends 3 base security headers + Report-Only CSP and no HSTS / X-Frame-Options', async ({
     request,
   }) => {
     const res = await request.get('/p/1', { maxRedirects: 0 })
 
-    expect(res.headers()['x-frame-options']).toBe('DENY')
     expect(res.headers()['referrer-policy']).toBe(
       'strict-origin-when-cross-origin',
     )
@@ -37,6 +40,8 @@ test.describe('Security headers', () => {
     expect(res.headers()['content-security-policy']).toBeUndefined()
     // HSTS must NOT be sent in dev (localhost shouldn't be pinned).
     expect(res.headers()['strict-transport-security']).toBeUndefined()
+    // X-Frame-Options must NOT be sent — frame-ancestors in CSP supersedes it.
+    expect(res.headers()['x-frame-options']).toBeUndefined()
   })
 
   test('SSR HTML contains the csp-nonce meta and applies the nonce to the inline themeBootstrap script', async ({

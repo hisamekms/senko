@@ -52,7 +52,6 @@ export function buildSecurityHeaders({
 }: CspOptions): Record<string, string> {
   const csp = buildCspHeader({ nonce, isDev })
   const headers: Record<string, string> = {
-    'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'X-Content-Type-Options': 'nosniff',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
