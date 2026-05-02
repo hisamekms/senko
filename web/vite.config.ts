@@ -9,7 +9,11 @@ const config = defineConfig({
   resolve: { tsconfigPaths: true },
   server: { port, strictPort: false },
   preview: { port, strictPort: false },
-  plugins: [devtools(), tanstackStart(), viteReact()],
+  plugins: [
+    devtools(),
+    tanstackStart({ server: { entry: './server-entry' } }),
+    viteReact(),
+  ],
 })
 
 export default config

@@ -113,7 +113,8 @@ Start server reads them at runtime.
 | `AUTH_OIDC_CLIENT_ID`   | —       | OIDC client ID for the web app. |
 | `AUTH_OIDC_CLIENT_SECRET` | —     | OIDC client secret. |
 | `SENKO_API_BASE_URL`    | —       | Origin of `senko serve` (e.g. `http://localhost:8080`). The BFF proxy forwards to it. |
-| `WEB_DEV_AUTH_BYPASS`   | `false` | When `true`, both the BFF proxy at `/api/senko/*` and the `_authed` page gate are bypassed: the proxy forwards without an `Authorization` header, and the root route injects a fake dev session so protected pages render without OIDC. Pair with `senko serve --dev-no-auth`. **Local development only — never enable in production.** |
+| `NODE_ENV`              | —       | Set to `production` for production deployments. When `production`, the server refuses to start if `WEB_DEV_AUTH_BYPASS=true` (fail-fast assert) and both bypass code paths (BFF / `_authed` gate) are unreachable regardless of `WEB_DEV_AUTH_BYPASS`. Always set this in production. |
+| `WEB_DEV_AUTH_BYPASS`   | `false` | When `true`, both the BFF proxy at `/api/senko/*` and the `_authed` page gate are bypassed: the proxy forwards without an `Authorization` header, and the root route injects a fake dev session so protected pages render without OIDC. Pair with `senko serve --dev-no-auth`. **Local development only — never enable in production.** When `NODE_ENV=production`, the server refuses to start if this is `true` and the bypass code paths are unreachable. |
 
 ## Authentication & BFF
 

@@ -1,3 +1,5 @@
+import './utils/assert-prod'
+
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
 import { readCurrentRequestNonce } from '#/utils/security/csp'

@@ -9,7 +9,9 @@ const HOP_BY_HOP_RESPONSE_HEADERS = [
 ]
 
 async function proxy({ request }: { request: Request }): Promise<Response> {
-  const devBypass = process.env.WEB_DEV_AUTH_BYPASS === 'true'
+  const devBypass =
+    process.env.NODE_ENV !== 'production' &&
+    process.env.WEB_DEV_AUTH_BYPASS === 'true'
 
   let accessToken: string | undefined
   if (!devBypass) {
