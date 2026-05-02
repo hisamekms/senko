@@ -134,10 +134,10 @@ import { HttpLambdaIntegration } from 'aws-cdk-lib/aws-apigatewayv2-integrations
 import {
   Alias,
   Architecture,
+  type CfnFunction,
   Code,
   Function as LambdaFunction,
   Runtime,
-  SnapStartConf,
 } from 'aws-cdk-lib/aws-lambda'
 import { Secret } from 'aws-cdk-lib/aws-secretsmanager'
 import type { Construct } from 'constructs'
@@ -179,9 +179,6 @@ export class SenkoWebStack extends Stack {
       code: Code.fromAsset(path.join(__dirname, '..', 'cdk.out', 'senko-web')),
       memorySize: 1024,
       timeout: Duration.seconds(15),
-      // SnapStart は published version のみスナップショットされるため、
-      // 後段の Alias 経由で呼び出す前提。
-      snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS,
       environment: {
         SENKO_API_BASE_URL: props.senkoApiBaseUrl,
         AUTH_URL: `${props.webPublicUrl}/api/auth`,
@@ -193,6 +190,16 @@ export class SenkoWebStack extends Stack {
         AUTH_OIDC_CLIENT_SECRET: oidcSecret.secretValue.unsafeUnwrap(),
       },
     })
+
+    // SnapStart を CFN レベルで直接指定する。aws-cdk-lib 2.252.x 時点で
+    // Runtime.NODEJS_20_X の supportsSnapStart フラグがまだ false のため、
+    // 高レベル `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS` を渡すと
+    // CDK の validate に弾かれる (AWS Lambda 自体は 2024-11 から Node 20+
+    // で SnapStart GA)。CDK 側が対応した時点で `addPropertyOverride` を
+    // やめて `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS` に戻して
+    // よい (合成テンプレートは同一)。
+    const cfnFn = fn.node.defaultChild as CfnFunction
+    cfnFn.addPropertyOverride('SnapStart', { ApplyOn: 'PublishedVersions' })
 
     authSecret.grantRead(fn)
     oidcSecret.grantRead(fn)
@@ -221,7 +228,7 @@ export class SenkoWebStack extends Stack {
 
 - `code: Code.fromAsset('cdk.out/senko-web')` で tarball 展開後ディレクトリをそのままアップロード。`aws-lambda-handler.mjs` と `dist/`、`node_modules/` が同梱されたまま Lambda に配置される。
 - `handler: 'aws-lambda-handler.handler'` — tarball top-level の `aws-lambda-handler.mjs` がエクスポートする `handler` を呼ぶ。
-- SnapStart は `ON_PUBLISHED_VERSIONS` を選び、`Alias` を作って alias 経由で呼ぶ。alias を作らずに `$LATEST` を呼んでも SnapStart は効かない。
+- SnapStart は `addPropertyOverride('SnapStart', { ApplyOn: 'PublishedVersions' })` で直接 CFN プロパティとして指定し、`Alias` 経由で呼ぶ。alias を作らずに `$LATEST` を呼んでも SnapStart は効かない。aws-cdk-lib 2.252.x の `Runtime.NODEJS_20_X` には `supportsSnapStart` フラグが立っていないため、高レベルの `snapStart: SnapStartConf.ON_PUBLISHED_VERSIONS` を渡すと synth が落ちる (合成された CFN テンプレートはどちらでも同一)。
 - HTTP API GW は **Cognito Authorizer を付けない**。OIDC ログインは Auth.js が `/api/auth/*` で完結する。
 
 ### 5. `bin/app.ts`
