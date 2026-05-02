@@ -1,0 +1,115 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+log() {
+  printf '[build-web-tarball] %s\n' "$*"
+}
+
+on_error() {
+  local exit_code=$?
+  log "FAILED (exit=${exit_code}) at line ${BASH_LINENO[0]}: ${BASH_COMMAND}"
+  exit "$exit_code"
+}
+
+trap on_error ERR
+
+PROJECT_ROOT="$(git rev-parse --show-toplevel)"
+WEB_DIR="${PROJECT_ROOT}/web"
+DIST_DIR="${PROJECT_ROOT}/dist"
+
+if [ ! -d "$WEB_DIR" ]; then
+  log "web/ not found at ${WEB_DIR}"
+  exit 1
+fi
+
+VERSION="$(node -p "require('${WEB_DIR}/package.json').version || ''")"
+if [ -z "$VERSION" ] || [ "$VERSION" = "undefined" ]; then
+  log "web/package.json has no 'version' field — set it before building"
+  exit 1
+fi
+
+TARBALL_NAME="senko-web-${VERSION}"
+TARBALL_PATH="${DIST_DIR}/${TARBALL_NAME}.tar.gz"
+SHA_PATH="${TARBALL_PATH}.sha256"
+SIZE_LIMIT_BYTES=$((50 * 1024 * 1024))
+
+log "version=${VERSION} → ${TARBALL_PATH}"
+
+log "step 1/6: npm ci"
+(cd "$WEB_DIR" && npm ci --legacy-peer-deps)
+
+log "step 2/6: npm run build"
+(cd "$WEB_DIR" && npm run build)
+
+log "step 3/6: sanity checks"
+SERVER_ENTRY="${WEB_DIR}/dist/server/server-entry.js"
+if [ ! -f "$SERVER_ENTRY" ]; then
+  log "expected SSR entry not found: ${SERVER_ENTRY}"
+  exit 1
+fi
+
+STAGE="$(mktemp -d)"
+cleanup_stage() {
+  rm -rf "$STAGE"
+}
+trap 'cleanup_stage; on_error' ERR
+trap cleanup_stage EXIT
+
+STAGE_PKG="${STAGE}/${TARBALL_NAME}"
+
+log "step 4/6: stage runtime deps at ${STAGE_PKG}"
+mkdir -p "${STAGE_PKG}"
+
+# Install runtime-only dependencies into staging so the SSR bundle can
+# resolve every bare import (e.g. h3-v2 from @tanstack/react-start) at
+# Lambda runtime without `npm install`.
+cp "${WEB_DIR}/package.json" "${STAGE_PKG}/package.json"
+cp "${WEB_DIR}/package-lock.json" "${STAGE_PKG}/package-lock.json"
+(cd "${STAGE_PKG}" && npm ci --omit=dev --legacy-peer-deps --ignore-scripts)
+
+# Verify srvx/aws-lambda sub-path export resolves in the staged tree
+# (B-1 handler imports it; fail fast if upstream moved the adapter).
+SRVX_ADAPTER="${STAGE_PKG}/node_modules/srvx/dist/adapters/aws-lambda.mjs"
+if [ ! -f "$SRVX_ADAPTER" ]; then
+  log "srvx aws-lambda sub-path export missing in staged node_modules: ${SRVX_ADAPTER}"
+  log "(upstream srvx may have moved the adapter — review B-1 handler.mjs)"
+  exit 1
+fi
+
+# Replace package.json with the minimal runtime metadata Lambda needs.
+# Drop scripts/devDeps/dependencies — node_modules/ is already populated
+# and the runtime only reads `name`/`version`/`type`/`private` here.
+cat > "${STAGE_PKG}/package.json" <<EOF
+{
+  "name": "senko-web",
+  "version": "${VERSION}",
+  "private": true,
+  "type": "module"
+}
+EOF
+rm -f "${STAGE_PKG}/package-lock.json"
+
+cp "${WEB_DIR}/aws-lambda-handler.mjs" "${STAGE_PKG}/aws-lambda-handler.mjs"
+cp -r "${WEB_DIR}/dist" "${STAGE_PKG}/dist"
+
+mkdir -p "$DIST_DIR"
+
+log "step 5/6: tar.gz → ${TARBALL_PATH}"
+tar \
+  --owner=0 --group=0 --numeric-owner \
+  -C "$STAGE" \
+  -czf "$TARBALL_PATH" \
+  "$TARBALL_NAME"
+
+log "step 6/6: sha256 + size check"
+(cd "$DIST_DIR" && sha256sum "${TARBALL_NAME}.tar.gz" > "${TARBALL_NAME}.tar.gz.sha256")
+
+bytes=$(stat -c%s "$TARBALL_PATH")
+human=$(numfmt --to=iec-i --suffix=B "$bytes" 2>/dev/null || echo "${bytes}B")
+if [ "$bytes" -gt "$SIZE_LIMIT_BYTES" ]; then
+  log "tarball size ${human} exceeds 50MiB limit"
+  exit 1
+fi
+
+log "done: ${TARBALL_PATH} (${human})"
+log "sha256: $(cut -d' ' -f1 "$SHA_PATH")"
