@@ -4,6 +4,11 @@
 > と発見事項の文書化のみを行い、コード修正はしません。発見事項のうち対応が必要なもの
 > は最後の「フォローアップタスク化候補」に整理しています。
 
+> **更新 (2026-05-02)**: F-1〜F-9 への対応は Contract A (#11, sub-tasks #403〜#408)
+> ですべて完了。各項目の対応コミットと実装手段は §1 末尾「対応状況サマリー」および
+> §6 「Contract A 実装結果」を参照。F-10/F-11/F-12 (Info) は本 Contract の対応スコープ
+> から除外している (詳細は §6 末尾)。
+
 - 対象リポジトリ: `senko` (本リポジトリ)
 - 対象範囲: `web/` (TanStack Start) の OIDC 認証統合まわり
 - 主要ライブラリ: `start-authjs ^1.0.0`, `@auth/core ^0.41.1`, `oauth4webapi` (推移依存)
@@ -54,6 +59,26 @@
 | F-10 | 本番ビルドに TanStack Devtools が同梱される可能性 | Info |
 | F-11 | `callbackUrl` の Open Redirect は default redirect callback で抑止済み | Info |
 | F-12 | セッションは JWT 戦略 (DB adapter なし) で revoke 不可の特性を持つ | Info |
+
+### 対応状況サマリー (2026-05-02 更新)
+
+F-1〜F-9 はすべて Contract A (#11) の sub-task で実装完了。F-10/F-11/F-12 (Info) は
+本 Contract のスコープ外として保留。
+
+| No. | 重大度 | 対応状況 | 担当タスク | コミット | 概要 |
+| --- | --- | --- | --- | --- | --- |
+| F-1  | High   | ✅ 対応済              | #403 (A-1) | `e0547c9` | session callback から access_token 転記を削除、BFF は `getToken()` で JWT から直読 |
+| F-2  | High   | ✅ 対応済              | #403 (A-1) | `e0547c9` | `oidcProvider.checks` に `nonce` を追加 (state と同時) |
+| F-3  | Medium | ✅ 対応済              | #403 (A-1) | `e0547c9` | `oidcProvider.checks` に `state` を追加 (PKCE と併用) |
+| F-4  | Medium | ✅ 対応済              | #404 (A-2) | `b3310db` | `NODE_ENV !== 'production'` ガード + `assertProductionConfig()` で起動時 fail-fast |
+| F-5  | Medium | ✅ 対応済              | #407 (A-5) | `ae763e1` | id_token を JWT に保存し、signout で IdP の `end_session_endpoint` にリダイレクト |
+| F-6  | Medium | ✅ 対応済              | #408 (A-6) | `0a649cd` | `offline_access` + jwt callback で refresh、失敗時 `session.error='RefreshAccessTokenError'` |
+| F-7  | Medium | ✅ 対応済              | #405 (A-3) | `63b0373` | アプリミドルウェアで CSP (nonce ベース) / HSTS / X-Frame-Options / Referrer-Policy / X-Content-Type-Options / Permissions-Policy を送出 |
+| F-8  | Low    | ✅ 対応済              | #406 (A-4) | `0e5708c` | `assertProductionConfig()` で `AUTH_OIDC_ISSUER` の HTTPS prefix を起動時 assert |
+| F-9  | Low    | ✅ 対応済              | #406 (A-4) | `0e5708c` | `assertProductionConfig()` で `AUTH_URL` の HTTPS prefix を起動時 assert |
+| F-10 | Info   | ⏸ 未対応 (Info で除外) | —          | —         | TanStack Devtools の本番除外。要件発生時に別 Contract で起票 |
+| F-11 | Info   | 既に抑止済 (対応不要)  | —          | —         | `callbackUrl` Open Redirect は既定の redirect callback で抑止済み |
+| F-12 | Info   | ⏸ 未対応 (Info で除外) | —          | —         | JWT 戦略の revoke 不可特性。強い revoke 要件発生時に DB adapter 導入を再検討 |
 
 ---
 
@@ -297,6 +322,10 @@
   - Auth.js 型拡張 (`auth.ts:11-15, 17-21`) も削除し、`AuthSession.access_token` を
     UI 層から参照する経路を断つ。
 
+- **対応**: ✅ task #403 (A-1, Contract #11), commit `e0547c9` — session callback と
+  `Session.access_token` 型拡張を削除。BFF は `getToken()` で JWT から直接 access_token を
+  取得し、`/api/auth/session` JSON は `{user, expires}` のみ返す。
+
 ### F-2. OIDC `nonce` パラメータが未設定 (High)
 
 - **該当箇所**: `web/src/utils/auth.ts:23-35` の `oidcProvider` 定義 (`checks` を未指定)
@@ -338,6 +367,10 @@
   Auth.js は `nonce` cookie / state cookie を自動発行する (`node_modules/@auth/core/lib/
   actions/callback/oauth/checks.js`)。
 
+- **対応**: ✅ task #403 (A-1, Contract #11), commit `e0547c9` — `oidcProvider.checks` に
+  `nonce` を追加 (`['pkce', 'state', 'nonce']`)。Auth.js が nonce cookie を自動発行し、
+  callback 処理で id_token の `nonce` claim 検証が有効化された。
+
 ### F-3. `state` パラメータが checks に含まれていない (Medium)
 
 - **該当箇所**: F-2 と同じ。`auth.ts:23-35` で `checks` 未指定 → default `["pkce"]` のみ。
@@ -354,6 +387,9 @@
   - **RFC 9700 §2.1** *Protecting Redirect-Based Flows* - PKCE と state を併用した例。
   - **RFC 6749 §10.12** *Cross-Site Request Forgery*。
 - **推奨対応**: F-2 の対応と合わせて `checks: ['pkce', 'state', 'nonce']` を設定。
+
+- **対応**: ✅ task #403 (A-1, Contract #11), commit `e0547c9` — F-2 と同じ修正に含まれる
+  (`oidcProvider.checks` に `state` を追加)。PKCE と併用する多層防御を確立。
 
 ### F-4. `WEB_DEV_AUTH_BYPASS` が NODE_ENV ガードなしでフェイルオープン (Medium)
 
@@ -416,6 +452,12 @@
     のように本番では決して有効化しないガードに修正。
   - README の警告文をコード内コメントにも転記し、レビュー時の見落としを抑止。
 
+- **対応**: ✅ task #404 (A-2, Contract #11), commit `b3310db` — `__root.tsx` の
+  `fetchSession` および `api/senko/$.ts` の BFF で `process.env.NODE_ENV !== 'production'`
+  ガードを追加。加えて新設の `web/src/utils/assert-prod.ts` の `assertProductionConfig()`
+  が `web/src/server-entry.ts` から呼ばれ、`(NODE_ENV=production && WEB_DEV_AUTH_BYPASS=true)`
+  で起動時に fail-fast。
+
 ### F-5. RP-Initiated Logout (IdP 側セッション終了) が未実装 (Medium)
 
 - **該当箇所**: `web/src/routes/api/auth/$.ts:6-15` (Auth.js の signout 既定動作のみ)。
@@ -439,6 +481,16 @@
     でリダイレクト。
   - 加えて IdP が token revocation エンドポイント (RFC 7009) を提供している場合は
     access_token / refresh_token を revoke する。
+
+- **対応**: ✅ task #407 (A-5, Contract #11), commit `ae763e1` — jwt callback で
+  `account.id_token` を JWT に保存。`web/src/utils/security/oidc-discovery.ts` (1h positive
+  / 60s negative TTL + single-flight) を新設し discovery を一元化。`routes/api/auth/$.ts`
+  の POST handler が `/signout(?:/<provider>)?$` を intercept し、Auth.js POST signout 後
+  に `Location` を `end_session_endpoint?id_token_hint=...&post_logout_redirect_uri=${origin}/login`
+  に書き換え。id_token 不在 / discovery 失敗 / Auth.js 非3xx / Location 不在で Auth.js
+  既定の redirect にフォールバック。
+- **前提条件 (運用)**: IdP の RP 設定に `post_logout_redirect_uri = ${origin}/login` を
+  事前登録すること (Keycloak / Auth0 / Authentik 共通)。
 
 ### F-6. アクセストークンの失効・更新フローが存在しない (Medium)
 
@@ -481,6 +533,18 @@
   - `scope` に `offline_access` を追加して refresh_token を取得する (IdP 側設定が必要)。
   - 失敗時は session.error を立て、フロントエンドで `/login` に誘導する。
 
+- **対応**: ✅ task #408 (A-6, Contract #11), commit `0a649cd` — `scope` に `offline_access`
+  を追加。jwt callback が `access_token / refresh_token / expires_at` を JWT に保存し、
+  `expires_at - 60s` の leeway で IdP の token endpoint に `grant_type=refresh_token` を
+  POST して更新。失敗時は `token.error='RefreshAccessTokenError'` を立て、session callback
+  が surface する。BFF (`/api/senko/$.ts`) は 401 + `{error}` JSON、UI (`_authed.tsx`) は
+  `beforeLoad` で `/login` リダイレクト。実装は `web/src/utils/auth/refresh.ts` の純関数で、
+  vitest 8 ケース (success / no-rotation / HTTP 4xx / invalid JSON / missing endpoint /
+  network throw / missing access_token / Basic auth header) で単体テスト済み。
+  `oidc-discovery.ts` を拡張して `token_endpoint` も discover。
+- **前提条件 (運用)**: IdP の RP 設定で `offline_access` scope と refresh token rotation
+  を有効化すること。
+
 ### F-7. Content-Security-Policy 等のセキュリティヘッダ未送出 (Medium)
 
 - **該当箇所**:
@@ -516,6 +580,21 @@
     - `Permissions-Policy: ...` (必要に応じ)
   - inline script (`themeBootstrap`) は CSP nonce で許可するか外部ファイルへ移す。
 
+- **対応**: ✅ task #405 (A-3, Contract #11), commit `63b0373` —
+  `web/src/utils/security/csp.ts` (純粋ヘルパ + Symbol-based bridge), `web/src/start.ts`
+  (TanStack Start request middleware + `AsyncLocalStorage` を `import.meta.env.SSR` でガード),
+  `web/src/router.tsx` (`readCurrentRequestNonce` → `ssr.nonce` 注入) を追加。送出ヘッダ:
+  CSP (nonce ベース、dev は Report-Only モード)、HSTS (本番のみ)、X-Frame-Options、
+  Referrer-Policy、X-Content-Type-Options、Permissions-Policy。
+- **設計逸脱**: `style-src` は `'self' 'unsafe-inline'` を採用 (タスク説明の
+  `'self'` から逸脱)。理由: 既存コードに `style={{...}}` が 16 箇所以上あり、本タスクの
+  主眼は script の strict 化であり inline style XSS は許容範囲。
+- **検証**: 新規 e2e `web/tests/e2e/specs/09-security-headers.spec.ts` で 6 ヘッダ送出と
+  CSP nonce 注入を assert。`__root.tsx` は無改変 (HeadContent が `router.options.ssr.nonce`
+  から自動 nonce 付与)。
+- **dev 体験**: dev は `Content-Security-Policy-Report-Only` モード (Vite HMR / React
+  refresh が `'unsafe-eval'` を要求するため enforcing は dev 体験を壊すので報告のみ)。
+
 ### F-8. `@auth/core` が OIDC 通信で `allowInsecureRequests` を恒常的に有効化 (Low)
 
 - **該当箇所**:
@@ -541,6 +620,12 @@
     assert** し、HTTP の場合は本番起動を拒否する (NODE_ENV を絡めて dev は許可)。
   - `@auth/core` の更新で `allowInsecureRequests` が外れたバージョンへの追従を計画。
 
+- **対応**: ✅ task #406 (A-4, Contract #11), commit `0e5708c` — `assertProductionConfig()`
+  を拡張し、`process.env.NODE_ENV === 'production'` 時に `AUTH_OIDC_ISSUER` の `https://`
+  prefix を起動時 assert (HTTP なら fail-fast)。失敗は F-4/F-9 と統合された multi-line
+  throw で集約報告される。`@auth/core` 側の `allowInsecureRequests` は引き続き有効だが、
+  本実装側の URL スキーム検証が網羅するため運用上の影響は閉じる。
+
 ### F-9. `AUTH_URL` が HTTP の場合 secure cookie が無効 (Low)
 
 - **該当箇所**:
@@ -563,6 +648,12 @@
   - F-8 と同様、起動時に `process.env.AUTH_URL` が HTTPS で始まるかを assert する
     (本番のみ)。
   - もしくは `authConfig.useSecureCookies = true` を本番固定で渡す。
+
+- **対応**: ✅ task #406 (A-4, Contract #11), commit `0e5708c` — F-8 と同じ修正に含まれる
+  (`assertProductionConfig()` で `AUTH_URL` の HTTPS prefix 起動時 assert)。`@auth/core`
+  が `secure` cookie 属性を `AUTH_URL` プロトコルから推定する仕様はそのままだが、本番で
+  HTTP の `AUTH_URL` を弾くため secure cookie が無効になるケースは事実上閉じる。新規
+  vitest `web/src/utils/assert-prod.test.ts` の 8 ケースで assert 動作を確認済み。
 
 ### F-10. 本番ビルドに TanStack Devtools が同梱される可能性 (Info)
 
@@ -647,49 +738,87 @@
 
 ---
 
-## 6. フォローアップタスク化候補
+## 6. Contract A 実装結果 (2026-05-02 更新)
 
-優先度の高い順に整理。各項目は独立して実装可能。
+§4 の発見事項 F-1〜F-9 は Contract A (#11) の sub-task として実装完了。各項目の対応
+コミット、担当タスク、実装手段は以下の通り。
 
-1. **[P0] F-1: session callback から `access_token` を除去**
-   - `web/src/utils/auth.ts:5-21, 47-52` を修正し、`Session.access_token` 型拡張も削除。
-   - `web/src/routes/api/senko/$.ts:18-19` は JWT cookie から token を取得する形に維持。
-   - 影響範囲調査が必要 (UI 層で `session.access_token` を直接使っていないか grep)。
+1. **[完了] F-1: session callback から `access_token` を除去** — task #403 (A-1), commit `e0547c9`
+   - `session()` callback と `Session.access_token` / `AuthSession.access_token` 型拡張
+     を削除。BFF (`web/src/routes/api/senko/$.ts`) は `getToken()` で JWT から直接
+     access_token を取得する方式に切替。
+   - `secureCookie` は `new URL(request.url).protocol === 'https:'` から動的に判定
+     (`@auth/core` の cookie 命名挙動と整合)。
+   - 検証: `/api/auth/session` JSON が `{user, expires}` のみを返すこと、e2e 28/28 パス
+     を確認済み。
 
-2. **[P0] F-2 + F-3: `oidcProvider.checks` を `['pkce', 'state', 'nonce']` に明示**
-   - `web/src/utils/auth.ts:23-35` に `checks` を追加。
-   - 既存 e2e (`08-auth-redirect.spec.ts` 等) の動作確認が必要 (cookie が増える)。
+2. **[完了] F-2 + F-3: `oidcProvider.checks` を `['pkce', 'state', 'nonce']` に明示** — task #403 (A-1), commit `e0547c9`
+   - `web/src/utils/auth.ts` の `oidcProvider` に `checks: ['pkce', 'state', 'nonce']`
+     を追加。`@auth/core` が state / nonce cookie を自動発行し、callback 処理で
+     id_token の `nonce` claim 検証が有効化された。
 
-3. **[P1] F-4: `WEB_DEV_AUTH_BYPASS` の本番ガード**
-   - `__root.tsx:23` と `api/senko/$.ts:14` の判定を
+3. **[完了] F-4: `WEB_DEV_AUTH_BYPASS` の本番ガード** — task #404 (A-2), commit `b3310db`
+   - `__root.tsx` の `fetchSession` および `api/senko/$.ts` の BFF 双方で
      `process.env.NODE_ENV !== 'production' && process.env.WEB_DEV_AUTH_BYPASS === 'true'`
-     に変更し、起動時の boot assert (`startup.ts` 等) で本番 + bypass の組合せを fail-fast。
+     ガードを追加。
+   - 新設の `web/src/utils/assert-prod.ts` の `assertProductionConfig()` が
+     `web/src/server-entry.ts` (TanStack Start の `server.entry` で wired) から呼ばれ、
+     `(NODE_ENV=production && WEB_DEV_AUTH_BYPASS=true)` の組合せで起動時 fail-fast。
 
-4. **[P1] F-7: セキュリティヘッダ送出ミドルウェア追加**
-   - TanStack Start の server middleware で CSP / HSTS / X-Frame-Options /
-     Referrer-Policy / X-Content-Type-Options を付与。
-   - `__root.tsx:34` の inline `themeBootstrap` を CSP nonce 対応にするか、外部ファイル
-     化する。
+4. **[完了] F-7: セキュリティヘッダ送出ミドルウェア追加** — task #405 (A-3), commit `63b0373`
+   - `web/src/utils/security/csp.ts` (純粋ヘルパ + Symbol-based bridge),
+     `web/src/start.ts` (TanStack Start request middleware + `AsyncLocalStorage` を
+     `import.meta.env.SSR` でガード), `web/src/router.tsx` (`readCurrentRequestNonce`
+     → `ssr.nonce` 注入) を追加。
+   - 送出ヘッダ: CSP (nonce ベース), HSTS (本番のみ), X-Frame-Options, Referrer-Policy,
+     X-Content-Type-Options, Permissions-Policy。
+   - `style-src` は `'self' 'unsafe-inline'` (既存コードに `style={{...}}` が 16 箇所以上
+     あるため inline style XSS は許容)。dev は Report-Only モード (Vite HMR / React
+     refresh が `'unsafe-eval'` を要求するため)。
+   - 新規 e2e `web/tests/e2e/specs/09-security-headers.spec.ts` を追加し全件パス。
 
-5. **[P2] F-5: RP-Initiated Logout 実装**
-   - jwt callback で `account.id_token` を保存し、signOut events で
-     `${issuer}/protocol/openid-connect/logout?id_token_hint=...&post_logout_redirect_uri=...`
-     にリダイレクトするカスタムハンドラを追加。
+5. **[完了] F-5: RP-Initiated Logout 実装** — task #407 (A-5), commit `ae763e1`
+   - jwt callback で `account.id_token` を JWT に保存。
+   - 新設 `web/src/utils/security/oidc-discovery.ts` (1h positive / 60s negative TTL +
+     single-flight Promise) で discovery を一元化。
+   - `routes/api/auth/$.ts` の POST handler が `/signout(?:/<provider>)?$` を intercept
+     し、Auth.js POST signout 後に `Location` を `end_session_endpoint?id_token_hint=
+     ...&post_logout_redirect_uri=${origin}/login` に書き換え。
+   - id_token 不在 / discovery 失敗 / Auth.js 非3xx / Location 不在で Auth.js 既定の
+     redirect にフォールバック。
+   - **運用前提**: IdP の RP 設定に `post_logout_redirect_uri = ${origin}/login` を
+     登録すること (Keycloak / Auth0 / Authentik 共通)。`web/README.md` に記載済み。
 
-6. **[P2] F-6: refresh token によるアクセストークン更新**
-   - `scope` に `offline_access` を追加し、jwt callback で `expires_at` を保存。
-   - 期限切れ時に refresh token で更新 → 失敗時 `session.error = 'RefreshAccessTokenError'`
-     を立てる。
+6. **[完了] F-6: refresh token によるアクセストークン更新** — task #408 (A-6), commit `0a649cd`
+   - `scope` に `offline_access` を追加。jwt callback が
+     `access_token / refresh_token / expires_at` を JWT に保存し、`expires_at - 60s` の
+     leeway で IdP の token endpoint に `grant_type=refresh_token` で更新。
+   - 失敗時は `token.error='RefreshAccessTokenError'` を立てて session callback で
+     surface。BFF は 401 + `{error}` JSON、UI (`_authed.tsx`) は `beforeLoad` で
+     `/login` リダイレクト。access_token / id_token は **session に乗せない**。
+   - 純関数 `web/src/utils/auth/refresh.ts` + vitest 8 ケース (success / no-rotation /
+     HTTP 4xx / invalid JSON / missing endpoint / network throw / missing access_token /
+     Basic auth header) で単体テスト。`oidc-discovery.ts` を拡張し `token_endpoint` も
+     discover (既存 single-flight cache を共用)。
+   - 副作用として `web/` に **vitest を初導入** (これまで JS テストランナーなし)。
+   - **運用前提**: IdP の RP 設定で `offline_access` scope と refresh token rotation を
+     有効化すること。`web/README.md` に記載済み。
 
-7. **[P2] F-8 + F-9: 本番 issuer/AUTH_URL の HTTPS 強制**
-   - 起動時 `assertProductionConfig()` で `AUTH_URL` と `AUTH_OIDC_ISSUER` の `https:`
-     を強制。
+7. **[完了] F-8 + F-9: 本番 issuer/AUTH_URL の HTTPS 強制** — task #406 (A-4), commit `0e5708c`
+   - `assertProductionConfig()` を拡張し、`NODE_ENV === 'production'` 時に
+     `AUTH_OIDC_ISSUER` と `AUTH_URL` の `https://` prefix を起動時 assert (HTTP なら
+     fail-fast)。
+   - 失敗を集約した multi-line throw で全 misconfig を一度に表示 (F-4 と統合報告)。
+     未設定値は assert しない (Auth.js 側が別途 surface)。
+   - 新規 vitest `web/src/utils/assert-prod.test.ts` の 8 ケースで動作確認 (dev で何でも
+     許容 / prod happy path / 各 prefix throw / F-4 regression / 集約 / 両方 unset)。
+   - `web/README.md` の Environment variables 表に「Must use https:// in production」を
+     追記済み。
 
-8. **[P3] F-10: TanStack Devtools の本番除外**
-   - `__root.tsx` で `import.meta.env.DEV` 条件分岐。
-
-F-11 / F-12 は現状の挙動を確認するだけのため、専用タスクとしては不要。F-12 は要件
-変更時に再検討。
+**F-10 / F-11 / F-12 (Info)**: Info 重大度のため Contract A の対応スコープから除外。
+F-11 (`callbackUrl` Open Redirect) は既定の redirect callback で恒常的に抑止済みのため
+追加対応は不要。F-10 (TanStack Devtools の本番除外) と F-12 (JWT 戦略の revoke 不可
+特性) は要件が発生した時点で別 Contract として起票する。
 
 ---
 
