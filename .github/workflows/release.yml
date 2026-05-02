@@ -66,8 +66,32 @@ jobs:
             senko-*.tar.gz
             senko-*.tar.gz.sha256
 
+  build-web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: jdx/mise-action@v2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build web tarball
+        run: mise run web:dist
+
+      - name: Upload web tarball artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: senko-web
+          path: |
+            dist/senko-web-*.tar.gz
+            dist/senko-web-*.tar.gz.sha256
+
   release:
-    needs: build
+    needs: [build, build-web]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
@@ -84,4 +108,5 @@ jobs:
             --repo "${{ github.repository }}" \
             --title "${TAG}" \
             --generate-notes \
-            senko-*.tar.gz senko-*.tar.gz.sha256
+            senko-v*.tar.gz senko-v*.tar.gz.sha256 \
+            senko-web-*.tar.gz senko-web-*.tar.gz.sha256

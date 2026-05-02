@@ -8,6 +8,8 @@ argument-hint: "[version（省略時は自動判定）]"
 
 senko の新バージョンをリリースする。e2e テストの成功を確認してから、バージョン更新・コミット・タグ作成・push を実行する。
 
+`Cargo.toml` と `web/package.json` のバージョンは同じ値で同期 bump される。`v*.*.*` タグを push すると `.github/workflows/release.yml` が起動し、Rust バイナリ (3 ターゲット) と並列で `senko-web-${VERSION}.tar.gz` (+ `.sha256`) も build され、同じ GitHub Release に attach される。
+
 ## 手順
 
 ### Step 1: e2e テストの実行
@@ -70,18 +72,26 @@ git log <last-tag>..HEAD --oneline
 
 **メジャーバージョンアップの場合は AskUserQuestion でユーザーに確認を取る。** 確認なしにメジャーバージョンを上げてはいけない。
 
-### Step 3: Cargo.toml と mise.toml のバージョン更新
+### Step 3: Cargo.toml / mise.toml / web/package.json のバージョン更新
 
 `Cargo.toml` の `version = "..."` 行を新しいバージョンに更新する。Edit ツールを使うこと。
 
 あわせて `mise.toml` の `[tools]` セクションにある `"github:hisamekms/senko"` を同じ新バージョンに書き換える。これにより `mise tools` 経由で配布される senko バイナリがリリース後に更新されるようになる。Edit ツールを使うこと。
+
+さらに `web/package.json` の `version` も同じ値に揃える。`web/package-lock.json` も整合を取る必要があるため、Edit ツールではなく `npm version` を使うこと:
+
+```bash
+(cd web && npm version <version> --no-git-tag-version)
+```
+
+`--no-git-tag-version` で commit・tag は作らず、`web/package.json` と `web/package-lock.json` のバージョン欄だけが書き換わる。このバージョンは Release 時に `mise run web:dist` が `dist/senko-web-${VERSION}.tar.gz` のファイル名生成で参照する。
 
 ### Step 4: コミットとタグ作成
 
 ```bash
 # バージョン更新をコミット（Cargo.lock も同期する）
 cargo check --quiet
-git add Cargo.toml Cargo.lock mise.toml
+git add Cargo.toml Cargo.lock mise.toml web/package.json web/package-lock.json
 git commit -m "chore: bump version to <version>"
 
 # タグ作成
@@ -98,6 +108,8 @@ git push origin v<version>
 ```
 
 ### Step 6: リリースワークフローの完了待ち
+
+`release.yml` は `build` matrix (Rust × 3 ターゲット) と `build-web` ジョブを並列に実行し、両方の成果物が揃ってから `release` ジョブが GitHub Release を作成する。
 
 ```bash
 # ワークフローの実行IDを取得
@@ -133,7 +145,10 @@ EOF
 
 ### Step 8: 完了報告
 
+リリースページに `senko-web-<version>.tar.gz` (+ `.sha256`) が attach されているかを `gh release view v<version>` で確認する。Rust バイナリ (3 ターゲット分) と web tarball が同じバージョン番号で並んでいれば成功。
+
 リリースが完了したら以下を報告する：
 
 - リリースバージョン（例: v0.2.0）
 - リリースページの URL
+- 同 Release に attach された web tarball ファイル名 (`senko-web-<version>.tar.gz`)
