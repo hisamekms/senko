@@ -374,6 +374,101 @@ Swap the three env vars `AUTH_OIDC_ISSUER` / `AUTH_OIDC_CLIENT_ID` / `AUTH_OIDC_
 
 The Cognito-specific steps (Hosted UI domain / `aws cognito-idp update-user-pool-client`) become unnecessary in that case.
 
+## Restrict sign-in by Cognito group
+
+When a single Cognito User Pool is shared across several apps, every authenticated user can complete the OIDC round-trip into senko-web — even users from unrelated groups. The Auth.js cookie session is then established, the UI loads, and the BFF call hits the senko backend, which returns 401 because the APIGW JWT authorizer rejects access_tokens that don't carry `senko:access`. The result is a "logged in → all features 401" loop. No data leaks (the backend is the final gate), but the UX is bad and the audit log is noisy.
+
+senko-web exposes an Auth.js `signIn` callback that decodes the OAuth `access_token` and rejects the sign-in **before** the cookie is set, so non-senko users are routed straight to the Auth.js error page. The gate is opt-in via three env vars (see [./README.md#environment-variables-read-by-web-lambda](./README.md#environment-variables-read-by-web-lambda)):
+
+- `SENKO_AUTH_REQUIRED_SCOPE` — required OAuth scope (must appear in the access_token's space-separated `scope` claim).
+- `SENKO_AUTH_REQUIRED_GROUPS` — comma-separated allow-list. ANY-match against a configurable claim.
+- `SENKO_AUTH_GROUPS_CLAIM` — the claim name where groups live (e.g. `senko_groups`, `cognito:groups`, `groups`).
+
+When both `SCOPE` and `GROUPS` are set, the gate is AND. With all three unset (default), every sign-in is allowed (backward compatible with deployments before this gate was added).
+
+### Pre-token Lambda recipe (recommended for Cognito)
+
+Cognito's access_token does not include `cognito:groups` by default. The cleanest way is a **pre-token-generation Lambda V3** that injects a custom `senko_groups` claim — and optionally an OAuth `senko:access` scope — into the access_token whenever the user belongs to one of the configured groups.
+
+```ts
+// pre-token-generation/index.ts
+//
+// Cognito Pre-Token Generation Lambda — Trigger version V3_0
+// Required for access_token claim/scope override.
+import type { PreTokenGenerationV2TriggerEvent } from 'aws-lambda'
+
+const ALLOWED_GROUPS = new Set(['senko', 'senko-admin'])
+
+export const handler = async (
+  event: PreTokenGenerationV2TriggerEvent,
+) => {
+  const userGroups = event.request.groupConfiguration.groupsToOverride ?? []
+  const matched = userGroups.filter((g) => ALLOWED_GROUPS.has(g))
+
+  // Always emit `senko_groups` (empty array if the user has no senko-related
+  // group) — keeps the senko-web gate authoritative.
+  event.response.claimsAndScopeOverrideDetails = {
+    accessTokenGeneration: {
+      claimsToAddOrOverride: { senko_groups: matched },
+      // Adding the scope here lets the senko backend's APIGW JWT authorizer
+      // gate on `senko:access` as well — defense in depth.
+      scopesToAdd: matched.length > 0 ? ['senko:access'] : [],
+    },
+  }
+
+  return event
+}
+```
+
+Wire it on the User Pool with the V3 trigger version (V1 / V2 cannot inject access_token claims):
+
+```bash
+aws cognito-idp update-user-pool \
+  --user-pool-id "${USER_POOL_ID}" \
+  --lambda-config '{
+    "PreTokenGenerationConfig": {
+      "LambdaArn": "arn:aws:lambda:<region>:<acct>:function:senko-pre-token",
+      "LambdaVersion": "V3_0"
+    }
+  }'
+```
+
+Then on the senko-web Lambda set:
+
+```
+SENKO_AUTH_REQUIRED_SCOPE=senko:access
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=senko_groups
+```
+
+A user in the `senko` Cognito group sees normal sign-in. A user in `aviary` or `haimate-app-prod` is redirected to `/api/auth/error?error=AccessDenied` immediately after the OIDC round-trip — no 401 loop, no session cookie issued.
+
+### Alternative: no pre-token Lambda
+
+If you cannot deploy the Lambda, you can point at the standard `cognito:groups` claim:
+
+```
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=cognito:groups
+```
+
+Caveat: by default Cognito puts `cognito:groups` in the **id_token**, not the access_token. senko-web reads access_token only (no id_token fallback). For the access_token to carry `cognito:groups` you still need a pre-token Lambda — at which point the dedicated `senko_groups` recipe above is cleaner. So this path is mainly useful for IdPs other than Cognito.
+
+### Alternative: Keycloak / Auth0 / Authentik
+
+```
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=groups
+```
+
+Configure the IdP's group mapper to include `groups` in the access_token. For Keycloak, that's a *Group Membership* mapper on the client scope with "Add to access token" enabled and *Token Claim Name* set to `groups`. The senko-web gate handles JSON-array, comma-separated, or whitespace-separated values, so common mapper outputs work as-is.
+
+### Misconfiguration safety
+
+Setting `SENKO_AUTH_REQUIRED_GROUPS` without `SENKO_AUTH_GROUPS_CLAIM` is a config bug — the gate cannot evaluate. The web Lambda emits a `console.warn` at startup and **rejects every sign-in** until the operator either sets `SENKO_AUTH_GROUPS_CLAIM` or unsets `SENKO_AUTH_REQUIRED_GROUPS` (fail-secure). Watch for `[auth/gate] SENKO_AUTH_REQUIRED_GROUPS is set but SENKO_AUTH_GROUPS_CLAIM is not` in CloudWatch Logs.
+
+Reject events are logged with `[auth/gate] sign-in rejected reason=… email=… …`. The local part of the email is masked (`a***@example.com`) and access_tokens are never logged.
+
 ## Optional: WAF / CloudFront in front
 
 For production you often want WAF / CloudFront in front for rate limiting or IP allowlists. Skeleton only:

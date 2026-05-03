@@ -378,6 +378,101 @@ env に渡るのは ARN 文字列のみ (機密ではない)。実際の `AUTH_S
 
 Cognito 固有の手順 (Hosted UI domain / `aws cognito-idp update-user-pool-client`) はこのとき不要です。
 
+## Cognito グループによる sign-in 制限
+
+1 つの Cognito User Pool を複数アプリで共有していると、senko 以外のグループに属するユーザーも OIDC ラウンドトリップを完走できてしまいます。Auth.js セッション cookie が発行され、UI が表示されたあとに BFF 経由で senko backend を叩いた瞬間、APIGW JWT authorizer が `senko:access` を持たない access_token を 401 で返し、「ログイン直後から全機能 401」というループになります。データ漏洩は backend が最終 gate のため発生しませんが、UX が悪く、監査ログがノイズで埋まります。
+
+senko-web は Auth.js の `signIn` callback で OAuth `access_token` を decode し、cookie が発行される **前** に sign-in を reject します。非 senko ユーザーは Auth.js のエラーページに直行します。gate の有効化は 3 つの env 変数で行います ([./README.md#env-変数-web-lambda-が要求するもの](./README.md#env-変数-web-lambda-が要求するもの) も参照)。
+
+- `SENKO_AUTH_REQUIRED_SCOPE` — 必須 scope。access_token の `scope` claim (空白区切り) に含まれていなければ reject。
+- `SENKO_AUTH_REQUIRED_GROUPS` — カンマ区切り allow-list。`SENKO_AUTH_GROUPS_CLAIM` で指定した claim と ANY 一致しなければ reject。
+- `SENKO_AUTH_GROUPS_CLAIM` — groups を保持する claim 名 (例: `senko_groups`, `cognito:groups`, `groups`)。
+
+`SCOPE` と `GROUPS` を両方設定すると AND 判定になります。3 つとも未設定ならこの gate は無効化され、従来どおり全 sign-in が許可されます (後方互換)。
+
+### Pre-token Lambda レシピ (Cognito 推奨)
+
+Cognito の access_token はデフォルトでは `cognito:groups` を含みません。最も綺麗な方法は **pre-token-generation Lambda V3** で、ユーザーが対象グループに属しているときだけ access_token に `senko_groups` claim と (任意で) `senko:access` scope を注入することです。
+
+```ts
+// pre-token-generation/index.ts
+//
+// Cognito Pre-Token Generation Lambda — Trigger version V3_0
+// access_token への claim/scope 注入には V3 が必須。
+import type { PreTokenGenerationV2TriggerEvent } from 'aws-lambda'
+
+const ALLOWED_GROUPS = new Set(['senko', 'senko-admin'])
+
+export const handler = async (
+  event: PreTokenGenerationV2TriggerEvent,
+) => {
+  const userGroups = event.request.groupConfiguration.groupsToOverride ?? []
+  const matched = userGroups.filter((g) => ALLOWED_GROUPS.has(g))
+
+  // `senko_groups` は常に出力する (該当グループ無しなら空配列)。
+  // senko-web の gate を判定の唯一のソースに保つためです。
+  event.response.claimsAndScopeOverrideDetails = {
+    accessTokenGeneration: {
+      claimsToAddOrOverride: { senko_groups: matched },
+      // 同時に `senko:access` scope も付与すると、senko backend 側
+      // (APIGW JWT authorizer) でも同じ条件で gate でき、二重防御になります。
+      scopesToAdd: matched.length > 0 ? ['senko:access'] : [],
+    },
+  }
+
+  return event
+}
+```
+
+User Pool に V3 trigger として紐付けます (V1 / V2 は access_token への claim 注入をサポートしません)。
+
+```bash
+aws cognito-idp update-user-pool \
+  --user-pool-id "${USER_POOL_ID}" \
+  --lambda-config '{
+    "PreTokenGenerationConfig": {
+      "LambdaArn": "arn:aws:lambda:<region>:<acct>:function:senko-pre-token",
+      "LambdaVersion": "V3_0"
+    }
+  }'
+```
+
+senko-web Lambda 側で:
+
+```
+SENKO_AUTH_REQUIRED_SCOPE=senko:access
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=senko_groups
+```
+
+`senko` グループに属するユーザーは普通に sign-in できます。`aviary` や `haimate-app-prod` に属するユーザーは OIDC ラウンドトリップ直後に `/api/auth/error?error=AccessDenied` に飛ばされ、401 ループも cookie 発行も発生しません。
+
+### 別案: Pre-token Lambda を使わない場合
+
+Lambda を増やしたくない場合は標準の `cognito:groups` を指す方法があります。
+
+```
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=cognito:groups
+```
+
+注意: Cognito はデフォルトで `cognito:groups` を **id_token** にしか入れず、access_token には載せません。senko-web は access_token のみを読み (id_token fallback なし)、結局 access_token に claim を載せるには pre-token Lambda が必要になります。よってこの選択肢は Cognito 以外の IdP で主に役立ちます。
+
+### 別案: Keycloak / Auth0 / Authentik
+
+```
+SENKO_AUTH_REQUIRED_GROUPS=senko
+SENKO_AUTH_GROUPS_CLAIM=groups
+```
+
+IdP 側で group mapper を設定し、access_token に `groups` を含めます。Keycloak の場合は client scope の *Group Membership* マッパーで「Add to access token」を有効化し、*Token Claim Name* を `groups` にします。senko-web の gate は JSON array / カンマ区切り / 空白区切りのいずれでも parse するので、一般的な mapper 出力をそのまま受け取れます。
+
+### 設定不整合に対する fail-secure
+
+`SENKO_AUTH_REQUIRED_GROUPS` を設定したのに `SENKO_AUTH_GROUPS_CLAIM` を設定していないのは設定バグです (gate が判定不能)。senko-web Lambda は起動時に `console.warn` を出し、運用者が `SENKO_AUTH_GROUPS_CLAIM` を設定するか `SENKO_AUTH_REQUIRED_GROUPS` を外すまで **すべての sign-in を reject** します (fail-secure)。CloudWatch Logs で `[auth/gate] SENKO_AUTH_REQUIRED_GROUPS is set but SENKO_AUTH_GROUPS_CLAIM is not` という行を監視してください。
+
+Reject 時のログは `[auth/gate] sign-in rejected reason=… email=… …` 形式で、email の local part はマスクされます (`a***@example.com`)。access_token そのものはログに出ません。
+
 ## 任意: WAF / CloudFront を前段に足す
 
 本番運用ではレート制限や IP 制限のために WAF / CloudFront を被せたくなることがあります。骨子のみ示します。
