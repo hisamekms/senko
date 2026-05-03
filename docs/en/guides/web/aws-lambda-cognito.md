@@ -356,6 +356,7 @@ Despite the name, `unsafeUnwrap()` does **not** materialize the literal in the t
 
 ## Common failures and fixes
 
+- **Sign-in callback returns 500 with `error=invalid_request&error_description=invalid_scope`** — Cognito Hosted UI rejects senko-web's default OIDC scope set (`openid profile email offline_access`) because Cognito User Pool only accepts built-in scopes (`openid` / `profile` / `email` / `phone` / `aws.cognito.signin.user.admin`) and Resource-server custom scopes (`<resource-id>/<scope-name>`); the bare `offline_access` standard scope is unsupported. **Fix**: set env `AUTH_OIDC_SCOPES="openid profile email"`. Cognito issues refresh tokens by default without `offline_access`, so refresh-token rotation continues to work ([background](../../../knowledge/cognito-offline-access-unsupported.md)).
 - **`redirect_uri_mismatch`** — The callback URL registered with Cognito does not match what Auth.js requests, exact-match (scheme + host + port + path). Auth.js's OIDC provider id is hard-coded to `oidc`, so the callback path is **always** `/api/auth/callback/oidc`.
 - **Lambda fails at startup with `AUTH_SECRET is required`** — The Secrets Manager value is empty, the Lambda role lacks `secretsmanager:GetSecretValue`, or the ARN string has a typo. Run `aws lambda get-function-configuration --function-name <fn>` and verify env resolution.
 - **`AUTH_URL must be an HTTPS URL` / `AUTH_OIDC_ISSUER must be an HTTPS URL`** — Startup fail-fast added in Task #406. The HTTP API GW `execute-api` domain is HTTPS by default, so the GW URL works as-is.

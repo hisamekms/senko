@@ -45,7 +45,8 @@ export async function getAuthConfig(): Promise<StartAuthJSConfig> {
     checks: ['pkce', 'state', 'nonce'],
     authorization: {
       params: {
-        scope: 'openid profile email offline_access',
+        scope:
+          process.env.AUTH_OIDC_SCOPES ?? 'openid profile email offline_access',
       },
     },
   }

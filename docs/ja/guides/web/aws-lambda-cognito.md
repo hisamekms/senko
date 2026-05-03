@@ -358,6 +358,7 @@ env に渡るのは ARN 文字列のみ (機密ではない)。実際の `AUTH_S
 
 ## よくある失敗とその対処
 
+- **sign-in callback が `error=invalid_request&error_description=invalid_scope` で 500** — senko-web の OIDC scope default (`openid profile email offline_access`) を Cognito Hosted UI が `invalid_scope` で拒否しています。Cognito User Pool の OAuth scope は built-in (`openid` / `profile` / `email` / `phone` / `aws.cognito.signin.user.admin`) と Resource server の custom scope (`<resource-id>/<scope-name>` 形式) のみ対応で、`offline_access` 標準スコープは受け付けません。**対処**: env `AUTH_OIDC_SCOPES="openid profile email"` を設定。Cognito は `offline_access` 指定なしでも default で refresh token を発行するため、refresh token rotation は引き続き動作します ([背景](../../../knowledge/cognito-offline-access-unsupported.md))。
 - **`redirect_uri_mismatch`** — Cognito 側で登録した callback URL と Auth.js が要求する URL が完全一致していません (`scheme + host + port + path` まで)。Auth.js の OIDC provider id は `oidc` 固定なので、callback path は **必ず** `/api/auth/callback/oidc` になります。
 - **Lambda 起動時に `AUTH_SECRET is required in production` で fail-fast** — `AUTH_SECRET` / `AUTH_SECRET_ARN` のどちらも未設定。`aws lambda get-function-configuration --function-name <fn>` で env が渡っているか確認。
 - **`AUTH_SECRET_ARN does not look like a Secrets Manager ARN` で fail-fast** — ARN 文字列が typo (例: `arn:aws:s3:...`)。期待形式は `arn:aws:secretsmanager:<region>:<account-id>:secret:<name>`。

@@ -51,6 +51,7 @@ senko-web ランタイムが起動時に参照する環境変数の正典リス�
 | `AUTH_OIDC_CLIENT_SECRET` | ✅※ | `(Secrets Manager 等から注入)` | OIDC アプリクライアントシークレット。`AUTH_OIDC_CLIENT_SECRET_ARN` を使う場合は不要 |
 | `AUTH_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
 | `AUTH_OIDC_CLIENT_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_OIDC_CLIENT_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
+| `AUTH_OIDC_SCOPES` | — | `openid profile email` | OIDC authorize/token request の scope を上書き。未設定時の default は `openid profile email offline_access`。Cognito User Pool は bare `offline_access` を拒否するため `"openid profile email"` を設定する ([cognito-offline-access-unsupported](../../../knowledge/cognito-offline-access-unsupported.md)) |
 
 > `AUTH_URL` と `AUTH_OIDC_ISSUER` は **HTTPS スキーム必須**。`http://` を渡すと起動時に fail-fast する。
 >

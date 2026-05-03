@@ -49,6 +49,7 @@ Canonical list of the environment variables senko-web reads at startup.
 | `AUTH_OIDC_ISSUER` | ✅ | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` | OIDC IdP issuer URL |
 | `AUTH_OIDC_CLIENT_ID` | ✅ | `(IdP app client ID)` | OIDC application client ID |
 | `AUTH_OIDC_CLIENT_SECRET` | ✅ | `(inject from Secrets Manager etc.)` | OIDC application client secret |
+| `AUTH_OIDC_SCOPES` | — | `openid profile email` | Overrides the OIDC scope set used in authorize/token requests. Default (unset): `openid profile email offline_access`. Cognito User Pool rejects bare `offline_access`; Cognito deployments must set this to `"openid profile email"` ([cognito-offline-access-unsupported](../../../knowledge/cognito-offline-access-unsupported.md)) |
 
 > `AUTH_URL` and `AUTH_OIDC_ISSUER` **must use HTTPS**. Passing `http://` triggers fail-fast at startup.
 

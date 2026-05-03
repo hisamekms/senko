@@ -15,6 +15,7 @@ interface RefreshDeps {
   getTokenEndpoint?: () => Promise<string | null>
   clientId?: string
   clientSecret?: string
+  scope?: string
 }
 
 interface TokenResponse {
@@ -32,6 +33,10 @@ export async function refreshAccessToken(
   const clientId = deps.clientId ?? process.env.AUTH_OIDC_CLIENT_ID
   const clientSecret =
     deps.clientSecret ?? (await resolveSecret('AUTH_OIDC_CLIENT_SECRET'))
+  const scope =
+    deps.scope ??
+    process.env.AUTH_OIDC_SCOPES ??
+    'openid profile email offline_access'
 
   if (!clientId || !clientSecret) return { ok: false }
 
@@ -41,7 +46,7 @@ export async function refreshAccessToken(
   const body = new URLSearchParams({
     grant_type: 'refresh_token',
     refresh_token: refreshToken,
-    scope: 'openid profile email offline_access',
+    scope,
   })
 
   const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64')

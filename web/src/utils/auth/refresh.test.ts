@@ -120,6 +120,51 @@ describe('refreshAccessToken', () => {
     expect(result).toEqual({ ok: false })
   })
 
+  it('uses RefreshDeps.scope when provided (overrides env and default)', async () => {
+    const fetchImpl = makeFetchOk({ access_token: 'a', expires_in: 60 })
+    const prevEnv = process.env.AUTH_OIDC_SCOPES
+    process.env.AUTH_OIDC_SCOPES = 'env-scope-should-be-ignored'
+    try {
+      await refreshAccessToken('the-refresh', {
+        ...baseDeps,
+        fetchImpl,
+        scope: 'openid profile email',
+      })
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.AUTH_OIDC_SCOPES
+      } else {
+        process.env.AUTH_OIDC_SCOPES = prevEnv
+      }
+    }
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    const body = init.body as URLSearchParams
+    expect(body.get('scope')).toBe('openid profile email')
+  })
+
+  it('falls back to AUTH_OIDC_SCOPES env when deps.scope is unset', async () => {
+    const fetchImpl = makeFetchOk({ access_token: 'a', expires_in: 60 })
+    const prevEnv = process.env.AUTH_OIDC_SCOPES
+    process.env.AUTH_OIDC_SCOPES = 'openid profile email'
+    try {
+      await refreshAccessToken('the-refresh', {
+        ...baseDeps,
+        fetchImpl,
+      })
+    } finally {
+      if (prevEnv === undefined) {
+        delete process.env.AUTH_OIDC_SCOPES
+      } else {
+        process.env.AUTH_OIDC_SCOPES = prevEnv
+      }
+    }
+
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit]
+    const body = init.body as URLSearchParams
+    expect(body.get('scope')).toBe('openid profile email')
+  })
+
   it('sends client_secret_basic Authorization header and form-urlencoded body', async () => {
     const fetchImpl = makeFetchOk({ access_token: 'a', expires_in: 60 })
     await refreshAccessToken('the-refresh', {
