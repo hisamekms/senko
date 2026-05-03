@@ -33,7 +33,7 @@ jobs:
       # same commit). The senko binary is built from source via `mise run build`.
       MISE_DISABLE_TOOLS: github:hisamekms/senko
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: jdx/mise-action@v2
 
