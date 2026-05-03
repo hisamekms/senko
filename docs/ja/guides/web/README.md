@@ -80,6 +80,7 @@ senko-web ランタイムは Lambda で `Content-Security-Policy` / `Strict-Tran
 | `CSP_EXTRA_SCRIPT_SRC` | `script-src` に追加する origin | `https://cdn.example.com` |
 | `CSP_EXTRA_STYLE_SRC` | `style-src` に追加する origin | `https://fonts.googleapis.com` |
 | `CSP_EXTRA_FONT_SRC` | `font-src` に追加する origin | `https://fonts.gstatic.com` |
+| `CSP_EXTRA_FORM_ACTION` | `form-action` に追加する origin (OIDC Hosted UI 等の form POST リダイレクト先 IdP を許可) | `https://auth.example.com` |
 | `HSTS_DISABLED` | `true` で Lambda は `Strict-Transport-Security` を一切出さない (CloudFront 等の前段に任せる用) | `true` |
 | `HSTS_MAX_AGE` | HSTS の `max-age` を秒単位で上書き (デフォルト `31536000` = 1年) | `63072000` |
 | `HSTS_PRELOAD` | `true` で HSTS に `; preload` を付与 (HSTS preload list 申請時) | `true` |
@@ -124,7 +125,17 @@ CSP_EXTRA_CONNECT_SRC=https://api.example.com, https://logs.example.com
 CSP_EXTRA_IMG_SRC=https://images.example.com
 ```
 
-### 運用例 4: HSTS preload list 申請
+### 運用例 4: OIDC Hosted UI への sign-in (form POST → IdP redirect)
+
+`/api/auth/signin/oidc` のような form POST が 302 で IdP の認可エンドポイント (Cognito Hosted UI 等) にリダイレクトされる構成では、CSP `form-action` ディレクティブが **redirect chain 全体** を検証する (CSP Level 3 仕様)。`'self'` だけでは 302 のリダイレクト先が違反となり、enforce モードで block される。IdP の domain (Hosted UI domain) を `CSP_EXTRA_FORM_ACTION` で許可する。
+
+```bash
+CSP_EXTRA_FORM_ACTION=https://auth.platform.example.com
+```
+
+issuer (`cognito-idp.<region>.amazonaws.com/<poolId>`) と Hosted UI domain (`auth.example.com`) は別物のため、issuer から自動派生はできない。明示的に Hosted UI domain を設定すること。詳細は `docs/knowledge/csp-form-action-redirect-chain.md` を参照。
+
+### 運用例 5: HSTS preload list 申請
 
 Chromium の HSTS preload list 申請には `max-age >= 31536000` (1年) と `; preload` が必須。実運用では 2 年程度を推奨。
 

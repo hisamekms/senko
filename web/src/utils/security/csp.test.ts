@@ -288,6 +288,31 @@ describe('CSP_EXTRA_* (additional origins)', () => {
       "connect-src 'self' ws: wss: https://api.example.com",
     )
   })
+
+  it("appends a single extra origin to form-action after 'self'", () => {
+    const csp = buildCspHeader({
+      nonce: NONCE,
+      isDev: false,
+      cspExtra: { 'form-action': ['https://auth.example.com'] },
+    })
+    expect(csp).toContain("form-action 'self' https://auth.example.com")
+  })
+
+  it("appends multiple extra origins to form-action after 'self'", () => {
+    const csp = buildCspHeader({
+      nonce: NONCE,
+      isDev: false,
+      cspExtra: {
+        'form-action': [
+          'https://auth.example.com',
+          'https://auth2.example.com',
+        ],
+      },
+    })
+    expect(csp).toContain(
+      "form-action 'self' https://auth.example.com https://auth2.example.com",
+    )
+  })
 })
 
 describe('HSTS env handling', () => {
@@ -389,6 +414,16 @@ describe('header injection sanitization', () => {
     })
     expect(opts.cspExtra).toBeUndefined()
   })
+
+  it('strips ; \\r \\n from CSP_EXTRA_FORM_ACTION tokens', () => {
+    const opts = parseSecurityHeadersEnv({
+      CSP_EXTRA_FORM_ACTION: 'https://auth.example.com;\r\nattack',
+    })
+    expect(opts.cspExtra?.['form-action']).toEqual([
+      'https://auth.example.com',
+      'attack',
+    ])
+  })
 })
 
 describe('parseSecurityHeadersEnv', () => {
@@ -455,19 +490,21 @@ describe('parseSecurityHeadersEnv', () => {
     ])
   })
 
-  it('maps all five CSP_EXTRA_* env keys', () => {
+  it('maps all CSP_EXTRA_* env keys', () => {
     const opts = parseSecurityHeadersEnv({
       CSP_EXTRA_CONNECT_SRC: 'https://a.example.com',
       CSP_EXTRA_IMG_SRC: 'https://b.example.com',
       CSP_EXTRA_SCRIPT_SRC: 'https://c.example.com',
       CSP_EXTRA_STYLE_SRC: 'https://d.example.com',
       CSP_EXTRA_FONT_SRC: 'https://e.example.com',
+      CSP_EXTRA_FORM_ACTION: 'https://f.example.com',
     })
     expect(opts.cspExtra?.['connect-src']).toEqual(['https://a.example.com'])
     expect(opts.cspExtra?.['img-src']).toEqual(['https://b.example.com'])
     expect(opts.cspExtra?.['script-src']).toEqual(['https://c.example.com'])
     expect(opts.cspExtra?.['style-src']).toEqual(['https://d.example.com'])
     expect(opts.cspExtra?.['font-src']).toEqual(['https://e.example.com'])
+    expect(opts.cspExtra?.['form-action']).toEqual(['https://f.example.com'])
   })
 })
 

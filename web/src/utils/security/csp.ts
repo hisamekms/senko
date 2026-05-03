@@ -26,6 +26,7 @@ export const CSP_EXTRA_DIRECTIVES = [
   'script-src',
   'style-src',
   'font-src',
+  'form-action',
 ] as const
 
 export type CspExtraDirective = (typeof CSP_EXTRA_DIRECTIVES)[number]
@@ -133,7 +134,7 @@ export function buildCspHeader({
     "frame-ancestors 'none'",
     "base-uri 'self'",
     "object-src 'none'",
-    "form-action 'self'",
+    appendExtras("form-action 'self'", cspExtra?.['form-action']),
   ]
   if (cspReportUri) {
     const safe = sanitizeReportUri(cspReportUri)
@@ -212,6 +213,7 @@ export function parseSecurityHeadersEnv(
     'script-src': 'CSP_EXTRA_SCRIPT_SRC',
     'style-src': 'CSP_EXTRA_STYLE_SRC',
     'font-src': 'CSP_EXTRA_FONT_SRC',
+    'form-action': 'CSP_EXTRA_FORM_ACTION',
   }
   for (const directive of CSP_EXTRA_DIRECTIVES) {
     const tokens = parseExtraList(env[extraEnvMap[directive]])
