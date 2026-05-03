@@ -170,7 +170,7 @@ macro_rules! emit_task_event {
 }
 
 use std::cell::RefCell;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use opentelemetry::InstrumentationScope;
 use opentelemetry::logs::LogRecord as _;
@@ -288,6 +288,45 @@ impl LogProcessor for BusinessAttributesProcessor {
                 }
             });
         }
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        Ok(())
+    }
+
+    fn shutdown_with_timeout(&self, _timeout: Duration) -> OTelSdkResult {
+        Ok(())
+    }
+}
+
+/// LogProcessor that ensures every LogRecord carries a non-zero
+/// `timeUnixNano` (= `LogRecord.timestamp`) for OTLP export.
+///
+/// `OpenTelemetryTracingBridge::on_event` does not call
+/// `LogRecord::set_timestamp`, and `SdkLogger::emit` only fills
+/// `observed_timestamp`. Without this processor, every record exported
+/// via OTLP would be stamped `1970-01-01` (`timeUnixNano = 0`), breaking
+/// time-series displays that key on `LogRecord.time` (Grafana Loki,
+/// most APM vendors).
+///
+/// Wired BEFORE the export processor in `SdkLoggerProvider::builder()`.
+/// Applies to ALL records (target-agnostic) — both `senko_business`
+/// events and infrastructure `tracing::info!` / `warn!` records.
+///
+/// Mirroring `observed_timestamp` requires no syscall: the SDK's
+/// `Logger::emit` populates `observed_timestamp` with `now()` immediately
+/// before invoking processors. The `SystemTime::now()` fallback is
+/// defensive only — under normal SDK use it is unreachable.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LogTimestampProcessor;
+
+impl LogProcessor for LogTimestampProcessor {
+    fn emit(&self, record: &mut SdkLogRecord, _scope: &InstrumentationScope) {
+        if record.timestamp().is_some() {
+            return;
+        }
+        let ts = record.observed_timestamp().unwrap_or_else(SystemTime::now);
+        record.set_timestamp(ts);
     }
 
     fn force_flush(&self) -> OTelSdkResult {
@@ -694,5 +733,79 @@ mod tests {
         assert!(lookup_attr(record, "enduser.id").is_none());
         assert!(lookup_attr(record, "enduser.name").is_none());
         assert!(lookup_attr(record, "senko.operation.id").is_none());
+    }
+
+    // --- LogTimestampProcessor (task #427) --------------------------------
+
+    use std::time::{Duration, SystemTime};
+
+    use opentelemetry::InstrumentationScope;
+    use opentelemetry::logs::{LogRecord as _, Logger as _, LoggerProvider as _};
+    use opentelemetry_sdk::logs::LogProcessor as _;
+
+    use super::LogTimestampProcessor;
+
+    /// Build a fresh empty `SdkLogRecord` via the public Logger API. The
+    /// SDK does not expose a `SdkLogRecord` constructor, but `Logger::create_log_record`
+    /// returns one with all timestamp fields unset.
+    fn empty_record() -> opentelemetry_sdk::logs::SdkLogRecord {
+        let provider = SdkLoggerProvider::builder().build();
+        provider.logger("test").create_log_record()
+    }
+
+    fn test_scope() -> InstrumentationScope {
+        InstrumentationScope::builder("test").build()
+    }
+
+    #[test]
+    fn log_timestamp_copies_observed_when_timestamp_unset() {
+        let mut record = empty_record();
+        let observed = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        record.set_observed_timestamp(observed);
+
+        LogTimestampProcessor.emit(&mut record, &test_scope());
+
+        assert_eq!(
+            record.timestamp(),
+            Some(observed),
+            "timestamp must mirror observed_timestamp when previously unset"
+        );
+        // observed_timestamp is left untouched
+        assert_eq!(record.observed_timestamp(), Some(observed));
+    }
+
+    #[test]
+    fn log_timestamp_falls_back_to_now_when_both_unset() {
+        let mut record = empty_record();
+        // Sanity: both unset on a freshly created record
+        assert!(record.timestamp().is_none());
+        assert!(record.observed_timestamp().is_none());
+
+        let before = SystemTime::now();
+        LogTimestampProcessor.emit(&mut record, &test_scope());
+        let after = SystemTime::now();
+
+        let stamped = record.timestamp().expect("timestamp filled by fallback");
+        assert!(
+            stamped >= before && stamped <= after,
+            "fallback timestamp must lie within the emit window: {before:?} <= {stamped:?} <= {after:?}"
+        );
+    }
+
+    #[test]
+    fn log_timestamp_preserves_existing_timestamp() {
+        let mut record = empty_record();
+        let original = SystemTime::UNIX_EPOCH + Duration::from_secs(1_500_000_000);
+        let observed = SystemTime::UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        record.set_timestamp(original);
+        record.set_observed_timestamp(observed);
+
+        LogTimestampProcessor.emit(&mut record, &test_scope());
+
+        assert_eq!(
+            record.timestamp(),
+            Some(original),
+            "existing timestamp must not be overwritten"
+        );
     }
 }

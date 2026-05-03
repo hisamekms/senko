@@ -1113,6 +1113,7 @@ fn build_logger_provider(
             match result {
                 Ok(exporter) => {
                     let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                        .with_log_processor(crate::application::telemetry::LogTimestampProcessor)
                         .with_log_processor(
                             crate::application::telemetry::BusinessAttributesProcessor,
                         )
@@ -1143,6 +1144,7 @@ fn build_logger_provider(
         }
         "console" => {
             let provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+                .with_log_processor(crate::application::telemetry::LogTimestampProcessor)
                 .with_log_processor(crate::application::telemetry::BusinessAttributesProcessor)
                 .with_simple_exporter(opentelemetry_stdout::LogExporter::default())
                 .with_resource(resource)
