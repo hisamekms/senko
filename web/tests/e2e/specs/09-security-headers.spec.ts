@@ -107,7 +107,10 @@ test.describe('CSP enforce-readiness for own components', () => {
   test('contract fill bars on /p/1 render without inline style attribute', async ({
     page,
   }) => {
-    await page.goto('/p/1', { waitUntil: 'networkidle' })
+    // `domcontentloaded` rather than `networkidle`: the dev stack keeps
+    // long-running connections (HMR / SSE) so networkidle never settles.
+    // The explicit row wait below gates on the actual data we care about.
+    await page.goto('/p/1', { waitUntil: 'domcontentloaded' })
 
     // Wait for at least one contract row — guarantees ContractsCard has
     // finished its data fetch and rendered its fill bars.
@@ -128,7 +131,8 @@ test.describe('CSP enforce-readiness for own components', () => {
   test('contract progress bar on /p/1/contracts/1 renders without inline style attribute', async ({
     page,
   }) => {
-    await page.goto('/p/1/contracts/1', { waitUntil: 'networkidle' })
+    // See note above on `domcontentloaded` vs `networkidle`.
+    await page.goto('/p/1/contracts/1', { waitUntil: 'domcontentloaded' })
 
     // ContractProgressBar in the contract detail header.
     await expect(page.getByRole('progressbar').first()).toBeVisible()
