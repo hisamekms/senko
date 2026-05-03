@@ -2,6 +2,11 @@ import type { OIDCConfig } from '@auth/core/providers'
 import type { Profile } from '@auth/core/types'
 import type { StartAuthJSConfig } from 'start-authjs'
 
+import {
+  evaluateSignInGate,
+  loadSignInGateConfig,
+  maskEmail,
+} from '#/utils/auth/gate'
 import { refreshAccessToken } from '#/utils/auth/refresh'
 import { resolveSecret } from '#/utils/secrets/resolve'
 
@@ -35,6 +40,16 @@ export async function getAuthConfig(): Promise<StartAuthJSConfig> {
     resolveSecret('AUTH_OIDC_CLIENT_SECRET'),
   ])
 
+  const gateConfig = loadSignInGateConfig(process.env)
+  if (
+    gateConfig.requiredGroups !== null &&
+    gateConfig.groupsClaim === null
+  ) {
+    console.warn(
+      '[auth/gate] SENKO_AUTH_REQUIRED_GROUPS is set but SENKO_AUTH_GROUPS_CLAIM is not; all sign-ins will be rejected (fail-secure).',
+    )
+  }
+
   const oidcProvider: OIDCConfig<Profile> = {
     id: 'oidc',
     name: 'OIDC',
@@ -54,6 +69,28 @@ export async function getAuthConfig(): Promise<StartAuthJSConfig> {
     secret: authSecret,
     providers: [oidcProvider],
     callbacks: {
+      // signIn fires only on the initial OAuth flow. A user removed from a
+      // group mid-session keeps their Auth.js cookie until expiry — backend
+      // remains the authoritative gate (returns 401).
+      async signIn({ user, account }) {
+        const accessToken =
+          typeof account?.access_token === 'string'
+            ? account.access_token
+            : undefined
+        const result = evaluateSignInGate(gateConfig, accessToken)
+        if (!result.allowed) {
+          console.warn(
+            `[auth/gate] sign-in rejected reason=${result.reason} email=${maskEmail(user.email) ?? '<none>'} required_scope=${gateConfig.requiredScope ?? '<unset>'} required_groups=${gateConfig.requiredGroups?.join('|') ?? '<unset>'} actual_scopes=${result.details?.scopes?.join('|') ?? '<n/a>'} actual_groups=${result.details?.groups?.join('|') ?? '<n/a>'}`,
+          )
+          return false
+        }
+        if (process.env.NODE_ENV !== 'production') {
+          console.debug(
+            `[auth/gate] sign-in allowed email=${maskEmail(user.email) ?? '<none>'} required_scope=${gateConfig.requiredScope ?? '<unset>'} required_groups=${gateConfig.requiredGroups?.join('|') ?? '<unset>'}`,
+          )
+        }
+        return true
+      },
       async jwt({ token, account }) {
         if (account) {
           const expiresAtMs =

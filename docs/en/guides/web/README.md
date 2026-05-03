@@ -49,8 +49,13 @@ Canonical list of the environment variables senko-web reads at startup.
 | `AUTH_OIDC_ISSUER` | ✅ | `https://cognito-idp.<region>.amazonaws.com/<user-pool-id>` | OIDC IdP issuer URL |
 | `AUTH_OIDC_CLIENT_ID` | ✅ | `(IdP app client ID)` | OIDC application client ID |
 | `AUTH_OIDC_CLIENT_SECRET` | ✅ | `(inject from Secrets Manager etc.)` | OIDC application client secret |
+| `SENKO_AUTH_REQUIRED_SCOPE` | — | `senko:access` | Optional sign-in gate. When set, the OAuth `access_token`'s `scope` claim (space-separated) must contain this value, otherwise sign-in is rejected. |
+| `SENKO_AUTH_REQUIRED_GROUPS` | — | `senko` or `senko,senko-admin` | Optional sign-in gate. Comma-separated allow-list. The access_token claim named by `SENKO_AUTH_GROUPS_CLAIM` must intersect this list (ANY match). |
+| `SENKO_AUTH_GROUPS_CLAIM` | — | `senko_groups` / `cognito:groups` / `groups` | Optional sign-in gate. Claim key holding the user's groups. **Required when `SENKO_AUTH_REQUIRED_GROUPS` is set** — otherwise startup logs a warning and every sign-in is rejected (fail-secure). The claim value is parsed as JSON array / comma-separated / whitespace-separated. |
 
 > `AUTH_URL` and `AUTH_OIDC_ISSUER` **must use HTTPS**. Passing `http://` triggers fail-fast at startup.
+
+> The three `SENKO_AUTH_*` rows above are an **optional sign-in gate**. With all three unset (default), any authenticated IdP user can sign in. When set, the gate decodes the access_token (no signature check — the IdP already validated it) and rejects sign-ins that miss the configured scope/group. See [./aws-lambda-cognito.md#restrict-sign-in-by-cognito-group](./aws-lambda-cognito.md#restrict-sign-in-by-cognito-group) for the Cognito pre-token Lambda recipe.
 
 ## Downloading and Verifying the Tarball
 

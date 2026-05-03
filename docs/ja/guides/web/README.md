@@ -51,10 +51,15 @@ senko-web ランタイムが起動時に参照する環境変数の正典リス�
 | `AUTH_OIDC_CLIENT_SECRET` | ✅※ | `(Secrets Manager 等から注入)` | OIDC アプリクライアントシークレット。`AUTH_OIDC_CLIENT_SECRET_ARN` を使う場合は不要 |
 | `AUTH_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
 | `AUTH_OIDC_CLIENT_SECRET_ARN` | — | `arn:aws:secretsmanager:<region>:<acct>:secret:<name>` | `AUTH_OIDC_CLIENT_SECRET` の値を AWS Secrets Manager から runtime fetch する場合の ARN (※下記参照) |
+| `SENKO_AUTH_REQUIRED_SCOPE` | — | `senko:access` | 任意。設定すると、OAuth `access_token` の `scope` claim (空白区切り) にこの値が含まれない sign-in を reject する |
+| `SENKO_AUTH_REQUIRED_GROUPS` | — | `senko` または `senko,senko-admin` | 任意。カンマ区切り allow-list。`SENKO_AUTH_GROUPS_CLAIM` で指定した access_token claim と ANY 一致しない sign-in を reject する |
+| `SENKO_AUTH_GROUPS_CLAIM` | — | `senko_groups` / `cognito:groups` / `groups` | 任意。groups を保持する claim 名。**`SENKO_AUTH_REQUIRED_GROUPS` を設定するなら必須** — 未設定だと起動時に warn ログが出て全 sign-in が reject される (fail-secure)。claim 値は JSON array / カンマ区切り / 空白区切りのいずれにも対応 |
 
 > `AUTH_URL` と `AUTH_OIDC_ISSUER` は **HTTPS スキーム必須**。`http://` を渡すと起動時に fail-fast する。
 >
 > ※ AUTH_SECRET / AUTH_OIDC_CLIENT_SECRET は **どちらか一方** (生値 or `_ARN`) を必ず本番で設定する。両方未設定だと起動時に fail-fast する。
+
+> `SENKO_AUTH_*` の 3 行は **任意の sign-in gate**。3 つとも未設定 (default) なら IdP に通った全ユーザーが sign-in できる。設定した場合は access_token を decode (署名検証は IdP 済前提でスキップ) して、設定された scope / group claim を満たさない sign-in を reject する。Cognito の pre-token Lambda レシピは [./aws-lambda-cognito.md#cognito-グループによる-sign-in-制限](./aws-lambda-cognito.md#cognito-グループによる-sign-in-制限) を参照。
 
 ### Secrets Manager ARN による runtime 解決 (AWS Lambda 向け)
 
