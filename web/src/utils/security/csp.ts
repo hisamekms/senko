@@ -118,10 +118,15 @@ export function buildCspHeader({
   const imgSrc = appendExtras("img-src 'self' data:", cspExtra?.['img-src'])
   const fontSrc = appendExtras("font-src 'self' data:", cspExtra?.['font-src'])
 
+  // Allow ark-ui inline `style="..."` attributes (visually-hidden inputs,
+  // Floating UI portal positioning) without weakening protection of
+  // <style>/<link> elements. style-src-elem is intentionally NOT emitted,
+  // so element-style sinks fall back to `style-src 'self'`.
   const directives = [
     "default-src 'self'",
     scriptSrc,
     styleSrc,
+    "style-src-attr 'unsafe-inline'",
     imgSrc,
     fontSrc,
     connectSrc,

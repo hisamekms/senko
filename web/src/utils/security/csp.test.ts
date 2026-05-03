@@ -131,18 +131,54 @@ describe('buildCspHeader (defaults)', () => {
     expect(csp).toContain("default-src 'self'")
   })
 
-  // style-src must NOT contain 'unsafe-inline' — JSX `style={...}` attributes
-  // and any other inline-style sinks are expected to be expressed as classes
-  // (Panda CSS) instead, so the directive can be locked to 'self' only.
+  // style-src (which covers <style> elements and <link rel="stylesheet">) must
+  // NOT contain 'unsafe-inline'. Senko's own JSX `style={...}` sinks have all
+  // been migrated to classes (Panda CSS), so this directive is locked to
+  // 'self' only. style-src-attr is a separate, narrower directive — see the
+  // dedicated describe block below.
   it.each([true, false])(
     'pins style-src to a single source-expression and excludes unsafe-inline (isDev=%s)',
     (isDev) => {
       const csp = buildCspHeader({ nonce: NONCE, isDev })
-      const styleSrcMatch = csp.match(/style-src ([^;]+)/)
+      // Match `style-src ` (with trailing space) so it does not also match
+      // the sibling `style-src-attr` directive.
+      const styleSrcMatch = csp.match(/(?:^|; )style-src ([^;]+)/)
       expect(styleSrcMatch).not.toBeNull()
       const styleSrcValue = styleSrcMatch![1].trim()
       expect(styleSrcValue).toBe("'self'")
       expect(styleSrcValue).not.toContain("'unsafe-inline'")
+    },
+  )
+})
+
+// style-src-attr loosens CSP for inline `style="..."` *attributes* only,
+// while leaving <style>/<link> protected by `style-src 'self'` via the
+// browser's directive-fallback rules (style-src-elem is intentionally NOT
+// emitted). The relaxation exists to accommodate ark-ui's internal
+// inline-style attributes (visually-hidden inputs, Floating UI portal
+// positioning) — see docs/knowledge/csp-style-src-attr-ark-ui.md.
+describe('buildCspHeader: style-src-attr (ark-ui inline-style relaxation)', () => {
+  it.each([true, false])(
+    "emits style-src-attr 'unsafe-inline' (isDev=%s)",
+    (isDev) => {
+      const csp = buildCspHeader({ nonce: NONCE, isDev })
+      expect(csp).toContain("style-src-attr 'unsafe-inline'")
+    },
+  )
+
+  it.each([true, false])(
+    "still emits style-src 'self' alongside style-src-attr (isDev=%s)",
+    (isDev) => {
+      const csp = buildCspHeader({ nonce: NONCE, isDev })
+      expect(csp).toContain("style-src 'self'")
+    },
+  )
+
+  it.each([true, false])(
+    'does not emit style-src-elem (so <style>/<link> fall back to style-src) (isDev=%s)',
+    (isDev) => {
+      const csp = buildCspHeader({ nonce: NONCE, isDev })
+      expect(csp).not.toContain('style-src-elem')
     },
   )
 })
