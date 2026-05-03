@@ -745,11 +745,25 @@ impl TaskOperations for RemoteTaskOperations {
         if let Some(n) = filter.limit {
             params.push(format!("limit={n}"));
         }
-        if let Some(after) = filter.after {
+        if let Some(after) = filter.after.as_ref() {
             params.push(format!(
                 "after={}",
-                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+                utf8_percent_encode(&Cursor::encode_payload(after), NON_ALPHANUMERIC)
             ));
+        }
+        // Forward sort parameters when non-default. Default values would be
+        // accepted by the upstream too, but emitting them only on demand keeps
+        // the wire log simple to read.
+        match filter.order_by {
+            crate::domain::task::TaskOrderBy::Id => {}
+            crate::domain::task::TaskOrderBy::UpdatedAt => {
+                params.push("order_by=updated_at".into())
+            }
+            crate::domain::task::TaskOrderBy::Priority => params.push("order_by=priority".into()),
+        }
+        match filter.order {
+            crate::domain::task::ListOrder::Asc => {}
+            crate::domain::task::ListOrder::Desc => params.push("order=desc".into()),
         }
 
         if !params.is_empty() {

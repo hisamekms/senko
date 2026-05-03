@@ -196,11 +196,21 @@ impl ContractOperations for RemoteContractOperations {
         if let Some(l) = filter.limit {
             params.push(format!("limit={l}"));
         }
-        if let Some(after) = filter.after {
+        if let Some(after) = filter.after.as_ref() {
             params.push(format!(
                 "after={}",
-                utf8_percent_encode(&Cursor::encode(after), NON_ALPHANUMERIC)
+                utf8_percent_encode(&Cursor::encode_payload(after), NON_ALPHANUMERIC)
             ));
+        }
+        match filter.order_by {
+            crate::domain::contract::ContractOrderBy::Id => {}
+            crate::domain::contract::ContractOrderBy::UpdatedAt => {
+                params.push("order_by=updated_at".into())
+            }
+        }
+        match filter.order {
+            crate::domain::task::ListOrder::Asc => {}
+            crate::domain::task::ListOrder::Desc => params.push("order=desc".into()),
         }
         if !params.is_empty() {
             url = format!("{url}?{}", params.join("&"));

@@ -54,13 +54,15 @@
     },
     "ready": {
       "title": "Ready tasks",
-      "empty": "No ready tasks"
+      "empty": "No ready tasks",
+      "more": "View all ready tasks"
     },
     "contracts": {
       "title": "Contracts",
       "progress": "{{done}}/{{total}}",
       "completed": "completed",
-      "empty": "No contracts yet"
+      "empty": "No contracts yet",
+      "more": "View all contracts"
     }
   },
   "tasks": {

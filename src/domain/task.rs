@@ -304,6 +304,67 @@ impl FromStr for Priority {
     }
 }
 
+/// Sort direction for list endpoints.
+///
+/// Default `Asc` keeps the historical behavior (`ORDER BY id ASC`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ListOrder {
+    #[default]
+    Asc,
+    Desc,
+}
+
+impl FromStr for ListOrder {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "asc" => Ok(ListOrder::Asc),
+            "desc" => Ok(ListOrder::Desc),
+            other => Err(DomainError::InvalidQueryParam {
+                field: "order",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+/// Sort key for `list_tasks`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TaskOrderBy {
+    #[default]
+    Id,
+    UpdatedAt,
+    Priority,
+}
+
+impl FromStr for TaskOrderBy {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "id" => Ok(TaskOrderBy::Id),
+            "updated_at" => Ok(TaskOrderBy::UpdatedAt),
+            "priority" => Ok(TaskOrderBy::Priority),
+            other => Err(DomainError::InvalidQueryParam {
+                field: "order_by",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+impl TaskOrderBy {
+    /// Short label used in `CursorMismatch` errors.
+    pub fn cursor_kind(&self) -> &'static str {
+        match self {
+            TaskOrderBy::Id => "id",
+            TaskOrderBy::UpdatedAt => "updated_at",
+            TaskOrderBy::Priority => "priority",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DodItem {
     content: String,
@@ -1224,7 +1285,13 @@ pub struct ListTasksFilter {
     pub id_min: Option<TaskId>,
     pub id_max: Option<TaskId>,
     pub limit: Option<u32>,
-    pub after: Option<TaskId>,
+    /// Composite cursor pinned to the same `order_by` axis as this filter.
+    /// `Id` for `order_by=Id`, `Tagged::UpdatedAt` for `order_by=UpdatedAt`, etc.
+    /// Mismatch is a programmer error caught by the handler before reaching the
+    /// repository.
+    pub after: Option<crate::domain::pagination::CursorPayload>,
+    pub order_by: TaskOrderBy,
+    pub order: ListOrder,
 }
 
 pub type ListTasksPage = crate::domain::pagination::ListPage<Task>;

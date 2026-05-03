@@ -1308,6 +1308,10 @@ export interface operations {
                 tag?: string[];
                 limit?: number;
                 after?: string;
+                /** @description Sort key. One of `id` (default), `updated_at`. */
+                order_by?: string;
+                /** @description Sort direction. One of `asc` (default), `desc`. */
+                order?: string;
             };
             header?: never;
             path: {
@@ -2191,6 +2195,10 @@ export interface operations {
                 id_max?: components["schemas"]["TaskId"];
                 limit?: number;
                 after?: string;
+                /** @description Sort key. One of `id` (default), `updated_at`, `priority`. */
+                order_by?: string;
+                /** @description Sort direction. One of `asc` (default), `desc`. */
+                order?: string;
             };
             header?: never;
             path: {

@@ -459,12 +459,49 @@ impl UpdateContractArrayParams {
 
 // --- List filters ---
 
+/// Sort key for `list_contracts`. `priority` is intentionally omitted (contracts
+/// have no priority column).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContractOrderBy {
+    #[default]
+    Id,
+    UpdatedAt,
+}
+
+impl std::str::FromStr for ContractOrderBy {
+    type Err = crate::domain::error::DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "id" => Ok(ContractOrderBy::Id),
+            "updated_at" => Ok(ContractOrderBy::UpdatedAt),
+            other => Err(crate::domain::error::DomainError::InvalidQueryParam {
+                field: "order_by",
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+impl ContractOrderBy {
+    /// Short label used in `CursorMismatch` errors.
+    pub fn cursor_kind(&self) -> &'static str {
+        match self {
+            ContractOrderBy::Id => "id",
+            ContractOrderBy::UpdatedAt => "updated_at",
+        }
+    }
+}
+
 /// Filter / paging inputs for `list_contracts`.
 #[derive(Clone, Default)]
 pub struct ListContractsFilter {
     pub tags: Vec<String>,
     pub limit: Option<u32>,
-    pub after: Option<ContractId>,
+    /// Composite cursor pinned to the same `order_by` axis as this filter.
+    pub after: Option<crate::domain::pagination::CursorPayload>,
+    pub order_by: ContractOrderBy,
+    pub order: crate::domain::task::ListOrder,
 }
 
 /// Filter / paging inputs for `list_contract_notes`.

@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.42.0"
+    "version": "0.45.0"
   },
   "paths": {
     "/api/v1/config": {
@@ -440,6 +440,24 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order_by",
+            "in": "query",
+            "description": "Sort key. One of `id` (default), `updated_at`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Sort direction. One of `asc` (default), `desc`.",
             "required": false,
             "schema": {
               "type": "string"
@@ -1959,6 +1977,24 @@
           {
             "name": "after",
             "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order_by",
+            "in": "query",
+            "description": "Sort key. One of `id` (default), `updated_at`, `priority`.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "order",
+            "in": "query",
+            "description": "Sort direction. One of `asc` (default), `desc`.",
             "required": false,
             "schema": {
               "type": "string"

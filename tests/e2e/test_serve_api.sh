@@ -320,4 +320,97 @@ echo "=== Preview next: no candidate ==="
 STATUS_PREVIEW_EMPTY=$(api_status "$PBASE/tasks/preview-next")
 assert_eq "404" "$STATUS_PREVIEW_EMPTY" "preview-next with no eligible task returns 404"
 
+# ---------------------------------------------------------------------------
+# Sort + composite cursor coverage (Task #430)
+#
+# We use a fresh project so the rows we create have known relative ages and
+# priorities, independent of the test churn above.
+# ---------------------------------------------------------------------------
+
+echo ""
+echo "=== Sort: setup project ==="
+SORT_PROJECT=$(api_json -X POST "$BASE/projects" -d '{"name":"sort-test"}')
+SORT_PID=$(echo "$SORT_PROJECT" | jq -r '.id')
+SBASE="$BASE/projects/$SORT_PID"
+
+# Create tasks with varying priorities. Each create is a separate request so
+# created_at / updated_at advance monotonically — the *last* created row will
+# have the newest updated_at.
+SORT_T1=$(api_json -X POST "$SBASE/tasks" -d '{"title":"sort-a","priority":"P3"}' | jq -r '.id')
+SORT_T2=$(api_json -X POST "$SBASE/tasks" -d '{"title":"sort-b","priority":"P0"}' | jq -r '.id')
+SORT_T3=$(api_json -X POST "$SBASE/tasks" -d '{"title":"sort-c","priority":"P2"}' | jq -r '.id')
+
+echo ""
+echo "=== Sort: order_by=updated_at desc ==="
+SORT_RECENT=$(api_get "$SBASE/tasks?order_by=updated_at&order=desc")
+# updated_at desc → most recently created task first (sort-c, then sort-b, sort-a).
+assert_eq "sort-c" "$(echo "$SORT_RECENT" | jq -r '.items[0].title')" "updated_at desc: newest first"
+assert_eq "sort-b" "$(echo "$SORT_RECENT" | jq -r '.items[1].title')" "updated_at desc: middle"
+assert_eq "sort-a" "$(echo "$SORT_RECENT" | jq -r '.items[2].title')" "updated_at desc: oldest last"
+
+echo ""
+echo "=== Sort: order_by=priority asc puts P0 first ==="
+SORT_PRIO=$(api_get "$SBASE/tasks?order_by=priority&order=asc")
+assert_eq "sort-b" "$(echo "$SORT_PRIO" | jq -r '.items[0].title')" "priority asc: P0 first"
+assert_eq "sort-c" "$(echo "$SORT_PRIO" | jq -r '.items[1].title')" "priority asc: P2 second"
+assert_eq "sort-a" "$(echo "$SORT_PRIO" | jq -r '.items[2].title')" "priority asc: P3 last"
+
+echo ""
+echo "=== Sort: composite cursor pagination across 3 pages ==="
+PAGE1=$(api_get "$SBASE/tasks?order_by=updated_at&order=desc&limit=1")
+assert_eq "sort-c" "$(echo "$PAGE1" | jq -r '.items[0].title')" "page1 item is sort-c"
+P1_CURSOR=$(echo "$PAGE1" | jq -r '.next_cursor')
+[ "$P1_CURSOR" != "null" ] || { echo "FAIL: page1 next_cursor null"; exit 1; }
+# Cursor must be base64 of {"k":"updated_at","v":...,"id":...}.
+DECODED=$(printf '%s' "$P1_CURSOR" | base64 -d 2>/dev/null || true)
+echo "$DECODED" | jq -e '.k == "updated_at" and (.id | type == "number") and (.v | type == "string")' >/dev/null \
+  || { echo "FAIL: composite cursor shape unexpected: $DECODED"; exit 1; }
+echo "PASS: composite cursor has shape {k:updated_at,v,id}"
+
+PAGE2=$(api_get "$SBASE/tasks?order_by=updated_at&order=desc&limit=1&after=$P1_CURSOR")
+assert_eq "sort-b" "$(echo "$PAGE2" | jq -r '.items[0].title')" "page2 item is sort-b"
+P2_CURSOR=$(echo "$PAGE2" | jq -r '.next_cursor')
+PAGE3=$(api_get "$SBASE/tasks?order_by=updated_at&order=desc&limit=1&after=$P2_CURSOR")
+assert_eq "sort-a" "$(echo "$PAGE3" | jq -r '.items[0].title')" "page3 item is sort-a"
+assert_eq "null" "$(echo "$PAGE3" | jq -r '.next_cursor')" "page3 has no next_cursor"
+
+echo ""
+echo "=== Sort: cursor mismatch returns 400 ==="
+# Build an id-only cursor: base64({"id": 1}).
+ID_ONLY_CURSOR=$(printf '{"id":1}' | base64 | tr '+/' '-_' | tr -d '=')
+STATUS_MISMATCH=$(api_status "$SBASE/tasks?order_by=updated_at&after=$ID_ONLY_CURSOR")
+assert_eq "400" "$STATUS_MISMATCH" "id-only cursor with order_by=updated_at returns 400"
+
+echo ""
+echo "=== Sort: invalid order_by value returns 400 ==="
+STATUS_BAD_ORDER_BY=$(api_status "$SBASE/tasks?order_by=garbage")
+assert_eq "400" "$STATUS_BAD_ORDER_BY" "unknown order_by returns 400"
+
+echo ""
+echo "=== Sort: invalid order direction returns 400 ==="
+STATUS_BAD_ORDER=$(api_status "$SBASE/tasks?order=ascending")
+assert_eq "400" "$STATUS_BAD_ORDER" "unknown order returns 400"
+
+echo ""
+echo "=== Sort: contracts order_by=updated_at desc ==="
+api_json -X POST "$SBASE/contracts" -d '{"title":"contract-a"}' >/dev/null
+api_json -X POST "$SBASE/contracts" -d '{"title":"contract-b"}' >/dev/null
+api_json -X POST "$SBASE/contracts" -d '{"title":"contract-c"}' >/dev/null
+CONTRACTS_RECENT=$(api_get "$SBASE/contracts?order_by=updated_at&order=desc")
+assert_eq "contract-c" "$(echo "$CONTRACTS_RECENT" | jq -r '.items[0].title')" "contracts updated_at desc: newest first"
+assert_eq "contract-a" "$(echo "$CONTRACTS_RECENT" | jq -r '.items[2].title')" "contracts updated_at desc: oldest last"
+
+echo ""
+echo "=== Sort: contracts order_by=priority returns 400 ==="
+STATUS_CONTRACTS_PRIORITY=$(api_status "$SBASE/contracts?order_by=priority")
+assert_eq "400" "$STATUS_CONTRACTS_PRIORITY" "contracts reject order_by=priority"
+
+echo ""
+echo "=== Sort: legacy id-only cursor still works for default order_by=id ==="
+ID_PAGE1=$(api_get "$SBASE/tasks?limit=1")
+ID_CURSOR=$(echo "$ID_PAGE1" | jq -r '.next_cursor')
+ID_PAGE2=$(api_get "$SBASE/tasks?limit=1&after=$ID_CURSOR")
+# Default order_by=id ASC; second page should be sort-b (id 2) then sort-c (id 3).
+assert_eq "sort-b" "$(echo "$ID_PAGE2" | jq -r '.items[0].title')" "default-order pagination still works"
+
 test_summary

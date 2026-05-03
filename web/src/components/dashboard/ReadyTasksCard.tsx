@@ -1,11 +1,14 @@
 import { useTranslation } from 'react-i18next'
 
 import { DashboardCard } from '#/components/dashboard/DashboardCard'
+import { fetchReadyTasks } from '#/components/dashboard/fetchers'
 import { useApi } from '#/hooks/useApi'
-import { apiClient, collectAll, type components } from '#/api'
+import { type components } from '#/api'
 import { css } from '../../../styled-system/css'
 
 type Task = components['schemas']['TaskResponse']
+
+const READY_LIMIT = 20
 
 const listStyle = css({
   display: 'flex',
@@ -40,6 +43,19 @@ const priorityStyle = css({
   fontWeight: 'semibold',
 })
 
+const moreLinkStyle = css({
+  display: 'block',
+  marginTop: '2',
+  paddingX: '2',
+  paddingY: '1',
+  fontSize: 'xs',
+  color: 'fg',
+  opacity: '0.7',
+  textDecoration: 'none',
+  textAlign: 'right',
+  _hover: { opacity: '1', textDecoration: 'underline' },
+})
+
 interface ReadyTasksCardProps {
   projectId: number
 }
@@ -48,24 +64,12 @@ export function ReadyTasksCard({ projectId }: ReadyTasksCardProps) {
   const { t } = useTranslation()
 
   const { data, error, loading, reload } = useApi<Task[]>(
-    () =>
-      collectAll<Task>(async (cursor) => {
-        const { data, error } = await apiClient.GET(
-          '/api/v1/projects/{project_id}/tasks',
-          {
-            params: {
-              path: { project_id: projectId },
-              query: { ready: true, ...(cursor ? { after: cursor } : {}) },
-            },
-          },
-        )
-        if (error || !data) throw new Error('Failed to load ready tasks')
-        return { items: data.items, next_cursor: data.next_cursor ?? null }
-      }),
+    () => fetchReadyTasks(projectId),
     [projectId],
   )
 
   const tasks = data ?? []
+  const truncated = tasks.length === READY_LIMIT
 
   return (
     <DashboardCard
@@ -93,6 +97,15 @@ export function ReadyTasksCard({ projectId }: ReadyTasksCardProps) {
           </li>
         ))}
       </ul>
+      {truncated ? (
+        <a
+          href={`/p/${projectId}/tasks?ready=true`}
+          className={moreLinkStyle}
+          data-testid="ready-more-link"
+        >
+          {t('dashboard.ready.more')}
+        </a>
+      ) : null}
     </DashboardCard>
   )
 }

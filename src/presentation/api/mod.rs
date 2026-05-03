@@ -41,19 +41,20 @@ use crate::application::{
 use crate::bootstrap;
 use crate::bootstrap::AuthMode;
 use crate::domain::contract::{
-    ContractId, CreateContractParams, ListContractNotesFilter, ListContractsFilter,
-    UpdateContractArrayParams, UpdateContractParams,
+    ContractId, ContractOrderBy, CreateContractParams, ListContractNotesFilter,
+    ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{CreateMetadataFieldParams, ListMetadataFieldsFilter};
-use crate::domain::pagination::Cursor;
+use crate::domain::pagination::{Cursor, CursorPayload};
 use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
     UpdateProjectParams,
 };
 use crate::domain::task::{
-    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter,
-    MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListOrder, ListTaskDepsFilter,
+    ListTasksFilter, MetadataUpdate, Priority, Task, TaskId, TaskOrderBy, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, ListSessionsFilter,
@@ -267,6 +268,35 @@ impl From<AuthError> for ApiError {
     }
 }
 
+/// Convert a `DomainError` directly into an `ApiError`. Use when the call site
+/// has the typed error already (e.g. `FromStr` results) and shouldn't be forced
+/// through `anyhow::Error` first.
+fn classify_domain(e: DomainError) -> ApiError {
+    classify_error(anyhow::Error::from(e))
+}
+
+/// Decode a base64 cursor string and verify its kind matches the requested
+/// `order_by`. Returns `None` if `raw` is `None`.
+///
+/// `expected_kind` is one of `"id"`, `"updated_at"`, `"priority"` —
+/// see `TaskOrderBy::cursor_kind` / `ContractOrderBy::cursor_kind`.
+fn decode_cursor_for_order(
+    raw: Option<&str>,
+    expected_kind: &'static str,
+) -> Result<Option<CursorPayload>, ApiError> {
+    let Some(raw) = raw else { return Ok(None) };
+    let payload =
+        Cursor::decode_payload(raw).map_err(|_| ApiError::BadRequest("invalid cursor".into()))?;
+    let got = payload.kind();
+    if got != expected_kind {
+        return Err(classify_domain(DomainError::CursorMismatch {
+            expected: expected_kind,
+            got,
+        }));
+    }
+    Ok(Some(payload))
+}
+
 fn classify_error(e: anyhow::Error) -> ApiError {
     if e.downcast_ref::<crate::application::port::auth::AuthError>()
         .is_some()
@@ -312,6 +342,8 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             | DomainError::InvalidMetadataFieldType { .. }
             | DomainError::InvalidMetadataFieldName { .. }
             | DomainError::InvalidCursor
+            | DomainError::CursorMismatch { .. }
+            | DomainError::InvalidQueryParam { .. }
             | DomainError::ValidationError { .. } => ApiError::BadRequest(msg),
 
             DomainError::InvalidStatusTransition { .. }
@@ -437,6 +469,14 @@ struct ListTasksQuery {
     limit: Option<u32>,
     #[serde(default)]
     after: Option<String>,
+    /// Sort key. One of `id` (default), `updated_at`, `priority`.
+    #[serde(default)]
+    #[param(inline)]
+    order_by: Option<String>,
+    /// Sort direction. One of `asc` (default), `desc`.
+    #[serde(default)]
+    #[param(inline)]
+    order: Option<String>,
 }
 
 // --- Pagination query structs (task #337) ---
@@ -450,6 +490,14 @@ struct ListContractsQuery {
     limit: Option<u32>,
     #[serde(default)]
     after: Option<String>,
+    /// Sort key. One of `id` (default), `updated_at`.
+    #[serde(default)]
+    #[param(inline)]
+    order_by: Option<String>,
+    /// Sort direction. One of `asc` (default), `desc`.
+    #[serde(default)]
+    #[param(inline)]
+    order: Option<String>,
 }
 
 #[derive(Deserialize, IntoParams)]
@@ -1235,12 +1283,17 @@ async fn list_tasks(
         ));
     }
     let effective_limit = query.limit.or(Some(50));
-    let after = match query.after.as_deref() {
-        Some(raw) => {
-            Some(Cursor::decode(raw).map_err(|_| ApiError::BadRequest("invalid cursor".into()))?)
-        }
-        None => None,
+
+    let order_by: TaskOrderBy = match query.order_by.as_deref() {
+        Some(s) => s.parse().map_err(classify_domain)?,
+        None => TaskOrderBy::default(),
     };
+    let order: ListOrder = match query.order.as_deref() {
+        Some(s) => s.parse().map_err(classify_domain)?,
+        None => ListOrder::default(),
+    };
+
+    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind())?;
 
     let (assignee_user_id, assignee_self) =
         resolve_query_assignee_self(query.assignee_user_id, &auth)?;
@@ -1259,6 +1312,8 @@ async fn list_tasks(
         id_max: query.id_max,
         limit: effective_limit,
         after,
+        order_by,
+        order,
     };
     let page = state
         .task_service
@@ -2111,11 +2166,32 @@ async fn list_contracts(
     Query(query): Query<ListContractsQuery>,
 ) -> Result<Json<ListContractsPageResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::View).await?;
-    let (limit, after) = decode_page_inputs::<ContractId>(query.limit, query.after.as_deref())?;
+    if let Some(n) = query.limit
+        && !(1..=200).contains(&n)
+    {
+        return Err(ApiError::BadRequest(
+            "limit must be between 1 and 200".into(),
+        ));
+    }
+    let limit = query.limit.or(Some(50));
+
+    let order_by: ContractOrderBy = match query.order_by.as_deref() {
+        Some(s) => s.parse().map_err(classify_domain)?,
+        None => ContractOrderBy::default(),
+    };
+    let order: ListOrder = match query.order.as_deref() {
+        Some(s) => s.parse().map_err(classify_domain)?,
+        None => ListOrder::default(),
+    };
+
+    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind())?;
+
     let filter = ListContractsFilter {
         tags: query.tag,
         limit,
         after,
+        order_by,
+        order,
     };
     let page = state
         .contract_service

@@ -23,19 +23,20 @@ use crate::bootstrap::{
     resolve_user_id,
 };
 use crate::domain::contract::{
-    ContractId, CreateContractParams, ListContractNotesFilter, ListContractsFilter,
-    UpdateContractArrayParams, UpdateContractParams,
+    ContractId, ContractOrderBy, CreateContractParams, ListContractNotesFilter,
+    ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataFieldType, validate_field_name,
 };
-use crate::domain::pagination::Cursor;
+use crate::domain::pagination::{Cursor, CursorPayload};
 use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
 };
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, ListTaskDepsFilter, ListTasksFilter, MetadataUpdate,
-    Priority, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CreateTaskParams, ListOrder, ListTaskDepsFilter, ListTasksFilter,
+    MetadataUpdate, Priority, TaskId, TaskOrderBy, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateUserParams, ListUsersFilter, UpdateUserParams, UserId,
@@ -114,6 +115,18 @@ async fn resolve_current_user_id(
         Arc::new(create_user_service(backend))
     };
     Ok(Some(resolve_user_id(&*user_ops, config).await?))
+}
+
+/// Decode an `--after` cursor that the CLI emits — always id-only because the
+/// CLI list commands do not expose `--order-by`. A composite cursor here means
+/// the user passed something the CLI cannot consume.
+fn decode_id_only_cursor(raw: &str) -> Result<CursorPayload> {
+    let payload =
+        Cursor::decode_payload(raw).map_err(|_| anyhow::anyhow!("invalid --after cursor"))?;
+    if !matches!(payload, CursorPayload::Id(_)) {
+        bail!("--after cursor is not compatible with this command (expected id-only cursor)");
+    }
+    Ok(payload)
 }
 
 fn parse_assignee_user_id(value: &str) -> Result<AssigneeUserId> {
@@ -357,10 +370,8 @@ pub async fn cmd_list(
     }
     let effective_limit = limit.or(Some(50));
 
-    let after_id = match after.as_deref() {
-        Some(raw) => {
-            Some(Cursor::decode(raw).map_err(|_| anyhow::anyhow!("invalid --after cursor"))?)
-        }
+    let after = match after.as_deref() {
+        Some(raw) => Some(decode_id_only_cursor(raw)?),
         None => None,
     };
 
@@ -377,7 +388,9 @@ pub async fn cmd_list(
         id_min,
         id_max,
         limit: effective_limit,
-        after: after_id,
+        after,
+        order_by: TaskOrderBy::default(),
+        order: ListOrder::default(),
     };
 
     let page = task_ops.list_tasks(project_id, &filter).await?;
@@ -2814,16 +2827,15 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
         }
         ContractAction::List { tag, limit, after } => {
             let after = match after.as_deref() {
-                Some(raw) => Some(
-                    Cursor::decode::<ContractId>(raw)
-                        .map_err(|_| anyhow::anyhow!("invalid --after cursor"))?,
-                ),
+                Some(raw) => Some(decode_id_only_cursor(raw)?),
                 None => None,
             };
             let filter = ListContractsFilter {
                 tags: tag.clone(),
                 limit: *limit,
                 after,
+                order_by: ContractOrderBy::default(),
+                order: ListOrder::default(),
             };
             let page = contract_ops.list_contracts(project_id, &filter).await?;
             match cli.output {

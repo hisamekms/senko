@@ -71,6 +71,15 @@ pub enum DomainError {
     #[error("invalid cursor")]
     InvalidCursor,
 
+    #[error("cursor does not match order_by: expected {expected}, got {got}")]
+    CursorMismatch {
+        expected: &'static str,
+        got: &'static str,
+    },
+
+    #[error("invalid query parameter '{field}': {value}")]
+    InvalidQueryParam { field: &'static str, value: String },
+
     #[error("{message}")]
     ValidationError { field: String, message: String },
 

@@ -54,13 +54,15 @@
     },
     "ready": {
       "title": "Ready なタスク",
-      "empty": "Ready なタスクがありません"
+      "empty": "Ready なタスクがありません",
+      "more": "すべての Ready タスクを見る"
     },
     "contracts": {
       "title": "Contract 一覧",
       "progress": "{{done}}/{{total}}",
       "completed": "完了",
-      "empty": "Contract がありません"
+      "empty": "Contract がありません",
+      "more": "すべての Contract を見る"
     }
   },
   "tasks": {

@@ -1,13 +1,12 @@
 import { useTranslation } from 'react-i18next'
 
 import { DashboardCard } from '#/components/dashboard/DashboardCard'
+import { fetchRecentTasks } from '#/components/dashboard/fetchers'
 import { useApi } from '#/hooks/useApi'
-import { apiClient, collectAll, type components } from '#/api'
+import { type components } from '#/api'
 import { css } from '../../../styled-system/css'
 
 type Task = components['schemas']['TaskResponse']
-
-const RECENT_LIMIT = 10
 
 const listStyle = css({
   display: 'flex',
@@ -64,27 +63,11 @@ export function RecentTasksCard({ projectId }: RecentTasksCardProps) {
   const { t } = useTranslation()
 
   const { data, error, loading, reload } = useApi<Task[]>(
-    () =>
-      collectAll<Task>(async (cursor) => {
-        const { data, error } = await apiClient.GET(
-          '/api/v1/projects/{project_id}/tasks',
-          {
-            params: {
-              path: { project_id: projectId },
-              query: cursor ? { after: cursor } : {},
-            },
-          },
-        )
-        if (error || !data) throw new Error('Failed to load tasks')
-        return { items: data.items, next_cursor: data.next_cursor ?? null }
-      }),
+    () => fetchRecentTasks(projectId),
     [projectId],
   )
 
-  const tasks = (data ?? [])
-    .slice()
-    .sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1))
-    .slice(0, RECENT_LIMIT)
+  const tasks = data ?? []
 
   return (
     <DashboardCard

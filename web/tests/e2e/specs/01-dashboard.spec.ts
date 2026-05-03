@@ -44,4 +44,225 @@ test.describe('Dashboard', () => {
       page.getByLabel(/toggle theme|テーマを切り替え/i),
     ).toBeVisible()
   })
+
+  // Task #430 — dashboard cards must be single-shot, not paginated loops.
+  test('cards make at most one tasks/contracts request each on load', async ({
+    page,
+  }) => {
+    const taskRequests: string[] = []
+    const contractRequests: string[] = []
+    page.on('request', (req) => {
+      const url = new URL(req.url())
+      if (url.pathname === '/api/senko/api/v1/projects/1/tasks') {
+        taskRequests.push(url.search)
+      } else if (url.pathname === '/api/senko/api/v1/projects/1/contracts') {
+        contractRequests.push(url.search)
+      }
+    })
+
+    await page.goto('/p/1')
+    // Wait for cards to settle (Recent always renders > 0 from the seed).
+    await expect(
+      page.locator('[data-testid^="recent-task-"]').first(),
+    ).toBeVisible()
+    // Give the runtime a beat in case any straggler pagination loop fires.
+    await page.waitForTimeout(500)
+
+    // Recent + Ready both hit /tasks but with distinct queries, so up to 2
+    // calls is the *expected* steady state. The bug we're guarding against
+    // is collectAll() emitting 5+ calls per card.
+    expect(
+      taskRequests.length,
+      `tasks endpoint hit ${taskRequests.length} times: ${JSON.stringify(taskRequests)}`,
+    ).toBeLessThanOrEqual(2)
+    expect(
+      contractRequests.length,
+      `contracts endpoint hit ${contractRequests.length} times: ${JSON.stringify(contractRequests)}`,
+    ).toBeLessThanOrEqual(1)
+
+    // Sanity: confirm the new query shape is in use (proves we're not on the
+    // legacy collectAll path).
+    expect(taskRequests.some((q) => q.includes('order_by=updated_at'))).toBe(
+      true,
+    )
+    expect(taskRequests.some((q) => q.includes('order_by=priority'))).toBe(
+      true,
+    )
+    expect(contractRequests.some((q) => q.includes('order_by=updated_at'))).toBe(
+      true,
+    )
+  })
+
+  // Task #430 — "more" link is rendered iff the card hit its display limit.
+  test('Ready/Contracts more link appears only when count == limit', async ({
+    page,
+  }) => {
+    // Mock the ready=true tasks endpoint to return exactly 20 items (the
+    // limit) and the contracts endpoint similarly. Then both more links must
+    // render.
+    const fakeTask = (i: number) => ({
+      id: i + 100,
+      project_id: 1,
+      title: `mock task ${i}`,
+      status: 'todo',
+      priority: 'P2',
+      tags: [],
+      definition_of_done: [],
+      in_scope: [],
+      out_of_scope: [],
+      dependencies: [],
+      assignee_user_id: null,
+      contract_id: null,
+      branch: null,
+      pr_url: null,
+      metadata: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      canceled_at: null,
+      cancel_reason: null,
+      assignee_session_id: null,
+      background: null,
+      description: null,
+      plan: null,
+    })
+    const fakeContract = (i: number) => ({
+      id: i + 200,
+      project_id: 1,
+      title: `mock contract ${i}`,
+      description: null,
+      definition_of_done: [],
+      tags: [],
+      metadata: null,
+      is_completed: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    })
+
+    await page.route(
+      (url) =>
+        url.pathname === '/api/senko/api/v1/projects/1/tasks' &&
+        url.searchParams.get('ready') === 'true',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: Array.from({ length: 20 }, (_, i) => fakeTask(i)),
+            next_cursor: 'mock-next-cursor',
+          }),
+        })
+      },
+    )
+    await page.route(
+      (url) => url.pathname === '/api/senko/api/v1/projects/1/contracts',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: Array.from({ length: 20 }, (_, i) => fakeContract(i)),
+            next_cursor: 'mock-next-cursor',
+          }),
+        })
+      },
+    )
+
+    await page.goto('/p/1')
+    await expect(page.getByTestId('ready-more-link')).toBeVisible()
+    await expect(page.getByTestId('contracts-more-link')).toBeVisible()
+    // Sanity: links go to the right destinations.
+    await expect(page.getByTestId('ready-more-link')).toHaveAttribute(
+      'href',
+      '/p/1/tasks?ready=true',
+    )
+    await expect(page.getByTestId('contracts-more-link')).toHaveAttribute(
+      'href',
+      '/p/1/contracts',
+    )
+  })
+
+  test('Ready/Contracts more link is absent when count below limit', async ({
+    page,
+  }) => {
+    // 5 items — well below either limit. Both more links must NOT render.
+    const fakeTask = (i: number) => ({
+      id: i + 100,
+      project_id: 1,
+      title: `mock task ${i}`,
+      status: 'todo',
+      priority: 'P2',
+      tags: [],
+      definition_of_done: [],
+      in_scope: [],
+      out_of_scope: [],
+      dependencies: [],
+      assignee_user_id: null,
+      contract_id: null,
+      branch: null,
+      pr_url: null,
+      metadata: null,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+      started_at: null,
+      completed_at: null,
+      canceled_at: null,
+      cancel_reason: null,
+      assignee_session_id: null,
+      background: null,
+      description: null,
+      plan: null,
+    })
+    const fakeContract = (i: number) => ({
+      id: i + 200,
+      project_id: 1,
+      title: `mock contract ${i}`,
+      description: null,
+      definition_of_done: [],
+      tags: [],
+      metadata: null,
+      is_completed: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-01T00:00:00Z',
+    })
+
+    await page.route(
+      (url) =>
+        url.pathname === '/api/senko/api/v1/projects/1/tasks' &&
+        url.searchParams.get('ready') === 'true',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: Array.from({ length: 5 }, (_, i) => fakeTask(i)),
+            next_cursor: null,
+          }),
+        })
+      },
+    )
+    await page.route(
+      (url) => url.pathname === '/api/senko/api/v1/projects/1/contracts',
+      async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            items: Array.from({ length: 5 }, (_, i) => fakeContract(i)),
+            next_cursor: null,
+          }),
+        })
+      },
+    )
+
+    await page.goto('/p/1')
+    // Wait for ready card to render so the test isn't asserting against
+    // pre-render absence.
+    await expect(
+      page.locator('[data-testid^="ready-task-"]').first(),
+    ).toBeVisible()
+    await expect(page.getByTestId('ready-more-link')).toHaveCount(0)
+    await expect(page.getByTestId('contracts-more-link')).toHaveCount(0)
+  })
 })

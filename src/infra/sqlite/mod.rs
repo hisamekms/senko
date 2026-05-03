@@ -1661,16 +1661,50 @@ fn list_tasks(
     project_id: ProjectId,
     filter: &ListTasksFilter,
 ) -> Result<ListTasksPage> {
+    use crate::domain::pagination::{CursorPayload, TaggedCursor};
+    use crate::domain::task::{ListOrder, TaskOrderBy};
+
     let mut conditions = Vec::new();
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
     conditions.push("t.project_id = ?".to_string());
     param_values.push(Box::new(project_id));
 
-    if let Some(after) = filter.after {
-        conditions.push("t.id > ?".to_string());
-        let after_i64: i64 = after.into();
-        param_values.push(Box::new(after_i64));
+    // Cursor (after) is consumed differently depending on order_by:
+    //   order_by=Id        → t.task_number {>|<} ?
+    //   order_by=UpdatedAt → (t.updated_at, t.task_number) {>|<} (?, ?)
+    //   order_by=Priority  → (t.priority,   t.task_number) {>|<} (?, ?)
+    //
+    // We compare against `t.task_number` rather than `t.id` because the cursor
+    // encodes `Task.id()` which returns the per-project `task_number`, not the
+    // SQLite rowid. (`tasks.id` is a global AUTOINCREMENT counter; rows from
+    // different projects share the same `task_number` space.)
+    //
+    // The handler validated that `after.kind() == order_by.cursor_kind()` so a
+    // mismatched pair cannot reach here.
+    let cmp_op = match filter.order {
+        ListOrder::Asc => ">",
+        ListOrder::Desc => "<",
+    };
+    if let Some(after) = filter.after.as_ref() {
+        match (filter.order_by, after) {
+            (TaskOrderBy::Id, CursorPayload::Id(c)) => {
+                conditions.push(format!("t.task_number {cmp_op} ?"));
+                param_values.push(Box::new(c.id));
+            }
+            (TaskOrderBy::UpdatedAt, CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id })) => {
+                conditions.push(format!("(t.updated_at, t.task_number) {cmp_op} (?, ?)"));
+                param_values.push(Box::new(v.clone()));
+                param_values.push(Box::new(*id));
+            }
+            (TaskOrderBy::Priority, CursorPayload::Tagged(TaggedCursor::Priority { v, id })) => {
+                conditions.push(format!("(t.priority, t.task_number) {cmp_op} (?, ?)"));
+                param_values.push(Box::new(*v as i64));
+                param_values.push(Box::new(*id));
+            }
+            // Unreachable if the handler validated correctly. Defensive: skip.
+            _ => {}
+        }
     }
 
     if !filter.statuses.is_empty() {
@@ -1773,7 +1807,26 @@ fn list_tasks(
         format!(" WHERE {}", conditions.join(" AND "))
     };
 
-    let mut sql = format!("SELECT t.id FROM tasks t{} ORDER BY t.id", where_clause);
+    // Build ORDER BY. Secondary key `t.task_number` matches the primary
+    // direction so the composite cursor's `(value, task_number) {>|<} (?, ?)`
+    // predicate maps to the same total order as the SQL ordering. We use
+    // `task_number` (per-project) rather than `id` (global rowid) because the
+    // cursor stores `Task.id() == task_number`.
+    let dir = match filter.order {
+        ListOrder::Asc => "ASC",
+        ListOrder::Desc => "DESC",
+    };
+    let order_by_sql = match filter.order_by {
+        TaskOrderBy::Id => format!("ORDER BY t.task_number {dir}"),
+        TaskOrderBy::UpdatedAt => {
+            format!("ORDER BY t.updated_at {dir}, t.task_number {dir}")
+        }
+        TaskOrderBy::Priority => {
+            format!("ORDER BY t.priority {dir}, t.task_number {dir}")
+        }
+    };
+
+    let mut sql = format!("SELECT t.id FROM tasks t{where_clause} {order_by_sql}");
     // peek-ahead: fetch limit+1 rows to detect whether more exist
     if let Some(l) = filter.limit {
         sql.push_str(" LIMIT ?");
@@ -1792,10 +1845,15 @@ fn list_tasks(
         items.push(get_task(conn, id)?);
     }
 
+    let order_by = filter.order_by;
     Ok(crate::domain::pagination::build_page(
         items,
         filter.limit,
-        |t| Cursor::encode(t.id()),
+        |t| match order_by {
+            TaskOrderBy::Id => Cursor::encode_id(t.id()),
+            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id()),
+            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id()),
+        },
     ))
 }
 
@@ -2281,13 +2339,37 @@ fn list_contracts(
     project_id: ProjectId,
     filter: &ListContractsFilter,
 ) -> Result<ListPage<Contract>> {
+    use crate::domain::contract::ContractOrderBy;
+    use crate::domain::pagination::{CursorPayload, TaggedCursor};
+    use crate::domain::task::ListOrder;
+
     let mut sql = String::from("SELECT c.id FROM contracts c WHERE c.project_id = ?1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     param_values.push(Box::new(project_id));
-    if let Some(after) = filter.after {
-        sql.push_str(" AND c.id > ?");
-        param_values.push(Box::new(after));
+
+    let cmp_op = match filter.order {
+        ListOrder::Asc => ">",
+        ListOrder::Desc => "<",
+    };
+    if let Some(after) = filter.after.as_ref() {
+        match (filter.order_by, after) {
+            (ContractOrderBy::Id, CursorPayload::Id(c)) => {
+                sql.push_str(&format!(" AND c.id {cmp_op} ?"));
+                param_values.push(Box::new(c.id));
+            }
+            (
+                ContractOrderBy::UpdatedAt,
+                CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+            ) => {
+                sql.push_str(&format!(" AND (c.updated_at, c.id) {cmp_op} (?, ?)"));
+                param_values.push(Box::new(v.clone()));
+                param_values.push(Box::new(*id));
+            }
+            // Defensive: handler validated the pair, so this is unreachable.
+            _ => {}
+        }
     }
+
     // AND-semantic tag filter: every requested tag must be present on the contract.
     for tag in &filter.tags {
         sql.push_str(
@@ -2295,7 +2377,18 @@ fn list_contracts(
         );
         param_values.push(Box::new(tag.clone()));
     }
-    sql.push_str(" ORDER BY c.id");
+
+    let dir = match filter.order {
+        ListOrder::Asc => "ASC",
+        ListOrder::Desc => "DESC",
+    };
+    match filter.order_by {
+        ContractOrderBy::Id => sql.push_str(&format!(" ORDER BY c.id {dir}")),
+        ContractOrderBy::UpdatedAt => {
+            sql.push_str(&format!(" ORDER BY c.updated_at {dir}, c.id {dir}"))
+        }
+    };
+
     if let Some(l) = filter.limit {
         sql.push_str(" LIMIT ?");
         param_values.push(Box::new(l as i64 + 1));
@@ -2310,7 +2403,11 @@ fn list_contracts(
     for id in ids {
         items.push(get_contract(conn, id)?);
     }
-    Ok(build_page(items, filter.limit, |c| Cursor::encode(c.id())))
+    let order_by = filter.order_by;
+    Ok(build_page(items, filter.limit, |c| match order_by {
+        ContractOrderBy::Id => Cursor::encode_id(c.id()),
+        ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id()),
+    }))
 }
 
 fn list_contract_notes(
@@ -3147,7 +3244,7 @@ impl crate::application::port::SeederPort for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::task::AssigneeUserId;
+    use crate::domain::task::{AssigneeUserId, ListOrder, TaskOrderBy};
 
     fn setup() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
@@ -3783,7 +3880,7 @@ mod tests {
         let cursor1 = page1.next_cursor.expect("next_cursor for first page");
 
         // Second page: decode cursor → take next 2 items, cursor still points to more.
-        let after1 = Cursor::decode(&cursor1).unwrap();
+        let after1 = Cursor::decode_payload(&cursor1).unwrap();
         let page2 = list_tasks(
             &conn,
             ProjectId(1),
@@ -3800,7 +3897,7 @@ mod tests {
         assert!(page2.next_cursor.is_some());
 
         // Third page: exactly 1 remaining, next_cursor is None (end).
-        let after2 = Cursor::decode(&page2.next_cursor.unwrap()).unwrap();
+        let after2 = Cursor::decode_payload(&page2.next_cursor.unwrap()).unwrap();
         let page3 = list_tasks(
             &conn,
             ProjectId(1),
@@ -3841,7 +3938,7 @@ mod tests {
         .unwrap();
         let cursor1 = page1.next_cursor.expect("first page has more");
 
-        let after1 = Cursor::decode(&cursor1).unwrap();
+        let after1 = Cursor::decode_payload(&cursor1).unwrap();
         let page2 = list_tasks(
             &conn,
             ProjectId(1),
@@ -3981,13 +4078,14 @@ mod tests {
                 tags: vec!["t1".into()],
                 limit: Some(1),
                 after: None,
+                ..Default::default()
             },
         )
         .unwrap();
         assert_eq!(page1.items.len(), 1);
         assert_eq!(page1.items[0].title(), "A");
         let cursor = page1.next_cursor.expect("more");
-        let after: ContractId = Cursor::decode(&cursor).unwrap();
+        let after = Cursor::decode_payload(&cursor).unwrap();
         let page2 = list_contracts(
             &conn,
             ProjectId(1),
@@ -3995,11 +4093,265 @@ mod tests {
                 tags: vec!["t1".into()],
                 limit: Some(1),
                 after: Some(after),
+                ..Default::default()
             },
         )
         .unwrap();
         assert_eq!(page2.items.len(), 1);
         assert_eq!(page2.items[0].title(), "B");
+        assert!(page2.next_cursor.is_none());
+    }
+
+    // --- Sort + composite cursor tests for `list_tasks` / `list_contracts` ---
+
+    /// Bump `updated_at` on a task by re-saving with a deterministic timestamp.
+    /// Each call uses the supplied `iso` string so tests can build a known order.
+    fn touch_task_updated_at(conn: &Connection, id: TaskDbId, iso: &str) {
+        conn.execute(
+            "UPDATE tasks SET updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![iso, id.0],
+        )
+        .unwrap();
+    }
+
+    fn touch_contract_updated_at(conn: &Connection, id: ContractId, iso: &str) {
+        conn.execute(
+            "UPDATE contracts SET updated_at = ?1 WHERE id = ?2",
+            rusqlite::params![iso, i64::from(id)],
+        )
+        .unwrap();
+    }
+
+    fn create_task_with_priority(
+        conn: &Connection,
+        title: &str,
+        priority: crate::domain::task::Priority,
+    ) -> Task {
+        create_task(
+            conn,
+            ProjectId(1),
+            &CreateTaskParams {
+                priority: Some(priority),
+                ..default_create_params(title)
+            },
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn list_tasks_order_by_updated_at_desc() {
+        let (_tmp, conn) = setup();
+        let a = create_task(&conn, ProjectId(1), &default_create_params("a")).unwrap();
+        let b = create_task(&conn, ProjectId(1), &default_create_params("b")).unwrap();
+        let c = create_task(&conn, ProjectId(1), &default_create_params("c")).unwrap();
+
+        touch_task_updated_at(&conn, TaskDbId(a.id().into()), "2026-01-01T00:00:00Z");
+        touch_task_updated_at(&conn, TaskDbId(b.id().into()), "2026-03-01T00:00:00Z");
+        touch_task_updated_at(&conn, TaskDbId(c.id().into()), "2026-02-01T00:00:00Z");
+
+        let page = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let titles: Vec<&str> = page.items.iter().map(|t| t.title()).collect();
+        assert_eq!(titles, vec!["b", "c", "a"]);
+    }
+
+    #[test]
+    fn list_tasks_order_by_priority_p0_first() {
+        let (_tmp, conn) = setup();
+        create_task_with_priority(&conn, "low", crate::domain::task::Priority::P3);
+        create_task_with_priority(&conn, "top", crate::domain::task::Priority::P0);
+        create_task_with_priority(&conn, "mid", crate::domain::task::Priority::P2);
+
+        let page = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                order_by: TaskOrderBy::Priority,
+                order: ListOrder::Asc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // ASC priority means numerically smallest (P0=0) first.
+        let titles: Vec<&str> = page.items.iter().map(|t| t.title()).collect();
+        assert_eq!(titles, vec!["top", "mid", "low"]);
+    }
+
+    #[test]
+    fn list_tasks_composite_cursor_pagination_updated_at_desc() {
+        let (_tmp, conn) = setup();
+        let mut created = Vec::new();
+        for (i, title) in ["a", "b", "c", "d", "e"].iter().enumerate() {
+            let t = create_task(&conn, ProjectId(1), &default_create_params(title)).unwrap();
+            // Decreasing index → e is newest, a is oldest.
+            let iso = format!("2026-01-{:02}T00:00:00Z", 5 - i);
+            touch_task_updated_at(&conn, TaskDbId(t.id().into()), &iso);
+            created.push(t);
+        }
+
+        // Page 1: limit 2, expect first 2 newest (a → 2026-01-05, b → 2026-01-04)
+        let page1 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        assert_eq!(page1.items[0].title(), "a");
+        assert_eq!(page1.items[1].title(), "b");
+        let cursor1 = page1.next_cursor.expect("more");
+
+        // Cursor must be a TaggedCursor::UpdatedAt — not an id-only cursor.
+        let payload = Cursor::decode_payload(&cursor1).unwrap();
+        assert_eq!(payload.kind(), "updated_at");
+
+        let page2 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                after: Some(payload),
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 2);
+        assert_eq!(page2.items[0].title(), "c");
+        assert_eq!(page2.items[1].title(), "d");
+
+        let payload2 = Cursor::decode_payload(&page2.next_cursor.unwrap()).unwrap();
+        let page3 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                after: Some(payload2),
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page3.items.len(), 1);
+        assert_eq!(page3.items[0].title(), "e");
+        assert!(page3.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_tasks_composite_cursor_handles_updated_at_ties() {
+        // Two rows at the same updated_at must use id as a stable tiebreaker.
+        let (_tmp, conn) = setup();
+        let a = create_task(&conn, ProjectId(1), &default_create_params("a")).unwrap();
+        let b = create_task(&conn, ProjectId(1), &default_create_params("b")).unwrap();
+        let c = create_task(&conn, ProjectId(1), &default_create_params("c")).unwrap();
+
+        touch_task_updated_at(&conn, TaskDbId(a.id().into()), "2026-01-01T00:00:00Z");
+        touch_task_updated_at(&conn, TaskDbId(b.id().into()), "2026-01-01T00:00:00Z");
+        touch_task_updated_at(&conn, TaskDbId(c.id().into()), "2026-01-02T00:00:00Z");
+
+        // ASC: a=01, b=01, c=02 → order by (updated_at, id) ASC → a, b, c.
+        let page1 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Asc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page1.items[0].title(), "a");
+        assert_eq!(page1.items[1].title(), "b");
+
+        let payload = Cursor::decode_payload(&page1.next_cursor.unwrap()).unwrap();
+        let page2 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                limit: Some(2),
+                after: Some(payload),
+                order_by: TaskOrderBy::UpdatedAt,
+                order: ListOrder::Asc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items[0].title(), "c");
+    }
+
+    #[test]
+    fn list_contracts_order_by_updated_at_desc_with_pagination() {
+        let (_tmp, conn) = setup();
+        for title in &["A", "B", "C"] {
+            create_contract(
+                &conn,
+                ProjectId(1),
+                &CreateContractParams {
+                    title: title.to_string(),
+                    description: None,
+                    definition_of_done: vec![],
+                    tags: vec![],
+                    metadata: None,
+                },
+            )
+            .unwrap();
+        }
+
+        touch_contract_updated_at(&conn, ContractId(1), "2026-01-01T00:00:00Z");
+        touch_contract_updated_at(&conn, ContractId(2), "2026-03-01T00:00:00Z");
+        touch_contract_updated_at(&conn, ContractId(3), "2026-02-01T00:00:00Z");
+
+        let page1 = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                limit: Some(2),
+                order_by: crate::domain::contract::ContractOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // updated_at desc: B(03) → C(02) → A(01)
+        assert_eq!(page1.items[0].title(), "B");
+        assert_eq!(page1.items[1].title(), "C");
+
+        let payload = Cursor::decode_payload(&page1.next_cursor.unwrap()).unwrap();
+        assert_eq!(payload.kind(), "updated_at");
+
+        let page2 = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                limit: Some(2),
+                after: Some(payload),
+                order_by: crate::domain::contract::ContractOrderBy::UpdatedAt,
+                order: ListOrder::Desc,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert_eq!(page2.items[0].title(), "A");
         assert!(page2.next_cursor.is_none());
     }
 

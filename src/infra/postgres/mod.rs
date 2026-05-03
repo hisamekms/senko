@@ -1400,6 +1400,9 @@ impl TaskQueryPort for PostgresBackend {
     ) -> Result<ListTasksPage> {
         let pool = self.pool().await?;
 
+        use crate::domain::pagination::{CursorPayload, TaggedCursor};
+        use crate::domain::task::{ListOrder, TaskOrderBy};
+
         let mut conditions: Vec<String> = Vec::new();
         let mut param_idx: i32 = 1;
 
@@ -1413,10 +1416,50 @@ impl TaskQueryPort for PostgresBackend {
         binds.push(BindVal::Int(project_id.into()));
         param_idx += 1;
 
-        if let Some(after) = filter.after {
-            conditions.push(format!("t.id > ${param_idx}"));
-            binds.push(BindVal::Int(after.into()));
-            param_idx += 1;
+        // Cursor (after) — same shape as the SQLite branch. We compare against
+        // `t.task_number` (per-project sequential) rather than `t.id` (global
+        // sequence) because the cursor encodes `Task.id() == task_number`. The
+        // handler validated that `after.kind() == order_by.cursor_kind()` so a
+        // mismatched pair cannot reach here.
+        let cmp_op = match filter.order {
+            ListOrder::Asc => ">",
+            ListOrder::Desc => "<",
+        };
+        if let Some(after) = filter.after.as_ref() {
+            match (filter.order_by, after) {
+                (TaskOrderBy::Id, CursorPayload::Id(c)) => {
+                    conditions.push(format!("t.task_number {cmp_op} ${param_idx}"));
+                    binds.push(BindVal::Int(c.id));
+                    param_idx += 1;
+                }
+                (
+                    TaskOrderBy::UpdatedAt,
+                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+                ) => {
+                    let v_idx = param_idx;
+                    let id_idx = param_idx + 1;
+                    conditions.push(format!(
+                        "(t.updated_at, t.task_number) {cmp_op} (${v_idx}, ${id_idx})"
+                    ));
+                    binds.push(BindVal::Str(v.clone()));
+                    binds.push(BindVal::Int(*id));
+                    param_idx += 2;
+                }
+                (
+                    TaskOrderBy::Priority,
+                    CursorPayload::Tagged(TaggedCursor::Priority { v, id }),
+                ) => {
+                    let v_idx = param_idx;
+                    let id_idx = param_idx + 1;
+                    conditions.push(format!(
+                        "(t.priority, t.task_number) {cmp_op} (${v_idx}, ${id_idx})"
+                    ));
+                    binds.push(BindVal::Int(*v as i64));
+                    binds.push(BindVal::Int(*id));
+                    param_idx += 2;
+                }
+                _ => {}
+            }
         }
 
         if !filter.statuses.is_empty() {
@@ -1525,7 +1568,23 @@ impl TaskQueryPort for PostgresBackend {
             format!(" WHERE {}", conditions.join(" AND "))
         };
 
-        let mut sql = format!("SELECT t.id FROM tasks t{where_clause} ORDER BY t.id");
+        let dir = match filter.order {
+            ListOrder::Asc => "ASC",
+            ListOrder::Desc => "DESC",
+        };
+        // Use `t.task_number` rather than `t.id` for the same reason as the
+        // cursor predicate above (cursor encodes per-project task_number).
+        let order_by_sql = match filter.order_by {
+            TaskOrderBy::Id => format!("ORDER BY t.task_number {dir}"),
+            TaskOrderBy::UpdatedAt => {
+                format!("ORDER BY t.updated_at {dir}, t.task_number {dir}")
+            }
+            TaskOrderBy::Priority => {
+                format!("ORDER BY t.priority {dir}, t.task_number {dir}")
+            }
+        };
+
+        let mut sql = format!("SELECT t.id FROM tasks t{where_clause} {order_by_sql}");
         // peek-ahead: fetch limit+1 rows to detect whether more exist
         if let Some(l) = filter.limit {
             sql.push_str(&format!(" LIMIT ${param_idx}"));
@@ -1555,7 +1614,12 @@ impl TaskQueryPort for PostgresBackend {
             items.push(get_task_by_id(pool, id).await?);
         }
 
-        Ok(build_page(items, filter.limit, |t| Cursor::encode(t.id())))
+        let order_by = filter.order_by;
+        Ok(build_page(items, filter.limit, |t| match order_by {
+            TaskOrderBy::Id => Cursor::encode_id(t.id()),
+            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id()),
+            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id()),
+        }))
     }
 
     /// SQL-optimized implementation of [`crate::domain::task::select_next`].
@@ -2002,33 +2066,81 @@ impl ContractRepository for PostgresBackend {
         project_id: ProjectId,
         filter: &ListContractsFilter,
     ) -> Result<ListPage<Contract>> {
+        use crate::domain::contract::ContractOrderBy;
+        use crate::domain::pagination::{CursorPayload, TaggedCursor};
+        use crate::domain::task::ListOrder;
+
         let pool = self.pool().await?;
+
+        enum BindVal {
+            Int(i64),
+            Str(String),
+        }
+        let mut binds: Vec<BindVal> = Vec::new();
         let mut sql = String::from("SELECT c.id FROM contracts c WHERE c.project_id = $1");
         let mut idx = 2;
-        if filter.after.is_some() {
-            sql.push_str(&format!(" AND c.id > ${idx}"));
-            idx += 1;
+        binds.push(BindVal::Int(project_id.into()));
+
+        let cmp_op = match filter.order {
+            ListOrder::Asc => ">",
+            ListOrder::Desc => "<",
+        };
+        if let Some(after) = filter.after.as_ref() {
+            match (filter.order_by, after) {
+                (ContractOrderBy::Id, CursorPayload::Id(c)) => {
+                    sql.push_str(&format!(" AND c.id {cmp_op} ${idx}"));
+                    binds.push(BindVal::Int(c.id));
+                    idx += 1;
+                }
+                (
+                    ContractOrderBy::UpdatedAt,
+                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+                ) => {
+                    let v_idx = idx;
+                    let id_idx = idx + 1;
+                    sql.push_str(&format!(
+                        " AND (c.updated_at, c.id) {cmp_op} (${v_idx}, ${id_idx})"
+                    ));
+                    binds.push(BindVal::Str(v.clone()));
+                    binds.push(BindVal::Int(*id));
+                    idx += 2;
+                }
+                _ => {}
+            }
         }
-        for _ in &filter.tags {
+
+        for tag in &filter.tags {
             sql.push_str(&format!(
                 " AND EXISTS (SELECT 1 FROM contract_tags ct WHERE ct.contract_id = c.id AND ct.tag = ${idx})"
             ));
+            binds.push(BindVal::Str(tag.clone()));
             idx += 1;
         }
-        sql.push_str(" ORDER BY c.id");
-        if filter.limit.is_some() {
-            sql.push_str(&format!(" LIMIT ${idx}"));
+
+        let dir = match filter.order {
+            ListOrder::Asc => "ASC",
+            ListOrder::Desc => "DESC",
+        };
+        match filter.order_by {
+            ContractOrderBy::Id => sql.push_str(&format!(" ORDER BY c.id {dir}")),
+            ContractOrderBy::UpdatedAt => {
+                sql.push_str(&format!(" ORDER BY c.updated_at {dir}, c.id {dir}"))
+            }
         }
-        let mut query = sqlx::query(&sql).bind(project_id);
-        if let Some(after) = filter.after {
-            query = query.bind(after);
-        }
-        for tag in &filter.tags {
-            query = query.bind(tag);
-        }
+
         if let Some(l) = filter.limit {
-            query = query.bind(l as i64 + 1);
+            sql.push_str(&format!(" LIMIT ${idx}"));
+            binds.push(BindVal::Int(l as i64 + 1));
         }
+
+        let mut query = sqlx::query(&sql);
+        for bind in &binds {
+            match bind {
+                BindVal::Int(v) => query = query.bind(v),
+                BindVal::Str(v) => query = query.bind(v),
+            }
+        }
+
         let ids: Vec<ContractId> = query
             .fetch_all(pool)
             .await?
@@ -2040,7 +2152,11 @@ impl ContractRepository for PostgresBackend {
         for id in ids {
             items.push(get_contract_by_id(pool, id).await?);
         }
-        Ok(build_page(items, filter.limit, |c| Cursor::encode(c.id())))
+        let order_by = filter.order_by;
+        Ok(build_page(items, filter.limit, |c| match order_by {
+            ContractOrderBy::Id => Cursor::encode_id(c.id()),
+            ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id()),
+        }))
     }
 
     async fn list_contract_notes(
