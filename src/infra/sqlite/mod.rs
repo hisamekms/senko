@@ -1730,10 +1730,7 @@ fn list_tasks(
         .filter(|s| !s.is_empty())
     {
         conditions.push("LOWER(t.title) LIKE LOWER(?) ESCAPE '\\'".to_string());
-        param_values.push(Box::new(format!(
-            "%{}%",
-            crate::infra::escape_like(title)
-        )));
+        param_values.push(Box::new(format!("%{}%", crate::infra::escape_like(title))));
     }
 
     if !filter.tags.is_empty() {
@@ -2406,10 +2403,7 @@ fn list_contracts(
         .filter(|s| !s.is_empty())
     {
         sql.push_str(" AND LOWER(c.title) LIKE LOWER(?) ESCAPE '\\'");
-        param_values.push(Box::new(format!(
-            "%{}%",
-            crate::infra::escape_like(title)
-        )));
+        param_values.push(Box::new(format!("%{}%", crate::infra::escape_like(title))));
     }
 
     if let Some(completed) = filter.completed {
@@ -3964,12 +3958,22 @@ mod tests {
         use crate::domain::task::Priority;
         let (_tmp, conn) = setup();
         create_task(&conn, ProjectId(1), &default_create_params("Refactor Auth")).unwrap();
-        create_task(&conn, ProjectId(1), &default_create_params("refactor cache")).unwrap();
+        create_task(
+            &conn,
+            ProjectId(1),
+            &default_create_params("refactor cache"),
+        )
+        .unwrap();
         create_task(&conn, ProjectId(1), &default_create_params("ship release")).unwrap();
         // Tasks whose title contains LIKE wildcards literally — must not be
         // matched when those characters appear in the search query.
         create_task(&conn, ProjectId(1), &default_create_params("100% complete")).unwrap();
-        create_task(&conn, ProjectId(1), &default_create_params("snake_case bug")).unwrap();
+        create_task(
+            &conn,
+            ProjectId(1),
+            &default_create_params("snake_case bug"),
+        )
+        .unwrap();
 
         // Case-insensitive substring.
         let refactors = list_tasks(

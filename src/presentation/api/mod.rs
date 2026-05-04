@@ -3499,8 +3499,7 @@ mod tests {
 
     #[test]
     fn list_contracts_query_parses_completed_and_title() {
-        let q: ListContractsQuery =
-            serde_urlencoded::from_str("completed=true&title=foo").unwrap();
+        let q: ListContractsQuery = serde_urlencoded::from_str("completed=true&title=foo").unwrap();
         assert_eq!(q.completed, Some(true));
         assert_eq!(q.title.as_deref(), Some("foo"));
 
