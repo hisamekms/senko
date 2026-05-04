@@ -5759,6 +5759,16 @@
           "dependencies"
         ],
         "properties": {
+          "assignee": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MemberUserInfo"
+              }
+            ]
+          },
           "assignee_session_id": {
             "type": [
               "string",

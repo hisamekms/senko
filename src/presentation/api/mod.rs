@@ -58,7 +58,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, ListSessionsFilter,
-    ListUsersFilter, Role, UpdateUserParams, UserId,
+    ListUsersFilter, Role, UpdateUserParams, User, UserId,
 };
 use crate::infra::config::Config;
 use crate::infra::http::remote_contract_ops::RemoteContractOperations;
@@ -273,6 +273,16 @@ impl From<AuthError> for ApiError {
 /// through `anyhow::Error` first.
 fn classify_domain(e: DomainError) -> ApiError {
     classify_error(anyhow::Error::from(e))
+}
+
+/// Look up the assignee `User` for a `Task`, swallowing lookup errors so a
+/// missing or deleted user yields `None` instead of failing the whole request.
+/// Returns `None` when the task has no assignee.
+async fn resolve_assignee(state: &AppState, task: &Task) -> Option<User> {
+    match task.assignee_user_id() {
+        Some(uid) => state.user_service.get_user(uid).await.ok(),
+        None => None,
+    }
 }
 
 /// Decode a base64 cursor string and verify its kind matches the requested
@@ -1320,8 +1330,13 @@ async fn list_tasks(
         .list_tasks(project_id, &filter)
         .await
         .map_err(classify_error)?;
+    let mut items = Vec::with_capacity(page.items.len());
+    for task in page.items {
+        let assignee_user = resolve_assignee(&state, &task).await;
+        items.push(TaskResponse::from_parts(task, assignee_user.as_ref()));
+    }
     Ok(Json(ListTasksPageResponse {
-        items: page.items.into_iter().map(TaskResponse::from).collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }
@@ -1395,7 +1410,11 @@ async fn create_task(
         .create_task(project_id, &params)
         .await
         .map_err(classify_error)?;
-    Ok((StatusCode::CREATED, Json(TaskResponse::from(task))))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok((
+        StatusCode::CREATED,
+        Json(TaskResponse::from_parts(task, assignee_user.as_ref())),
+    ))
 }
 
 #[utoipa::path(
@@ -1422,7 +1441,8 @@ async fn get_task(
         .get_task(project_id, id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1548,7 +1568,8 @@ async fn edit_task(
         .get_task(project_id, id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 // PUT /api/v1/projects/{project_id}/tasks/{id}/_save
@@ -1628,7 +1649,8 @@ async fn publish_task(
         .publish_task(project_id, id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let assignee_user = resolve_assignee(&state, &updated).await;
+    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1665,7 +1687,8 @@ async fn start_task(
         .start_task(project_id, id, body.session_id, user_id, metadata)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let assignee_user = resolve_assignee(&state, &updated).await;
+    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1703,7 +1726,8 @@ async fn resume_task(
         .resume_task(project_id, id, body.session_id, metadata)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let assignee_user = resolve_assignee(&state, &updated).await;
+    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1734,7 +1758,11 @@ async fn complete_task(
         .complete_task(project_id, id, skip_pr_check)
         .await
         .map_err(classify_error)?;
-    Ok(Json(CompleteTaskResponse::from(result)))
+    let assignee_user = resolve_assignee(&state, &result.task).await;
+    Ok(Json(CompleteTaskResponse::from_parts(
+        result,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
@@ -1765,7 +1793,8 @@ async fn cancel_task(
         .cancel_task(project_id, id, reason)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let assignee_user = resolve_assignee(&state, &updated).await;
+    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1816,7 +1845,8 @@ async fn next_task(
         )
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(updated)))
+    let assignee_user = resolve_assignee(&state, &updated).await;
+    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1902,8 +1932,13 @@ async fn list_deps(
         .list_dependencies(project_id, id, &filter)
         .await
         .map_err(classify_error)?;
+    let mut items = Vec::with_capacity(page.items.len());
+    for task in page.items {
+        let assignee_user = resolve_assignee(&state, &task).await;
+        items.push(TaskResponse::from_parts(task, assignee_user.as_ref()));
+    }
     Ok(Json(ListDepsPageResponse {
-        items: page.items.into_iter().map(TaskResponse::from).collect(),
+        items,
         next_cursor: page.next_cursor,
     }))
 }
@@ -1935,7 +1970,8 @@ async fn add_dep(
         .add_dependency(project_id, id, body.dep_id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1966,7 +2002,8 @@ async fn remove_dep(
         .remove_dependency(project_id, id, dep_id)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -1996,7 +2033,8 @@ async fn set_deps(
         .set_dependencies(project_id, id, &body.dep_ids)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -2028,7 +2066,8 @@ async fn check_dod(
         .check_dod(project_id, id, index)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 #[utoipa::path(
@@ -2060,7 +2099,8 @@ async fn uncheck_dod(
         .uncheck_dod(project_id, id, index)
         .await
         .map_err(classify_error)?;
-    Ok(Json(TaskResponse::from(task)))
+    let assignee_user = resolve_assignee(&state, &task).await;
+    Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
 // --- Contract handlers ---

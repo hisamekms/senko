@@ -108,13 +108,35 @@ async fn resolve_current_user_id(
     if config.user.name.is_none() {
         return Ok(None);
     }
-    let user_ops: Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
+    let user_ops = build_user_operations(root, config, cli_attrs)?;
+    Ok(Some(resolve_user_id(&*user_ops, config).await?))
+}
+
+/// Build a `UserOperations` adapter for the current CLI context (remote or local).
+fn build_user_operations(
+    root: &Path,
+    config: &Config,
+    cli_attrs: &[(String, String)],
+) -> Result<Arc<dyn UserOperations>> {
+    let ops: Arc<dyn UserOperations> = if config.cli.remote.url.is_some() {
         Arc::new(create_remote_user_operations(config, cli_attrs))
     } else {
         let backend = create_backend(root, config)?;
         Arc::new(create_user_service(backend))
     };
-    Ok(Some(resolve_user_id(&*user_ops, config).await?))
+    Ok(ops)
+}
+
+/// Look up the `User` for a `UserId`. Returns `None` when the user no longer
+/// exists or any lookup error occurs (display fall-back: ID-only).
+async fn lookup_user(
+    root: &Path,
+    config: &Config,
+    cli_attrs: &[(String, String)],
+    user_id: UserId,
+) -> Option<crate::domain::user::User> {
+    let user_ops = build_user_operations(root, config, cli_attrs).ok()?;
+    user_ops.get_user(user_id).await.ok()
 }
 
 /// Decode an `--after` cursor that the CLI emits — always id-only because the
@@ -423,10 +445,18 @@ pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
     let (task_ops, project_ops) = create_task_operations(&root, &config, &cli.attr)?;
     let project_id = resolve_project_id(&*project_ops, &config).await?;
     let task = task_ops.get_task(project_id, task_id).await?;
+    let assignee_user = match task.assignee_user_id() {
+        Some(uid) => lookup_user(&root, &config, &cli.attr, uid).await,
+        None => None,
+    };
 
     match cli.output {
         OutputFormat::Json => {
-            println!("{}", serde_json::to_string_pretty(&task)?);
+            let response = crate::presentation::dto::TaskResponse::from_parts(
+                task.clone(),
+                assignee_user.as_ref(),
+            );
+            println!("{}", serde_json::to_string_pretty(&response)?);
         }
         OutputFormat::Text => {
             println!("ID:       {}", task.id());
@@ -452,7 +482,10 @@ pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
                 println!("Assignee (session): {assignee}");
             }
             if let Some(uid) = task.assignee_user_id() {
-                println!("Assignee (user): #{uid}");
+                match assignee_user.as_ref() {
+                    Some(u) => println!("Assignee (user): #{uid} {}", u.username().as_ref()),
+                    None => println!("Assignee (user): #{uid}"),
+                }
             }
             if !task.tags().is_empty() {
                 println!("Tags:     {}", task.tags().join(", "));

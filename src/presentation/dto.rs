@@ -86,6 +86,7 @@ pub struct TaskResponse {
     status: String,
     assignee_session_id: Option<String>,
     assignee_user_id: Option<UserId>,
+    assignee: Option<MemberUserInfo>,
     created_at: String,
     updated_at: String,
     started_at: Option<String>,
@@ -104,8 +105,12 @@ pub struct TaskResponse {
     dependencies: Vec<TaskId>,
 }
 
-impl From<Task> for TaskResponse {
-    fn from(t: Task) -> Self {
+impl TaskResponse {
+    /// Build a `TaskResponse` from a domain `Task` plus an optional resolved
+    /// assignee `User`. Pass `Some(&user)` when the caller has fetched the
+    /// task's assignee user; pass `None` when there is no assignee or the
+    /// lookup failed (the response then carries `assignee: null`).
+    pub fn from_parts(t: Task, assignee_user: Option<&User>) -> Self {
         Self {
             id: t.id(),
             project_id: t.project_id(),
@@ -117,6 +122,7 @@ impl From<Task> for TaskResponse {
             status: t.status().to_string(),
             assignee_session_id: t.assignee_session_id().map(|s| s.to_owned()),
             assignee_user_id: t.assignee_user_id(),
+            assignee: assignee_user.map(MemberUserInfo::from),
             created_at: t.created_at().to_owned(),
             updated_at: t.updated_at().to_owned(),
             started_at: t.started_at().map(|s| s.to_owned()),
@@ -339,10 +345,13 @@ pub struct CompleteTaskResponse {
     pub unblocked_tasks: Vec<UnblockedTaskInfo>,
 }
 
-impl From<CompleteResult> for CompleteTaskResponse {
-    fn from(r: CompleteResult) -> Self {
+impl CompleteTaskResponse {
+    /// Build a `CompleteTaskResponse` from a `CompleteResult` and an optional
+    /// resolved assignee `User` for the completed task. Mirrors
+    /// [`TaskResponse::from_parts`].
+    pub fn from_parts(r: CompleteResult, assignee_user: Option<&User>) -> Self {
         Self {
-            task: TaskResponse::from(r.task),
+            task: TaskResponse::from_parts(r.task, assignee_user),
             unblocked_tasks: r
                 .unblocked
                 .into_iter()
@@ -791,8 +800,80 @@ mod tests {
             vec![],                        // tags
             vec![],                        // dependencies
         );
-        let response = TaskResponse::from(task);
+        let response = TaskResponse::from_parts(task, None);
         let value = serde_json::to_value(&response).unwrap();
         assert_eq!(value["contract_id"], json!(99));
+    }
+
+    fn task_with_assignee(uid: Option<UserId>) -> crate::domain::task::Task {
+        use crate::domain::task::{Priority, Task, TaskId, TaskStatus};
+        Task::new(
+            TaskId(1),
+            ProjectId(1),
+            "title".into(),
+            None,
+            None,
+            None,
+            Priority::P2,
+            TaskStatus::Draft,
+            None,
+            uid,
+            "2026-05-04T00:00:00Z".into(),
+            "2026-05-04T00:00:00Z".into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+            vec![],
+        )
+    }
+
+    fn make_user(id: i64, username: &str, display: Option<&str>) -> User {
+        User::new(
+            UserId(id),
+            username.parse().unwrap(),
+            format!("sub-{id}"),
+            display.map(|s| s.to_owned()),
+            None,
+            "2026-05-04T00:00:00Z".into(),
+        )
+    }
+
+    #[test]
+    fn task_response_assignee_populated_when_user_provided() {
+        let task = task_with_assignee(Some(UserId(7)));
+        let user = make_user(7, "alice", Some("Alice"));
+        let response = TaskResponse::from_parts(task, Some(&user));
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["assignee_user_id"], json!(7));
+        assert_eq!(value["assignee"]["id"], json!(7));
+        assert_eq!(value["assignee"]["name"], json!("alice"));
+        assert_eq!(value["assignee"]["display_name"], json!("Alice"));
+    }
+
+    #[test]
+    fn task_response_assignee_null_when_user_not_provided() {
+        let task = task_with_assignee(Some(UserId(7)));
+        let response = TaskResponse::from_parts(task, None);
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["assignee_user_id"], json!(7));
+        assert_eq!(value["assignee"], json!(null));
+    }
+
+    #[test]
+    fn task_response_assignee_null_when_no_assignee_id() {
+        let task = task_with_assignee(None);
+        let response = TaskResponse::from_parts(task, None);
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(value["assignee_user_id"], json!(null));
+        assert_eq!(value["assignee"], json!(null));
     }
 }

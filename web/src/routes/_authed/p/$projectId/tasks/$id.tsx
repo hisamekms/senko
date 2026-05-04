@@ -324,7 +324,11 @@ function TaskDetailPage() {
           {task.assignee_user_id != null ? (
             <>
               <span className={metaKeyStyle}>{t('tasks.detail.assignee')}</span>
-              <span className={metaValueStyle}>#{task.assignee_user_id}</span>
+              <span className={metaValueStyle}>
+                {task.assignee?.name
+                  ? `${task.assignee.name} (#${task.assignee_user_id})`
+                  : `#${task.assignee_user_id}`}
+              </span>
             </>
           ) : null}
           {task.contract_id != null ? (

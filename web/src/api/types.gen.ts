@@ -926,6 +926,7 @@ export interface components {
          */
         TaskId: number;
         TaskResponse: {
+            assignee?: null | components["schemas"]["MemberUserInfo"];
             assignee_session_id?: string | null;
             assignee_user_id?: null | components["schemas"]["UserId"];
             background?: string | null;
