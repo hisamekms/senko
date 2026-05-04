@@ -13,9 +13,17 @@ gh = "latest"
 description = "Build senko binary (with dev-tools for the e2e seeder)"
 run = "cargo build -q --bin senko --features dev-tools"
 
-[tasks.test]
-description = "Run unit tests"
+[tasks."test:rust"]
+description = "Run Rust unit tests (cargo test)"
 run = "cargo test"
+
+[tasks."web:test"]
+description = "Run web unit tests (vitest)"
+run = "cd web && npm run test"
+
+[tasks.test]
+description = "Run unit tests (Rust + web)"
+depends = ["test:rust", "web:test"]
 
 [tasks.build-pg]
 description = "Build senko binary with postgres feature (and dev-tools for the e2e seeder)"
