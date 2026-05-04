@@ -1650,7 +1650,10 @@ async fn publish_task(
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &updated).await;
-    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
+    Ok(Json(TaskResponse::from_parts(
+        updated,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
@@ -1688,7 +1691,10 @@ async fn start_task(
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &updated).await;
-    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
+    Ok(Json(TaskResponse::from_parts(
+        updated,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
@@ -1727,7 +1733,10 @@ async fn resume_task(
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &updated).await;
-    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
+    Ok(Json(TaskResponse::from_parts(
+        updated,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
@@ -1794,7 +1803,10 @@ async fn cancel_task(
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &updated).await;
-    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
+    Ok(Json(TaskResponse::from_parts(
+        updated,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
@@ -1846,7 +1858,10 @@ async fn next_task(
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &updated).await;
-    Ok(Json(TaskResponse::from_parts(updated, assignee_user.as_ref())))
+    Ok(Json(TaskResponse::from_parts(
+        updated,
+        assignee_user.as_ref(),
+    )))
 }
 
 #[utoipa::path(
