@@ -67,7 +67,7 @@ const tagChipStyle = css({
 interface ContractSummaryCardProps {
   contract: Contract
   href: string
-  taskCount: number
+  taskCount?: number
 }
 
 export function ContractSummaryCard({
@@ -89,11 +89,13 @@ export function ContractSummaryCard({
         <span className={titleStyle}>
           #{contract.id} {contract.title}
         </span>
-        <span className={taskCountStyle}>
-          {taskCount > 0
-            ? t('contracts.list.tasks', { count: taskCount })
-            : t('contracts.list.noTasks')}
-        </span>
+        {taskCount != null ? (
+          <span className={taskCountStyle}>
+            {taskCount > 0
+              ? t('contracts.list.tasks', { count: taskCount })
+              : t('contracts.list.noTasks')}
+          </span>
+        ) : null}
       </div>
       {contract.tags.length > 0 ? (
         <div className={tagListStyle}>

@@ -46,11 +46,13 @@
       "in_progress": "進行中",
       "completed": "完了",
       "canceled": "キャンセル",
-      "empty": "タスクがありません"
+      "empty": "タスクがありません",
+      "more": "すべて表示 →"
     },
     "recent": {
       "title": "最近更新されたタスク",
-      "empty": "タスクがありません"
+      "empty": "タスクがありません",
+      "more": "すべて表示 →"
     },
     "ready": {
       "title": "Ready なタスク",
@@ -74,8 +76,11 @@
     },
     "filter": {
       "status": "ステータス",
+      "priority": "優先度",
       "tag": "タグ",
       "tagPlaceholder": "例: backend",
+      "title": "タイトル",
+      "titlePlaceholder": "タイトル検索…",
       "ready": "Ready のみ",
       "contract": "Contract",
       "reset": "フィルタをリセット"
@@ -117,7 +122,19 @@
       "empty": "Contract がありません。",
       "count": "{{count}} 件",
       "tasks": "タスク {{count}} 件",
-      "noTasks": "関連タスクなし"
+      "noTasks": "関連タスクなし",
+      "loadMore": "さらに読み込む"
+    },
+    "filter": {
+      "completion": "完了状態",
+      "completion_all": "すべて",
+      "completion_in_progress": "進行中",
+      "completion_completed": "完了",
+      "tag": "タグ",
+      "tagPlaceholder": "例: backend",
+      "title": "タイトル",
+      "titlePlaceholder": "タイトル検索…",
+      "reset": "フィルタをリセット"
     },
     "detail": {
       "notFound": "Contract が見つかりません。",

@@ -36,6 +36,19 @@ const countStyle = css({
   fontVariantNumeric: 'tabular-nums',
 })
 
+const moreLinkStyle = css({
+  display: 'block',
+  marginTop: '2',
+  paddingX: '2',
+  paddingY: '1',
+  fontSize: 'xs',
+  color: 'fg',
+  opacity: '0.7',
+  textDecoration: 'none',
+  textAlign: 'right',
+  _hover: { opacity: '1', textDecoration: 'underline' },
+})
+
 interface StatusSummaryCardProps {
   projectId: number
 }
@@ -92,6 +105,13 @@ export function StatusSummaryCard({ projectId }: StatusSummaryCardProps) {
           </li>
         ))}
       </ul>
+      <a
+        href={`/p/${projectId}/tasks`}
+        className={moreLinkStyle}
+        data-testid="status-more-link"
+      >
+        {t('dashboard.status.more')}
+      </a>
     </DashboardCard>
   )
 }

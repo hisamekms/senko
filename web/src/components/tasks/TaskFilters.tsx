@@ -8,6 +8,8 @@ export interface TaskFilterValues {
   tag?: string
   ready?: boolean
   contract?: number
+  title?: string
+  priority?: string[]
 }
 
 interface TaskFiltersProps {
@@ -22,6 +24,8 @@ const STATUSES = [
   'completed',
   'canceled',
 ] as const
+
+const PRIORITIES = ['P0', 'P1', 'P2', 'P3'] as const
 
 const containerStyle = css({
   display: 'flex',
@@ -125,6 +129,7 @@ export function TaskFilters({ value, onChange }: TaskFiltersProps) {
   const [contractDraft, setContractDraft] = useState<string>(
     value.contract != null ? String(value.contract) : '',
   )
+  const [titleDraft, setTitleDraft] = useState<string>(value.title ?? '')
 
   useEffect(() => {
     setTagDraft(value.tag ?? '')
@@ -132,6 +137,9 @@ export function TaskFilters({ value, onChange }: TaskFiltersProps) {
   useEffect(() => {
     setContractDraft(value.contract != null ? String(value.contract) : '')
   }, [value.contract])
+  useEffect(() => {
+    setTitleDraft(value.title ?? '')
+  }, [value.title])
 
   const toggleStatus = (s: string) => {
     const current = value.status ?? []
@@ -141,9 +149,22 @@ export function TaskFilters({ value, onChange }: TaskFiltersProps) {
     onChange({ ...value, status: next.length > 0 ? next : undefined })
   }
 
+  const togglePriority = (p: string) => {
+    const current = value.priority ?? []
+    const next = current.includes(p)
+      ? current.filter((x) => x !== p)
+      : [...current, p]
+    onChange({ ...value, priority: next.length > 0 ? next : undefined })
+  }
+
   const submitTag = () => {
     const trimmed = tagDraft.trim()
     onChange({ ...value, tag: trimmed.length > 0 ? trimmed : undefined })
+  }
+
+  const submitTitle = () => {
+    const trimmed = titleDraft.trim()
+    onChange({ ...value, title: trimmed.length > 0 ? trimmed : undefined })
   }
 
   const submitContract = () => {
@@ -165,6 +186,7 @@ export function TaskFilters({ value, onChange }: TaskFiltersProps) {
   }
 
   const activeStatuses = new Set(value.status ?? [])
+  const activePriorities = new Set(value.priority ?? [])
 
   return (
     <div className={containerStyle}>
@@ -183,7 +205,40 @@ export function TaskFilters({ value, onChange }: TaskFiltersProps) {
           </button>
         ))}
       </div>
+      <span className={sectionTitleStyle}>{t('tasks.filter.priority')}</span>
+      <div className={rowStyle}>
+        {PRIORITIES.map((p) => (
+          <button
+            key={p}
+            type="button"
+            className={statusChipStyle}
+            data-active={activePriorities.has(p) ? 'true' : 'false'}
+            data-testid={`task-filter-priority-${p}`}
+            onClick={() => togglePriority(p)}
+          >
+            {t(`tasks.priority.${p}`, { defaultValue: p })}
+          </button>
+        ))}
+      </div>
       <div className={fieldRowStyle}>
+        <label className={inlineLabelStyle}>
+          {t('tasks.filter.title')}
+          <input
+            type="text"
+            className={inputStyle}
+            placeholder={t('tasks.filter.titlePlaceholder')}
+            value={titleDraft}
+            onChange={(e) => setTitleDraft(e.target.value)}
+            onBlur={submitTitle}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                submitTitle()
+              }
+            }}
+            data-testid="task-filter-title"
+          />
+        </label>
         <label className={inlineLabelStyle}>
           {t('tasks.filter.tag')}
           <input

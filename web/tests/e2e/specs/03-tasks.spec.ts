@@ -59,6 +59,52 @@ test.describe('Tasks list + detail', () => {
     await expect(page).toHaveURL(/[?&]ready=true/)
   })
 
+  test('priority filter narrows the list and updates the URL', async ({
+    page,
+  }) => {
+    await page.goto('/p/1/tasks')
+    await waitForListReady(page)
+
+    const before = await page
+      .locator('[data-testid^="task-card-"]')
+      .count()
+
+    await page.getByTestId('task-filter-priority-P1').click()
+    // priority is encoded the same way as status (single value or JSON array).
+    await expect(page).toHaveURL(/priority=(P1|%5B%22P1%22%5D)/)
+
+    // Wait for the filtered list to settle, then assert it differs from the
+    // unfiltered baseline.
+    await expect(
+      page.locator('[data-testid^="task-card-"]').first(),
+    ).toBeVisible()
+    await expect
+      .poll(() => page.locator('[data-testid^="task-card-"]').count())
+      .toBeLessThanOrEqual(before)
+
+    await page.getByTestId('task-filter-reset').click()
+    await expect(page).not.toHaveURL(/priority=/)
+  })
+
+  test('title filter narrows the list and updates the URL', async ({
+    page,
+  }) => {
+    await page.goto('/p/1/tasks')
+    await waitForListReady(page)
+
+    // Type a short fragment likely to exclude most seeded titles, then
+    // commit the draft via blur (the input submits on blur or Enter).
+    await page.getByTestId('task-filter-title').fill('token')
+    await page.getByTestId('task-filter-title').blur()
+    await expect(page).toHaveURL(/title=token/)
+    await expect(
+      page.locator('[data-testid^="task-card-"]').first(),
+    ).toBeVisible()
+
+    await page.getByTestId('task-filter-reset').click()
+    await expect(page).not.toHaveURL(/title=/)
+  })
+
   test('detail page surfaces title, status badge, and dependencies', async ({
     page,
   }) => {

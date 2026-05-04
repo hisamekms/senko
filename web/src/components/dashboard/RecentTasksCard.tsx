@@ -55,6 +55,19 @@ const statusStyle = css({
   opacity: '0.7',
 })
 
+const moreLinkStyle = css({
+  display: 'block',
+  marginTop: '2',
+  paddingX: '2',
+  paddingY: '1',
+  fontSize: 'xs',
+  color: 'fg',
+  opacity: '0.7',
+  textDecoration: 'none',
+  textAlign: 'right',
+  _hover: { opacity: '1', textDecoration: 'underline' },
+})
+
 interface RecentTasksCardProps {
   projectId: number
 }
@@ -101,6 +114,13 @@ export function RecentTasksCard({ projectId }: RecentTasksCardProps) {
           </li>
         ))}
       </ul>
+      <a
+        href={`/p/${projectId}/tasks?order_by=updated_at`}
+        className={moreLinkStyle}
+        data-testid="recent-more-link"
+      >
+        {t('dashboard.recent.more')}
+      </a>
     </DashboardCard>
   )
 }

@@ -20,7 +20,7 @@ function fakeClient(): { client: ApiClient; get: ReturnType<typeof vi.fn> } {
 
 describe('dashboard fetchers', () => {
   describe('fetchRecentTasks', () => {
-    it('calls GET /tasks exactly once with updated_at desc, limit=10', async () => {
+    it('calls GET /tasks exactly once with updated_at desc, limit=5', async () => {
       const { client, get } = fakeClient()
       await fetchRecentTasks(7, client)
 
@@ -30,7 +30,7 @@ describe('dashboard fetchers', () => {
         {
           params: {
             path: { project_id: 7 },
-            query: { order_by: 'updated_at', order: 'desc', limit: 10 },
+            query: { order_by: 'updated_at', order: 'desc', limit: 5 },
           },
         },
       )
@@ -49,7 +49,7 @@ describe('dashboard fetchers', () => {
   })
 
   describe('fetchReadyTasks', () => {
-    it('calls GET /tasks exactly once with ready=true, priority asc, limit=20', async () => {
+    it('calls GET /tasks exactly once with ready=true, priority asc, limit=5', async () => {
       const { client, get } = fakeClient()
       await fetchReadyTasks(42, client)
 
@@ -63,7 +63,7 @@ describe('dashboard fetchers', () => {
               ready: true,
               order_by: 'priority',
               order: 'asc',
-              limit: 20,
+              limit: 5,
             },
           },
         },
@@ -72,7 +72,7 @@ describe('dashboard fetchers', () => {
   })
 
   describe('fetchContracts', () => {
-    it('calls GET /contracts exactly once with updated_at desc, limit=20', async () => {
+    it('calls GET /contracts exactly once with updated_at desc, limit=5', async () => {
       const { client, get } = fakeClient()
       await fetchContracts(99, client)
 
@@ -82,7 +82,7 @@ describe('dashboard fetchers', () => {
         {
           params: {
             path: { project_id: 99 },
-            query: { order_by: 'updated_at', order: 'desc', limit: 20 },
+            query: { order_by: 'updated_at', order: 'desc', limit: 5 },
           },
         },
       )

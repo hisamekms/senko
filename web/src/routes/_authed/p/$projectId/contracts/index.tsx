@@ -1,16 +1,35 @@
 import { useCallback } from 'react'
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 
-import { ContractSummaryCard } from '#/components/contracts'
-import { useApi } from '#/hooks/useApi'
-import { apiClient, collectAll, type components } from '#/api'
+import {
+  ContractFilters,
+  ContractSummaryCard,
+  type ContractFilterValues,
+} from '#/components/contracts'
+import { useCursorList } from '#/hooks/useCursorList'
+import { apiClient, type components } from '#/api'
+import { asBoolean, asOrder, asString } from '#/api/searchParams'
 import { css } from '../../../../../../styled-system/css'
 
 type Contract = components['schemas']['ContractResponse']
-type Task = components['schemas']['TaskResponse']
+
+interface ContractsSearch {
+  tag?: string
+  title?: string
+  completed?: boolean
+  order_by?: string
+  order?: 'asc' | 'desc'
+}
 
 export const Route = createFileRoute('/_authed/p/$projectId/contracts/')({
+  validateSearch: (raw: Record<string, unknown>): ContractsSearch => ({
+    tag: asString(raw.tag),
+    title: asString(raw.title),
+    completed: asBoolean(raw.completed),
+    order_by: asString(raw.order_by),
+    order: asOrder(raw.order),
+  }),
   component: ContractListPage,
 })
 
@@ -74,7 +93,7 @@ const skeletonContainerStyle = css({
   gap: '3',
 })
 
-const retryButtonStyle = css({
+const loadMoreStyle = css({
   alignSelf: 'flex-start',
   paddingX: '4',
   paddingY: '2',
@@ -86,66 +105,75 @@ const retryButtonStyle = css({
   color: 'fg',
   cursor: 'pointer',
   _hover: { borderColor: 'accent' },
+  '&:disabled': { cursor: 'default', opacity: '0.5' },
 })
-
-interface ContractsListData {
-  contracts: Contract[]
-  taskCounts: Map<number, number>
-}
 
 function ContractListPage() {
   const { t } = useTranslation()
   const { projectId } = Route.useParams()
+  const search = Route.useSearch()
+  const navigate = useNavigate({ from: Route.fullPath })
   const numericId = Number(projectId)
-  const validId = Number.isFinite(numericId)
 
-  const fetchAll = useCallback(async (): Promise<ContractsListData> => {
-    const [contracts, tasks] = await Promise.all([
-      collectAll<Contract>(async (cursor) => {
-        const { data, error } = await apiClient.GET(
-          '/api/v1/projects/{project_id}/contracts',
-          {
-            params: {
-              path: { project_id: numericId },
-              query: cursor ? { after: cursor } : {},
-            },
+  const fetchPage = useCallback(
+    async (cursor: string | null) => {
+      const query: Record<string, unknown> = {
+        // Default sort matches the dashboard fetcher; URL params override.
+        order_by: search.order_by ?? 'updated_at',
+        order: search.order ?? 'desc',
+      }
+      if (search.tag) query.tag = [search.tag]
+      if (search.title) query.title = search.title
+      if (search.completed != null) query.completed = search.completed
+      if (cursor) query.after = cursor
+
+      const { data, error } = await apiClient.GET(
+        '/api/v1/projects/{project_id}/contracts',
+        {
+          params: {
+            path: { project_id: numericId },
+            query,
           },
-        )
-        if (error || !data) throw new Error('Failed to load contracts')
-        return { items: data.items, next_cursor: data.next_cursor ?? null }
-      }),
-      collectAll<Task>(async (cursor) => {
-        const { data, error } = await apiClient.GET(
-          '/api/v1/projects/{project_id}/tasks',
-          {
-            params: {
-              path: { project_id: numericId },
-              query: cursor ? { after: cursor } : {},
-            },
-          },
-        )
-        if (error || !data) throw new Error('Failed to load tasks')
-        return { items: data.items, next_cursor: data.next_cursor ?? null }
-      }),
+        },
+      )
+      if (error || !data) throw new Error('Failed to load contracts')
+      return { items: data.items, next_cursor: data.next_cursor ?? null }
+    },
+    [
+      numericId,
+      search.tag,
+      search.title,
+      search.completed,
+      search.order_by,
+      search.order,
+    ],
+  )
+
+  const { items, loading, error, hasMore, loadMore, reload } =
+    useCursorList<Contract>(fetchPage, [
+      numericId,
+      search.tag ?? '',
+      search.title ?? '',
+      search.completed ?? null,
+      search.order_by ?? '',
+      search.order ?? '',
     ])
 
-    const taskCounts = new Map<number, number>()
-    for (const task of tasks) {
-      if (task.contract_id != null) {
-        taskCounts.set(
-          task.contract_id,
-          (taskCounts.get(task.contract_id) ?? 0) + 1,
-        )
-      }
-    }
-    return { contracts, taskCounts }
-  }, [numericId])
+  const onFiltersChange = (next: ContractFilterValues) => {
+    navigate({
+      // Preserve order_by/order (URL-only).
+      search: () => ({
+        tag: next.tag,
+        title: next.title,
+        completed: next.completed,
+        order_by: search.order_by,
+        order: search.order,
+      }),
+      replace: true,
+    })
+  }
 
-  const { data, error, loading, reload } = useApi<ContractsListData>(fetchAll, [
-    numericId,
-  ])
-
-  if (!validId) {
+  if (!Number.isFinite(numericId)) {
     return null
   }
 
@@ -153,25 +181,26 @@ function ContractListPage() {
     <div className={containerStyle}>
       <div className={headerStyle}>
         <h1 className={titleStyle}>{t('contracts.list.title')}</h1>
-        {!loading && !error && data ? (
+        {!loading && !error ? (
           <span className={countStyle}>
-            {t('contracts.list.count', { count: data.contracts.length })}
+            {t('contracts.list.count', { count: items.length })}
           </span>
         ) : null}
       </div>
+      <ContractFilters value={search} onChange={onFiltersChange} />
 
       {error ? (
         <div>
           <p className={errorStyle} role="alert">
             {error.message}
           </p>
-          <button type="button" className={retryButtonStyle} onClick={reload}>
+          <button type="button" className={loadMoreStyle} onClick={reload}>
             {t('dashboard.retry')}
           </button>
         </div>
       ) : null}
 
-      {!error && loading ? (
+      {!error && loading && items.length === 0 ? (
         <div
           className={skeletonContainerStyle}
           aria-label={t('dashboard.loading')}
@@ -182,22 +211,33 @@ function ContractListPage() {
         </div>
       ) : null}
 
-      {!error && !loading && data && data.contracts.length === 0 ? (
+      {!error && !loading && items.length === 0 ? (
         <p className={stateStyle}>{t('contracts.list.empty')}</p>
       ) : null}
 
-      {!error && !loading && data && data.contracts.length > 0 ? (
+      {items.length > 0 ? (
         <ul className={listStyle}>
-          {data.contracts.map((contract) => (
+          {items.map((contract) => (
             <li key={contract.id}>
               <ContractSummaryCard
                 contract={contract}
                 href={`/p/${projectId}/contracts/${contract.id}`}
-                taskCount={data.taskCounts.get(contract.id) ?? 0}
               />
             </li>
           ))}
         </ul>
+      ) : null}
+
+      {hasMore && !error ? (
+        <button
+          type="button"
+          className={loadMoreStyle}
+          onClick={loadMore}
+          disabled={loading}
+          data-testid="contract-list-load-more"
+        >
+          {loading ? t('dashboard.loading') : t('contracts.list.loadMore')}
+        </button>
       ) : null}
     </div>
   )

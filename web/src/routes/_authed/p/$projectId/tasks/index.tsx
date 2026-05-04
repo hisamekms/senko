@@ -6,6 +6,13 @@ import { TaskFilters, type TaskFilterValues } from '#/components/tasks/TaskFilte
 import { TaskSummaryCard } from '#/components/tasks'
 import { useCursorList } from '#/hooks/useCursorList'
 import { apiClient, type components } from '#/api'
+import {
+  asBoolean,
+  asNumber,
+  asOrder,
+  asString,
+  asStringArray,
+} from '#/api/searchParams'
 import { css } from '../../../../../../styled-system/css'
 
 type Task = components['schemas']['TaskResponse']
@@ -15,47 +22,22 @@ interface TasksSearch {
   tag?: string
   ready?: boolean
   contract?: number
-}
-
-function asStringArray(v: unknown): string[] | undefined {
-  if (Array.isArray(v)) {
-    const out = v.filter((x): x is string => typeof x === 'string')
-    return out.length > 0 ? out : undefined
-  }
-  if (typeof v === 'string') {
-    return v.length > 0 ? [v] : undefined
-  }
-  return undefined
-}
-
-function asString(v: unknown): string | undefined {
-  return typeof v === 'string' && v.length > 0 ? v : undefined
-}
-
-function asBoolean(v: unknown): boolean | undefined {
-  if (typeof v === 'boolean') return v ? true : undefined
-  if (typeof v === 'string') {
-    if (v === 'true') return true
-    if (v === 'false') return undefined
-  }
-  return undefined
-}
-
-function asNumber(v: unknown): number | undefined {
-  if (typeof v === 'number' && Number.isFinite(v)) return v
-  if (typeof v === 'string' && v.length > 0) {
-    const n = Number(v)
-    if (Number.isFinite(n) && Number.isInteger(n) && n > 0) return n
-  }
-  return undefined
+  title?: string
+  priority?: string[]
+  order_by?: string
+  order?: 'asc' | 'desc'
 }
 
 export const Route = createFileRoute('/_authed/p/$projectId/tasks/')({
   validateSearch: (raw: Record<string, unknown>): TasksSearch => ({
     status: asStringArray(raw.status),
     tag: asString(raw.tag),
-    ready: asBoolean(raw.ready),
+    ready: asBoolean(raw.ready) === true ? true : undefined,
     contract: asNumber(raw.contract),
+    title: asString(raw.title),
+    priority: asStringArray(raw.priority),
+    order_by: asString(raw.order_by),
+    order: asOrder(raw.order),
   }),
   component: TaskListPage,
 })
@@ -149,6 +131,12 @@ function TaskListPage() {
       if (search.tag) query.tag = [search.tag]
       if (search.ready) query.ready = true
       if (search.contract != null) query.contract = search.contract
+      if (search.title) query.title = search.title
+      if (search.priority && search.priority.length > 0) {
+        query.priority = search.priority
+      }
+      if (search.order_by) query.order_by = search.order_by
+      if (search.order) query.order = search.order
       if (cursor) query.after = cursor
 
       const { data, error } = await apiClient.GET(
@@ -163,7 +151,17 @@ function TaskListPage() {
       if (error || !data) throw new Error('Failed to load tasks')
       return { items: data.items, next_cursor: data.next_cursor ?? null }
     },
-    [numericId, search.contract, search.ready, search.status, search.tag],
+    [
+      numericId,
+      search.contract,
+      search.ready,
+      search.status,
+      search.tag,
+      search.title,
+      search.priority,
+      search.order_by,
+      search.order,
+    ],
   )
 
   const { items, loading, error, hasMore, loadMore, reload } = useCursorList<Task>(
@@ -175,16 +173,25 @@ function TaskListPage() {
       search.tag ?? '',
       search.ready ?? false,
       search.contract ?? 0,
+      search.title ?? '',
+      JSON.stringify(search.priority ?? []),
+      search.order_by ?? '',
+      search.order ?? '',
     ],
   )
 
   const onFiltersChange = (next: TaskFilterValues) => {
     navigate({
+      // Preserve order_by/order (they're URL-only, not surfaced in TaskFilters).
       search: () => ({
         status: next.status,
         tag: next.tag,
         ready: next.ready,
         contract: next.contract,
+        title: next.title,
+        priority: next.priority,
+        order_by: search.order_by,
+        order: search.order,
       }),
       replace: true,
     })

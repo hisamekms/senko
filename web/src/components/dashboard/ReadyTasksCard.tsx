@@ -8,8 +8,6 @@ import { css } from '../../../styled-system/css'
 
 type Task = components['schemas']['TaskResponse']
 
-const READY_LIMIT = 20
-
 const listStyle = css({
   display: 'flex',
   flexDirection: 'column',
@@ -69,7 +67,6 @@ export function ReadyTasksCard({ projectId }: ReadyTasksCardProps) {
   )
 
   const tasks = data ?? []
-  const truncated = tasks.length === READY_LIMIT
 
   return (
     <DashboardCard
@@ -97,15 +94,13 @@ export function ReadyTasksCard({ projectId }: ReadyTasksCardProps) {
           </li>
         ))}
       </ul>
-      {truncated ? (
-        <a
-          href={`/p/${projectId}/tasks?ready=true`}
-          className={moreLinkStyle}
-          data-testid="ready-more-link"
-        >
-          {t('dashboard.ready.more')}
-        </a>
-      ) : null}
+      <a
+        href={`/p/${projectId}/tasks?ready=true`}
+        className={moreLinkStyle}
+        data-testid="ready-more-link"
+      >
+        {t('dashboard.ready.more')}
+      </a>
     </DashboardCard>
   )
 }

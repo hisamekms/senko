@@ -93,13 +93,13 @@ test.describe('Dashboard', () => {
     )
   })
 
-  // Task #430 — "more" link is rendered iff the card hit its display limit.
-  test('Ready/Contracts more link appears only when count == limit', async ({
+  // Per task #433, every dashboard card carries a permanent "See all" link.
+  // The card-level test covers a "many items" mock and pins the link target.
+  test('Ready/Contracts more link points at the correct destination', async ({
     page,
   }) => {
-    // Mock the ready=true tasks endpoint to return exactly 20 items (the
-    // limit) and the contracts endpoint similarly. Then both more links must
-    // render.
+    // Mock plenty of items per card so the link's destination is what we're
+    // really asserting (count is decoupled from link visibility now).
     const fakeTask = (i: number) => ({
       id: i + 100,
       project_id: 1,
@@ -183,10 +183,12 @@ test.describe('Dashboard', () => {
     )
   })
 
-  test('Ready/Contracts more link is absent when count below limit', async ({
+  test('Ready/Contracts more link is permanent regardless of count', async ({
     page,
   }) => {
-    // 5 items — well below either limit. Both more links must NOT render.
+    // Per task #433, every dashboard card carries a permanent "See all" link
+    // — the prior "only when truncated" gating is gone. Mock 5 items (below
+    // any earlier limit) and assert both more links still render.
     const fakeTask = (i: number) => ({
       id: i + 100,
       project_id: 1,
@@ -262,7 +264,7 @@ test.describe('Dashboard', () => {
     await expect(
       page.locator('[data-testid^="ready-task-"]').first(),
     ).toBeVisible()
-    await expect(page.getByTestId('ready-more-link')).toHaveCount(0)
-    await expect(page.getByTestId('contracts-more-link')).toHaveCount(0)
+    await expect(page.getByTestId('ready-more-link')).toBeVisible()
+    await expect(page.getByTestId('contracts-more-link')).toBeVisible()
   })
 })

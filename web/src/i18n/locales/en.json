@@ -46,11 +46,13 @@
       "in_progress": "In progress",
       "completed": "Completed",
       "canceled": "Canceled",
-      "empty": "No tasks yet"
+      "empty": "No tasks yet",
+      "more": "See all →"
     },
     "recent": {
       "title": "Recently updated tasks",
-      "empty": "No tasks yet"
+      "empty": "No tasks yet",
+      "more": "See all →"
     },
     "ready": {
       "title": "Ready tasks",
@@ -74,8 +76,11 @@
     },
     "filter": {
       "status": "Status",
+      "priority": "Priority",
       "tag": "Tag",
       "tagPlaceholder": "e.g. backend",
+      "title": "Title",
+      "titlePlaceholder": "Search title…",
       "ready": "Ready only",
       "contract": "Contract",
       "reset": "Reset filters"
@@ -117,7 +122,19 @@
       "empty": "No contracts yet.",
       "count": "{{count}} contracts",
       "tasks": "{{count}} tasks",
-      "noTasks": "No related tasks"
+      "noTasks": "No related tasks",
+      "loadMore": "Load more"
+    },
+    "filter": {
+      "completion": "Completion",
+      "completion_all": "All",
+      "completion_in_progress": "In progress",
+      "completion_completed": "Completed",
+      "tag": "Tag",
+      "tagPlaceholder": "e.g. backend",
+      "title": "Title",
+      "titlePlaceholder": "Search title…",
+      "reset": "Reset filters"
     },
     "detail": {
       "notFound": "Contract not found.",

@@ -9,8 +9,6 @@ import { css, cx } from '../../../styled-system/css'
 
 type Contract = components['schemas']['ContractResponse']
 
-const CONTRACTS_LIMIT = 20
-
 const listStyle = css({
   display: 'flex',
   flexDirection: 'column',
@@ -102,7 +100,6 @@ export function ContractsCard({ projectId }: ContractsCardProps) {
   )
 
   const contracts = data ?? []
-  const truncated = contracts.length === CONTRACTS_LIMIT
 
   return (
     <DashboardCard
@@ -157,15 +154,13 @@ export function ContractsCard({ projectId }: ContractsCardProps) {
           )
         })}
       </ul>
-      {truncated ? (
-        <a
-          href={`/p/${projectId}/contracts`}
-          className={moreLinkStyle}
-          data-testid="contracts-more-link"
-        >
-          {t('dashboard.contracts.more')}
-        </a>
-      ) : null}
+      <a
+        href={`/p/${projectId}/contracts`}
+        className={moreLinkStyle}
+        data-testid="contracts-more-link"
+      >
+        {t('dashboard.contracts.more')}
+      </a>
     </DashboardCard>
   )
 }
