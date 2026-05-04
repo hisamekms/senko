@@ -72,4 +72,17 @@ test.describe('Tasks list + detail', () => {
     await expect(page.getByTestId('task-status-in_progress')).toBeVisible()
     await expect(page.getByTestId('dep-link-2')).toBeVisible()
   })
+
+  test('detail page shows assignee username next to the user id', async ({
+    page,
+  }) => {
+    // Task #3 is seeded with assignee_idx=2 → "bob" (see
+    // src/dev/seeder/fixtures.rs:39-42 + resolve_assignee). The assignee row
+    // should render `<username> (#<uid>)` rather than the raw `#<uid>`.
+    await page.goto('/p/1/tasks/3')
+    const assignee = page.getByTestId('task-assignee')
+    await expect(assignee).toBeVisible()
+    await expect(assignee).toContainText('bob')
+    await expect(assignee).toContainText('#')
+  })
 })

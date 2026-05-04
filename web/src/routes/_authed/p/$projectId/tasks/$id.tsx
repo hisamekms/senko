@@ -324,7 +324,7 @@ function TaskDetailPage() {
           {task.assignee_user_id != null ? (
             <>
               <span className={metaKeyStyle}>{t('tasks.detail.assignee')}</span>
-              <span className={metaValueStyle}>
+              <span className={metaValueStyle} data-testid="task-assignee">
                 {task.assignee?.name
                   ? `${task.assignee.name} (#${task.assignee_user_id})`
                   : `#${task.assignee_user_id}`}
