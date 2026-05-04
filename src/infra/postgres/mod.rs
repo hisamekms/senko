@@ -1480,6 +1480,40 @@ impl TaskQueryPort for PostgresBackend {
             conditions.push(format!("t.status IN ({})", placeholders.join(", ")));
         }
 
+        if !filter.priorities.is_empty() {
+            let placeholders: Vec<String> = filter
+                .priorities
+                .iter()
+                .map(|_| {
+                    let p = format!("${param_idx}");
+                    binds.push(BindVal::Int(0));
+                    param_idx += 1;
+                    p
+                })
+                .collect();
+            let base = binds.len() - filter.priorities.len();
+            for (i, p) in filter.priorities.iter().enumerate() {
+                binds[base + i] = BindVal::Int(i32::from(*p) as i64);
+            }
+            conditions.push(format!("t.priority IN ({})", placeholders.join(", ")));
+        }
+
+        if let Some(title) = filter
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            conditions.push(format!(
+                "LOWER(t.title) LIKE LOWER(${param_idx}) ESCAPE '\\'"
+            ));
+            binds.push(BindVal::Str(format!(
+                "%{}%",
+                crate::infra::escape_like(title)
+            )));
+            param_idx += 1;
+        }
+
         if !filter.tags.is_empty() {
             let placeholders: Vec<String> = filter
                 .tags
@@ -2115,6 +2149,36 @@ impl ContractRepository for PostgresBackend {
             ));
             binds.push(BindVal::Str(tag.clone()));
             idx += 1;
+        }
+
+        if let Some(title) = filter
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            sql.push_str(&format!(
+                " AND LOWER(c.title) LIKE LOWER(${idx}) ESCAPE '\\'"
+            ));
+            binds.push(BindVal::Str(format!(
+                "%{}%",
+                crate::infra::escape_like(title)
+            )));
+            idx += 1;
+        }
+
+        if let Some(completed) = filter.completed {
+            // Match SQLite's two-EXISTS predicate: DoD non-empty AND every
+            // item checked. `checked` is INTEGER (1/0) on both backends.
+            let predicate = "(EXISTS (SELECT 1 FROM contract_definition_of_done d \
+                             WHERE d.contract_id = c.id) \
+                             AND NOT EXISTS (SELECT 1 FROM contract_definition_of_done d \
+                             WHERE d.contract_id = c.id AND d.checked = 0))";
+            if completed {
+                sql.push_str(&format!(" AND {predicate}"));
+            } else {
+                sql.push_str(&format!(" AND NOT {predicate}"));
+            }
         }
 
         let dir = match filter.order {
@@ -2853,6 +2917,95 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_list_tasks_filter_by_priority() {
+        use crate::domain::task::Priority;
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let mk = |title: &str, p: Priority| CreateTaskParams {
+            priority: Some(p),
+            ..params(title)
+        };
+        backend
+            .create_task(ProjectId(1), &mk("p0", Priority::P0))
+            .await
+            .unwrap();
+        backend
+            .create_task(ProjectId(1), &mk("p1", Priority::P1))
+            .await
+            .unwrap();
+        backend
+            .create_task(ProjectId(1), &mk("p2", Priority::P2))
+            .await
+            .unwrap();
+
+        let filter = ListTasksFilter {
+            priorities: vec![Priority::P0, Priority::P2],
+            ..Default::default()
+        };
+        let mut titles: Vec<String> = backend
+            .list_tasks(ProjectId(1), &filter)
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|t| t.title().to_string())
+            .collect();
+        titles.sort();
+        assert_eq!(titles, vec!["p0", "p2"]);
+    }
+
+    #[tokio::test]
+    async fn test_list_tasks_filter_by_title() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        backend
+            .create_task(ProjectId(1), &params("Refactor Auth"))
+            .await
+            .unwrap();
+        backend
+            .create_task(ProjectId(1), &params("ship release"))
+            .await
+            .unwrap();
+        backend
+            .create_task(ProjectId(1), &params("100% rollout"))
+            .await
+            .unwrap();
+
+        let case_insensitive = backend
+            .list_tasks(
+                ProjectId(1),
+                &ListTasksFilter {
+                    title: Some("REFACTOR".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .items;
+        assert_eq!(case_insensitive.len(), 1);
+        assert_eq!(case_insensitive[0].title(), "Refactor Auth");
+
+        // `%` is matched literally — confirms ESCAPE works on Postgres too.
+        let percent = backend
+            .list_tasks(
+                ProjectId(1),
+                &ListTasksFilter {
+                    title: Some("100%".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .items;
+        assert_eq!(percent.len(), 1);
+        assert_eq!(percent[0].title(), "100% rollout");
+    }
+
+    #[tokio::test]
     async fn test_next_task() {
         if test_url().is_none() {
             return;
@@ -3386,5 +3539,70 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(updated.contract_id(), Some(c.id()));
+    }
+
+    #[tokio::test]
+    async fn test_list_contracts_filter_by_title_and_completed() {
+        if test_url().is_none() {
+            return;
+        }
+        let backend = setup().await;
+        let mk = |title: &str, dod: Vec<&str>| CreateContractParams {
+            title: title.to_string(),
+            description: None,
+            definition_of_done: dod.iter().map(|s| s.to_string()).collect(),
+            tags: vec![],
+            metadata: None,
+        };
+
+        let _empty = backend
+            .create_contract(ProjectId(1), &mk("API redesign", vec![]))
+            .await
+            .unwrap();
+        let all_done = backend
+            .create_contract(ProjectId(1), &mk("api docs", vec!["one", "two"]))
+            .await
+            .unwrap();
+        backend.check_dod(all_done.id(), 1).await.unwrap();
+        backend.check_dod(all_done.id(), 2).await.unwrap();
+        let _partial = backend
+            .create_contract(ProjectId(1), &mk("Mobile launch", vec!["x"]))
+            .await
+            .unwrap();
+
+        // Title filter (case-insensitive).
+        let mut titles: Vec<String> = backend
+            .list_contracts(
+                ProjectId(1),
+                &ListContractsFilter {
+                    title: Some("api".into()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|c| c.title().to_string())
+            .collect();
+        titles.sort();
+        assert_eq!(titles, vec!["API redesign", "api docs"]);
+
+        // Completed=true keeps only `api docs`.
+        let completed: Vec<String> = backend
+            .list_contracts(
+                ProjectId(1),
+                &ListContractsFilter {
+                    completed: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap()
+            .items
+            .into_iter()
+            .map(|c| c.title().to_string())
+            .collect();
+        assert_eq!(completed, vec!["api docs"]);
     }
 }

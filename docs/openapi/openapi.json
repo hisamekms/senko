@@ -428,6 +428,24 @@
             }
           },
           {
+            "name": "title",
+            "in": "query",
+            "description": "Case-insensitive substring filter on contract title (max 100 characters).\nEmpty / whitespace-only values are treated as \"no filter\".",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "completed",
+            "in": "query",
+            "description": "`true` keeps only contracts with non-empty DoD where every item is\nchecked; `false` keeps the complement.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -1962,6 +1980,27 @@
             "required": false,
             "schema": {
               "$ref": "#/components/schemas/TaskId"
+            }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "description": "Repeatable. One of `P0`, `P1`, `P2`, `P3`. Multiple values are OR-combined.",
+            "required": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "title",
+            "in": "query",
+            "description": "Case-insensitive substring filter on task title (max 100 characters).\nEmpty / whitespace-only values are treated as \"no filter\".",
+            "required": false,
+            "schema": {
+              "type": "string"
             }
           },
           {

@@ -1715,6 +1715,27 @@ fn list_tasks(
         }
     }
 
+    if !filter.priorities.is_empty() {
+        let placeholders: Vec<&str> = filter.priorities.iter().map(|_| "?").collect();
+        conditions.push(format!("t.priority IN ({})", placeholders.join(", ")));
+        for p in &filter.priorities {
+            param_values.push(Box::new(i32::from(*p)));
+        }
+    }
+
+    if let Some(title) = filter
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        conditions.push("LOWER(t.title) LIKE LOWER(?) ESCAPE '\\'".to_string());
+        param_values.push(Box::new(format!(
+            "%{}%",
+            crate::infra::escape_like(title)
+        )));
+    }
+
     if !filter.tags.is_empty() {
         let placeholders: Vec<&str> = filter.tags.iter().map(|_| "?").collect();
         conditions.push(format!(
@@ -2376,6 +2397,34 @@ fn list_contracts(
             " AND EXISTS (SELECT 1 FROM contract_tags ct WHERE ct.contract_id = c.id AND ct.tag = ?)",
         );
         param_values.push(Box::new(tag.clone()));
+    }
+
+    if let Some(title) = filter
+        .title
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        sql.push_str(" AND LOWER(c.title) LIKE LOWER(?) ESCAPE '\\'");
+        param_values.push(Box::new(format!(
+            "%{}%",
+            crate::infra::escape_like(title)
+        )));
+    }
+
+    if let Some(completed) = filter.completed {
+        // "completed" means: DoD non-empty AND every item checked.
+        // The two-EXISTS predicate matches the storage shape of
+        // contract_definition_of_done (one row per item, `checked` integer).
+        let predicate = "(EXISTS (SELECT 1 FROM contract_definition_of_done d \
+                         WHERE d.contract_id = c.id) \
+                         AND NOT EXISTS (SELECT 1 FROM contract_definition_of_done d \
+                         WHERE d.contract_id = c.id AND d.checked = 0))";
+        if completed {
+            sql.push_str(&format!(" AND {predicate}"));
+        } else {
+            sql.push_str(&format!(" AND NOT {predicate}"));
+        }
     }
 
     let dir = match filter.order {
@@ -3850,6 +3899,170 @@ mod tests {
     }
 
     #[test]
+    fn list_tasks_filter_by_priority() {
+        use crate::domain::task::Priority;
+        let (_tmp, conn) = setup();
+        create_task_with_priority(&conn, "p0", Priority::P0);
+        create_task_with_priority(&conn, "p1", Priority::P1);
+        create_task_with_priority(&conn, "p2", Priority::P2);
+        create_task_with_priority(&conn, "p3", Priority::P3);
+
+        // Empty Vec → no priority filter, returns everything.
+        let all = list_tasks(&conn, ProjectId(1), &ListTasksFilter::default())
+            .unwrap()
+            .items;
+        assert_eq!(all.len(), 4);
+
+        // Single value.
+        let only_p1 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                priorities: vec![Priority::P1],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(only_p1.len(), 1);
+        assert_eq!(only_p1[0].title(), "p1");
+
+        // Multiple values are OR-combined.
+        let p0_or_p2 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                priorities: vec![Priority::P0, Priority::P2],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let mut titles: Vec<&str> = p0_or_p2.iter().map(|t| t.title()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["p0", "p2"]);
+
+        // Combined with status filter.
+        let drafts_p1_or_p3 = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                priorities: vec![Priority::P1, Priority::P3],
+                statuses: vec![TaskStatus::Draft],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let mut titles: Vec<&str> = drafts_p1_or_p3.iter().map(|t| t.title()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["p1", "p3"]);
+    }
+
+    #[test]
+    fn list_tasks_filter_by_title() {
+        use crate::domain::task::Priority;
+        let (_tmp, conn) = setup();
+        create_task(&conn, ProjectId(1), &default_create_params("Refactor Auth")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("refactor cache")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("ship release")).unwrap();
+        // Tasks whose title contains LIKE wildcards literally — must not be
+        // matched when those characters appear in the search query.
+        create_task(&conn, ProjectId(1), &default_create_params("100% complete")).unwrap();
+        create_task(&conn, ProjectId(1), &default_create_params("snake_case bug")).unwrap();
+
+        // Case-insensitive substring.
+        let refactors = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("REFACTOR".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let mut titles: Vec<&str> = refactors.iter().map(|t| t.title()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["Refactor Auth", "refactor cache"]);
+
+        // Whitespace-only is normalized to None upstream; passing it through
+        // here exercises the repository-side defensive trim.
+        let blank = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("   ".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(blank.len(), 5);
+
+        // `%` in the query must be matched literally (no wildcard expansion).
+        let percent = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("100%".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(percent.len(), 1);
+        assert_eq!(percent[0].title(), "100% complete");
+
+        // `_` in the query must be matched literally too.
+        let underscore = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("snake_case".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(underscore.len(), 1);
+        assert_eq!(underscore[0].title(), "snake_case bug");
+
+        // A `_` in the query should not match a non-underscore character —
+        // proves the escape is working (without escaping, `snake_case` would
+        // also match "snakeXcase" if any task had that title).
+        create_task(&conn, ProjectId(1), &default_create_params("snakeXcase")).unwrap();
+        let still_one = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("snake_case".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(still_one.len(), 1);
+        assert_eq!(still_one[0].title(), "snake_case bug");
+
+        // Combined with priority filter.
+        create_task_with_priority(&conn, "Refactor Storage", Priority::P0);
+        let p0_refactors = list_tasks(
+            &conn,
+            ProjectId(1),
+            &ListTasksFilter {
+                title: Some("refactor".into()),
+                priorities: vec![Priority::P0],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(p0_refactors.len(), 1);
+        assert_eq!(p0_refactors[0].title(), "Refactor Storage");
+    }
+
+    #[test]
     fn list_tasks_pagination_cursor() {
         let (_tmp, conn) = setup();
         for i in 0..5 {
@@ -4100,6 +4313,183 @@ mod tests {
         assert_eq!(page2.items.len(), 1);
         assert_eq!(page2.items[0].title(), "B");
         assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_contracts_filter_by_title() {
+        let (_tmp, conn) = setup();
+        let mk = |title: &str| {
+            create_contract(
+                &conn,
+                ProjectId(1),
+                &CreateContractParams {
+                    title: title.into(),
+                    description: None,
+                    definition_of_done: vec![],
+                    tags: vec![],
+                    metadata: None,
+                },
+            )
+            .unwrap();
+        };
+        mk("API redesign");
+        mk("api docs");
+        mk("Mobile launch");
+        mk("100% rollout");
+        mk("snake_case fields");
+
+        let api = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                title: Some("api".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let mut titles: Vec<&str> = api.iter().map(|c| c.title()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["API redesign", "api docs"]);
+
+        // `%` and `_` in the query are matched literally, not as wildcards.
+        let percent = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                title: Some("100%".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(percent.len(), 1);
+        assert_eq!(percent[0].title(), "100% rollout");
+
+        mk("snakeXcase fields");
+        let underscore = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                title: Some("snake_case".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert_eq!(underscore.len(), 1);
+        assert_eq!(underscore[0].title(), "snake_case fields");
+    }
+
+    #[test]
+    fn list_contracts_filter_by_completed() {
+        let (_tmp, conn) = setup();
+
+        // Empty DoD → not completed.
+        let empty = create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "empty".into(),
+                description: None,
+                definition_of_done: vec![],
+                tags: vec!["t1".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+
+        // All checked → completed.
+        let all_checked = create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "all-checked".into(),
+                description: None,
+                definition_of_done: vec!["one".into(), "two".into()],
+                tags: vec!["t1".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+        set_contract_dod_checked(&conn, all_checked.id(), 1, true).unwrap();
+        set_contract_dod_checked(&conn, all_checked.id(), 2, true).unwrap();
+
+        // Partially checked → not completed.
+        let partial = create_contract(
+            &conn,
+            ProjectId(1),
+            &CreateContractParams {
+                title: "partial".into(),
+                description: None,
+                definition_of_done: vec!["a".into(), "b".into()],
+                tags: vec!["t2".into()],
+                metadata: None,
+            },
+        )
+        .unwrap();
+        set_contract_dod_checked(&conn, partial.id(), 1, true).unwrap();
+
+        let completed_true = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                completed: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let titles: Vec<&str> = completed_true.iter().map(|c| c.title()).collect();
+        assert_eq!(titles, vec!["all-checked"]);
+
+        let completed_false = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                completed: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let mut titles: Vec<&str> = completed_false.iter().map(|c| c.title()).collect();
+        titles.sort();
+        assert_eq!(titles, vec!["empty", "partial"]);
+
+        // Combined with tag filter — completed=true on tag t2 yields nothing
+        // (the only t2 contract is `partial`).
+        let combined = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                tags: vec!["t2".into()],
+                completed: Some(true),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        assert!(combined.is_empty());
+
+        // completed=false on tag t1 → only the empty-DoD contract
+        // (`all-checked` is filtered out).
+        let combined2 = list_contracts(
+            &conn,
+            ProjectId(1),
+            &ListContractsFilter {
+                tags: vec!["t1".into()],
+                completed: Some(false),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .items;
+        let titles: Vec<&str> = combined2.iter().map(|c| c.title()).collect();
+        assert_eq!(titles, vec!["empty"]);
+
+        // Reference-only use (silences unused warning).
+        let _ = empty;
     }
 
     // --- Sort + composite cursor tests for `list_tasks` / `list_contracts` ---

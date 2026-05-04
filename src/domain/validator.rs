@@ -15,6 +15,7 @@ pub const MAX_USERNAME_LEN: usize = 100;
 pub const MAX_DISPLAY_NAME_LEN: usize = 100;
 pub const MAX_PROJECT_NAME_LEN: usize = 500;
 pub const MAX_PROJECT_DESCRIPTION_LEN: usize = 50_000;
+pub const MAX_TITLE_QUERY_LEN: usize = 100;
 
 pub fn validate_string_length(field: &str, value: &str, max_len: usize) -> Result<(), DomainError> {
     let len = value.chars().count();

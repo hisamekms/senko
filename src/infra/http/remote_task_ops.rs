@@ -742,6 +742,20 @@ impl TaskOperations for RemoteTaskOperations {
         if let Some(n) = filter.id_max {
             params.push(format!("id_max={n}"));
         }
+        for p in &filter.priorities {
+            params.push(format!("priority={p}"));
+        }
+        if let Some(title) = filter
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            params.push(format!(
+                "title={}",
+                utf8_percent_encode(title, NON_ALPHANUMERIC)
+            ));
+        }
         if let Some(n) = filter.limit {
             params.push(format!("limit={n}"));
         }

@@ -193,6 +193,20 @@ impl ContractOperations for RemoteContractOperations {
                 utf8_percent_encode(tag, NON_ALPHANUMERIC)
             ));
         }
+        if let Some(title) = filter
+            .title
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            params.push(format!(
+                "title={}",
+                utf8_percent_encode(title, NON_ALPHANUMERIC)
+            ));
+        }
+        if let Some(completed) = filter.completed {
+            params.push(format!("completed={completed}"));
+        }
         if let Some(l) = filter.limit {
             params.push(format!("limit={l}"));
         }

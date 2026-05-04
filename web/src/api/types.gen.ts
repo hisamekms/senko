@@ -1307,6 +1307,16 @@ export interface operations {
         parameters: {
             query?: {
                 tag?: string[];
+                /**
+                 * @description Case-insensitive substring filter on contract title (max 100 characters).
+                 *     Empty / whitespace-only values are treated as "no filter".
+                 */
+                title?: string;
+                /**
+                 * @description `true` keeps only contracts with non-empty DoD where every item is
+                 *     checked; `false` keeps the complement.
+                 */
+                completed?: boolean;
                 limit?: number;
                 after?: string;
                 /** @description Sort key. One of `id` (default), `updated_at`. */
@@ -2194,6 +2204,13 @@ export interface operations {
                 contract?: components["schemas"]["ContractId"];
                 id_min?: components["schemas"]["TaskId"];
                 id_max?: components["schemas"]["TaskId"];
+                /** @description Repeatable. One of `P0`, `P1`, `P2`, `P3`. Multiple values are OR-combined. */
+                priority?: string[];
+                /**
+                 * @description Case-insensitive substring filter on task title (max 100 characters).
+                 *     Empty / whitespace-only values are treated as "no filter".
+                 */
+                title?: string;
                 limit?: number;
                 after?: string;
                 /** @description Sort key. One of `id` (default), `updated_at`, `priority`. */

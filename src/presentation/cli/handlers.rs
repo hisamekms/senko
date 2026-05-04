@@ -409,6 +409,8 @@ pub async fn cmd_list(
         contract_id: contract,
         id_min,
         id_max,
+        priorities: Vec::new(),
+        title: None,
         limit: effective_limit,
         after,
         order_by: TaskOrderBy::default(),
@@ -2865,6 +2867,8 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
             };
             let filter = ListContractsFilter {
                 tags: tag.clone(),
+                title: None,
+                completed: None,
                 limit: *limit,
                 after,
                 order_by: ContractOrderBy::default(),

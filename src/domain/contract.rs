@@ -497,6 +497,13 @@ impl ContractOrderBy {
 #[derive(Clone, Default)]
 pub struct ListContractsFilter {
     pub tags: Vec<String>,
+    /// Case-insensitive substring filter on `title`. Trimmed and
+    /// length-validated by the handler.
+    pub title: Option<String>,
+    /// `Some(true)` keeps only contracts whose DoD is non-empty and fully
+    /// checked; `Some(false)` keeps the complement (no DoD or any unchecked
+    /// item); `None` disables the filter.
+    pub completed: Option<bool>,
     pub limit: Option<u32>,
     /// Composite cursor pinned to the same `order_by` axis as this filter.
     pub after: Option<crate::domain::pagination::CursorPayload>,

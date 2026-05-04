@@ -285,6 +285,24 @@ async fn resolve_assignee(state: &AppState, task: &Task) -> Option<User> {
     }
 }
 
+/// Trim a `?title=` query value and treat empty/whitespace as "no filter".
+/// Returns `Ok(None)` when the user supplied no usable filter, or
+/// `Ok(Some(trimmed))` when they did. Length is validated against
+/// `MAX_TITLE_QUERY_LEN` so the wire-side cap matches the DoD-mandated 100
+/// characters and produces the same error shape as every other length check.
+fn normalize_title_query(raw: &Option<String>) -> Result<Option<String>, ApiError> {
+    use crate::domain::validator::{MAX_TITLE_QUERY_LEN, validate_string_length};
+    let Some(value) = raw.as_deref() else {
+        return Ok(None);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    validate_string_length("title", trimmed, MAX_TITLE_QUERY_LEN).map_err(classify_domain)?;
+    Ok(Some(trimmed.to_string()))
+}
+
 /// Decode a base64 cursor string and verify its kind matches the requested
 /// `order_by`. Returns `None` if `raw` is `None`.
 ///
@@ -475,6 +493,13 @@ struct ListTasksQuery {
     id_min: Option<TaskId>,
     #[serde(default)]
     id_max: Option<TaskId>,
+    /// Repeatable. One of `P0`, `P1`, `P2`, `P3`. Multiple values are OR-combined.
+    #[serde(default)]
+    priority: Vec<String>,
+    /// Case-insensitive substring filter on task title (max 100 characters).
+    /// Empty / whitespace-only values are treated as "no filter".
+    #[serde(default)]
+    title: Option<String>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
@@ -496,6 +521,14 @@ struct ListTasksQuery {
 struct ListContractsQuery {
     #[serde(default)]
     tag: Vec<String>,
+    /// Case-insensitive substring filter on contract title (max 100 characters).
+    /// Empty / whitespace-only values are treated as "no filter".
+    #[serde(default)]
+    title: Option<String>,
+    /// `true` keeps only contracts with non-empty DoD where every item is
+    /// checked; `false` keeps the complement.
+    #[serde(default)]
+    completed: Option<bool>,
     #[serde(default)]
     limit: Option<u32>,
     #[serde(default)]
@@ -1308,6 +1341,15 @@ async fn list_tasks(
     let (assignee_user_id, assignee_self) =
         resolve_query_assignee_self(query.assignee_user_id, &auth)?;
 
+    let priorities: Vec<Priority> = query
+        .priority
+        .iter()
+        .map(|p| p.parse::<Priority>())
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(classify_error)?;
+
+    let title = normalize_title_query(&query.title)?;
+
     let filter = ListTasksFilter {
         statuses,
         tags: query.tag,
@@ -1320,6 +1362,8 @@ async fn list_tasks(
         contract_id: query.contract,
         id_min: query.id_min,
         id_max: query.id_max,
+        priorities,
+        title,
         limit: effective_limit,
         after,
         order_by,
@@ -2241,8 +2285,12 @@ async fn list_contracts(
 
     let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind())?;
 
+    let title = normalize_title_query(&query.title)?;
+
     let filter = ListContractsFilter {
         tags: query.tag,
+        title,
+        completed: query.completed,
         limit,
         after,
         order_by,
@@ -3440,6 +3488,54 @@ mod tests {
             oidc_client_id: None,
             master_group: None,
         }
+    }
+
+    // --- ListContractsQuery deserialization (task #432) ---
+    //
+    // We don't unit-test the repeated-`priority` parsing here: that path goes
+    // through `axum_extra::extract::Query` (which uses `serde_html_form`) and
+    // belongs to the framework. The handler→SQL plumbing for priorities is
+    // covered by the SQLite repository tests in `crate::infra::sqlite`.
+
+    #[test]
+    fn list_contracts_query_parses_completed_and_title() {
+        let q: ListContractsQuery =
+            serde_urlencoded::from_str("completed=true&title=foo").unwrap();
+        assert_eq!(q.completed, Some(true));
+        assert_eq!(q.title.as_deref(), Some("foo"));
+
+        let q: ListContractsQuery = serde_urlencoded::from_str("completed=false").unwrap();
+        assert_eq!(q.completed, Some(false));
+    }
+
+    #[test]
+    fn normalize_title_query_handles_blank_and_whitespace() {
+        // Missing → None.
+        assert!(matches!(normalize_title_query(&None), Ok(None)));
+        // Empty string → None.
+        assert!(matches!(
+            normalize_title_query(&Some(String::new())),
+            Ok(None)
+        ));
+        // Whitespace-only → None (trim then empty).
+        assert!(matches!(
+            normalize_title_query(&Some("   \t".into())),
+            Ok(None)
+        ));
+        // Trims surrounding whitespace and keeps the inner string.
+        match normalize_title_query(&Some("  hello world  ".into())) {
+            Ok(Some(s)) => assert_eq!(s, "hello world"),
+            other => panic!("expected Ok(Some), got {:?}", other.is_ok()),
+        }
+    }
+
+    #[test]
+    fn normalize_title_query_rejects_overlong_value() {
+        let too_long: String = "a".repeat(101);
+        let result = normalize_title_query(&Some(too_long));
+        assert!(result.is_err());
+        let resp = result.err().unwrap().into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]

@@ -13,6 +13,24 @@ pub mod secrets;
 #[cfg(feature = "postgres")]
 pub mod postgres;
 
+/// Escape `%`, `_`, and `\` in a user-supplied substring so it is matched
+/// literally inside a SQL `LIKE ... ESCAPE '\'` expression. Both SQLite and
+/// PostgreSQL accept this escape clause, so the same helper feeds both
+/// repository implementations.
+pub(in crate::infra) fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '\\' | '%' | '_' => {
+                out.push('\\');
+                out.push(c);
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Internal newtype for the auto-increment DB primary key of a task row.
 ///
 /// Kept distinct from [`crate::domain::task::TaskId`] (the per-project

@@ -1285,6 +1285,12 @@ pub struct ListTasksFilter {
     pub id_min: Option<TaskId>,
     pub id_max: Option<TaskId>,
     pub limit: Option<u32>,
+    /// OR-combined priority filter. Empty means no priority filter.
+    pub priorities: Vec<Priority>,
+    /// Case-insensitive substring filter on `title`. Already trimmed and
+    /// length-validated by the handler; repositories treat `Some("")` as no
+    /// filter defensively but the canonical "no filter" representation is `None`.
+    pub title: Option<String>,
     /// Composite cursor pinned to the same `order_by` axis as this filter.
     /// `Id` for `order_by=Id`, `Tagged::UpdatedAt` for `order_by=UpdatedAt`, etc.
     /// Mismatch is a programmer error caught by the handler before reaching the
