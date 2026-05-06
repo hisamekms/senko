@@ -623,13 +623,22 @@ fn get_project_by_name(conn: &Connection, name: &str) -> Result<Project> {
     Ok(Project::new(id, name.to_string(), description, created_at))
 }
 
-fn list_projects(conn: &Connection, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+fn list_projects(
+    conn: &Connection,
+    filter: &ListProjectsFilter,
+    caller_user_id: Option<UserId>,
+) -> Result<ListPage<Project>> {
     let mut sql = String::from("SELECT id, name, description, created_at FROM projects WHERE 1=1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     if let Some(after) = filter.after {
         sql.push_str(" AND id > ?");
         let after_i64: i64 = after.into();
         param_values.push(Box::new(after_i64));
+    }
+    if let Some(uid) = caller_user_id {
+        sql.push_str(" AND id IN (SELECT project_id FROM project_members WHERE user_id = ?)");
+        let uid_i64: i64 = uid.into();
+        param_values.push(Box::new(uid_i64));
     }
     sql.push_str(" ORDER BY id");
     if let Some(l) = filter.limit {
@@ -2948,9 +2957,17 @@ impl ApiKeyRepository for SqliteBackend {
 
 #[async_trait]
 impl ProjectQueryPort for SqliteBackend {
-    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+    async fn list_projects(
+        &self,
+        filter: &ListProjectsFilter,
+        caller_user_id: Option<UserId>,
+    ) -> Result<ListPage<Project>> {
         let filter = filter.clone();
-        blocking!(self, |conn: &Connection| list_projects(conn, &filter))
+        blocking!(self, |conn: &Connection| list_projects(
+            conn,
+            &filter,
+            caller_user_id
+        ))
     }
 }
 
@@ -4192,6 +4209,7 @@ mod tests {
                 limit: Some(2),
                 after: None,
             },
+            None,
         )
         .unwrap();
         assert_eq!(page1.items.len(), 2);
@@ -4203,10 +4221,160 @@ mod tests {
                 limit: Some(2),
                 after: Some(after1),
             },
+            None,
         )
         .unwrap();
         assert_eq!(page2.items.len(), 2);
         assert!(page2.next_cursor.is_none());
+    }
+
+    #[test]
+    fn list_projects_filters_by_caller_membership() {
+        let (_tmp, conn) = setup();
+        let user_a = create_user(
+            &conn,
+            &CreateUserParams {
+                username: Username("alice".into()),
+                sub: None,
+                display_name: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        let user_b = create_user(
+            &conn,
+            &CreateUserParams {
+                username: Username("bob".into()),
+                sub: None,
+                display_name: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        let p_alpha = create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "alpha".into(),
+                description: None,
+            },
+        )
+        .unwrap();
+        let p_bravo = create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "bravo".into(),
+                description: None,
+            },
+        )
+        .unwrap();
+        let _p_charlie = create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "charlie".into(),
+                description: None,
+            },
+        )
+        .unwrap();
+        add_project_member(
+            &conn,
+            p_alpha.id(),
+            &AddProjectMemberParams::new(user_a.id(), Some(Role::Member)),
+        )
+        .unwrap();
+        add_project_member(
+            &conn,
+            p_bravo.id(),
+            &AddProjectMemberParams::new(user_b.id(), Some(Role::Member)),
+        )
+        .unwrap();
+
+        let scoped =
+            list_projects(&conn, &ListProjectsFilter::default(), Some(user_a.id())).unwrap();
+        let names: Vec<&str> = scoped.items.iter().map(|p| p.name()).collect();
+        assert_eq!(names, vec!["alpha"]);
+
+        let unscoped = list_projects(&conn, &ListProjectsFilter::default(), None).unwrap();
+        let unscoped_names: Vec<&str> = unscoped.items.iter().map(|p| p.name()).collect();
+        // Default project (id 1) + alpha + bravo + charlie = 4.
+        assert_eq!(unscoped.items.len(), 4);
+        assert!(unscoped_names.contains(&"alpha"));
+        assert!(unscoped_names.contains(&"charlie"));
+    }
+
+    #[test]
+    fn list_projects_caller_membership_composes_with_pagination() {
+        let (_tmp, conn) = setup();
+        let user = create_user(
+            &conn,
+            &CreateUserParams {
+                username: Username("carol".into()),
+                sub: None,
+                display_name: None,
+                email: None,
+            },
+        )
+        .unwrap();
+        // Three member projects + one non-member project.
+        let mut member_ids: Vec<ProjectId> = Vec::new();
+        for name in &["mp1", "mp2", "mp3"] {
+            let p = create_project(
+                &conn,
+                &CreateProjectParams {
+                    name: (*name).into(),
+                    description: None,
+                },
+            )
+            .unwrap();
+            add_project_member(
+                &conn,
+                p.id(),
+                &AddProjectMemberParams::new(user.id(), Some(Role::Member)),
+            )
+            .unwrap();
+            member_ids.push(p.id());
+        }
+        let _other = create_project(
+            &conn,
+            &CreateProjectParams {
+                name: "other".into(),
+                description: None,
+            },
+        )
+        .unwrap();
+
+        let page1 = list_projects(
+            &conn,
+            &ListProjectsFilter {
+                limit: Some(2),
+                after: None,
+            },
+            Some(user.id()),
+        )
+        .unwrap();
+        assert_eq!(page1.items.len(), 2);
+        let cursor = page1.next_cursor.expect("more pages");
+        let after: ProjectId = Cursor::decode(&cursor).unwrap();
+
+        let page2 = list_projects(
+            &conn,
+            &ListProjectsFilter {
+                limit: Some(2),
+                after: Some(after),
+            },
+            Some(user.id()),
+        )
+        .unwrap();
+        assert_eq!(page2.items.len(), 1);
+        assert!(page2.next_cursor.is_none());
+        assert_eq!(page2.items[0].id(), member_ids[2]);
+        // The non-member "other" project must never appear.
+        let all_returned: Vec<&str> = page1
+            .items
+            .iter()
+            .chain(page2.items.iter())
+            .map(|p| p.name())
+            .collect();
+        assert!(!all_returned.contains(&"other"));
     }
 
     #[test]
@@ -5936,7 +6104,7 @@ mod tests {
         assert_eq!(by_name.id(), proj.id());
 
         let list = backend
-            .list_projects(&ListProjectsFilter::default())
+            .list_projects(&ListProjectsFilter::default(), None)
             .await
             .unwrap();
         assert!(!list.items.is_empty());

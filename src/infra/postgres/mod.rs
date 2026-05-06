@@ -754,13 +754,23 @@ impl ApiKeyRepository for PostgresBackend {
 
 #[async_trait]
 impl ProjectQueryPort for PostgresBackend {
-    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+    async fn list_projects(
+        &self,
+        filter: &ListProjectsFilter,
+        caller_user_id: Option<UserId>,
+    ) -> Result<ListPage<Project>> {
         let pool = self.pool().await?;
         let mut sql =
             String::from("SELECT id, name, description, created_at FROM projects WHERE TRUE");
         let mut idx = 1;
         if filter.after.is_some() {
             sql.push_str(&format!(" AND id > ${idx}"));
+            idx += 1;
+        }
+        if caller_user_id.is_some() {
+            sql.push_str(&format!(
+                " AND id IN (SELECT project_id FROM project_members WHERE user_id = ${idx})"
+            ));
             idx += 1;
         }
         sql.push_str(" ORDER BY id");
@@ -770,6 +780,9 @@ impl ProjectQueryPort for PostgresBackend {
         let mut query = sqlx::query(&sql);
         if let Some(after) = filter.after {
             query = query.bind(after);
+        }
+        if let Some(uid) = caller_user_id {
+            query = query.bind(uid);
         }
         if let Some(l) = filter.limit {
             query = query.bind(l as i64 + 1);
@@ -3050,8 +3063,11 @@ mod tests {
         let by_name = backend.get_project_by_name("test-project").await.unwrap();
         assert_eq!(by_name.id(), project.id());
 
-        let all = backend.list_projects().await.unwrap();
-        assert!(all.len() >= 2);
+        let all = backend
+            .list_projects(&ListProjectsFilter::default(), None)
+            .await
+            .unwrap();
+        assert!(all.items.len() >= 2);
 
         backend.delete_project(project.id()).await.unwrap();
     }

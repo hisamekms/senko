@@ -79,8 +79,12 @@ impl ProjectService {
 
 #[async_trait]
 impl ProjectOperations for ProjectService {
-    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
-        self.backend.list_projects(filter).await
+    async fn list_projects(
+        &self,
+        filter: &ListProjectsFilter,
+        caller_user_id: Option<UserId>,
+    ) -> Result<ListPage<Project>> {
+        self.backend.list_projects(filter, caller_user_id).await
     }
 
     async fn create_project(
@@ -293,6 +297,56 @@ mod tests {
 
         let (_project, events) = svc.create_project(&project_params(), None).await.unwrap();
         assert_eq!(events, vec![ProjectEvent::Created]);
+    }
+
+    #[tokio::test]
+    async fn list_projects_forwards_caller_user_id() {
+        let backend = new_backend();
+        let svc = ProjectService::new(backend.clone());
+        let alice = create_user(&backend, "alice").await;
+        let bob = create_user(&backend, "bob").await;
+
+        // Default project (id 1) has no members in this fixture; create two
+        // additional projects, each owned by a different user.
+        let (alice_project, _) = svc
+            .create_project(
+                &CreateProjectParams {
+                    name: "alice-only".to_string(),
+                    description: None,
+                },
+                Some(alice.id()),
+            )
+            .await
+            .unwrap();
+        let (_bob_project, _) = svc
+            .create_project(
+                &CreateProjectParams {
+                    name: "bob-only".to_string(),
+                    description: None,
+                },
+                Some(bob.id()),
+            )
+            .await
+            .unwrap();
+
+        // Caller scoped to Alice: only Alice's project comes back.
+        let scoped = svc
+            .list_projects(&ListProjectsFilter::default(), Some(alice.id()))
+            .await
+            .unwrap();
+        let names: Vec<&str> = scoped.items.iter().map(|p| p.name()).collect();
+        assert_eq!(names, vec!["alice-only"]);
+        assert_eq!(scoped.items[0].id(), alice_project.id());
+
+        // None caller (master / no-auth): everything visible.
+        let unscoped = svc
+            .list_projects(&ListProjectsFilter::default(), None)
+            .await
+            .unwrap();
+        let unscoped_names: Vec<&str> = unscoped.items.iter().map(|p| p.name()).collect();
+        assert!(unscoped_names.contains(&"default"));
+        assert!(unscoped_names.contains(&"alice-only"));
+        assert!(unscoped_names.contains(&"bob-only"));
     }
 
     #[tokio::test]

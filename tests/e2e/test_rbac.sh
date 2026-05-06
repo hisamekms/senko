@@ -243,7 +243,49 @@ status_with_token "$OWNER_KEY" -X POST "$BASE/projects/$PROJECT_ID/members" \
   -d "{\"user_id\":$VIEWER_UID,\"role\":\"viewer\"}" >/dev/null
 
 # =============================================
-# 7. Non-master caller: POST /users → 403
+# 7. Membership-scoped: GET /projects (list)
+# =============================================
+# The list endpoint must mirror the per-project membership rule:
+#   - master:    sees every project
+#   - member:    sees only projects they belong to
+#   - nonmember: sees an empty list
+
+echo ""
+echo "=== GET /projects: master sees all projects ==="
+# Create a second project owned by OWNER so that the auto-Owner membership row
+# can be created (the master synthetic user has no `users` row, so master-led
+# project creation would violate the project_members FK).
+SCOPED_PROJECT_ID=$(curl -sf -X POST "$BASE/projects" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $OWNER_KEY" \
+  -d '{"name":"scoped-extra"}' | jq -r '.id')
+MASTER_LIST=$(curl -sf -H "Authorization: Bearer $MASTER_KEY" "$BASE/projects")
+MASTER_HAS_SCOPED=$(echo "$MASTER_LIST" | jq --arg id "$SCOPED_PROJECT_ID" '[.items[] | select(.id == ($id | tonumber))] | length')
+MASTER_HAS_DEFAULT=$(echo "$MASTER_LIST" | jq --arg id "$PROJECT_ID" '[.items[] | select(.id == ($id | tonumber))] | length')
+assert_eq "1" "$MASTER_HAS_DEFAULT" "Master sees default project"
+assert_eq "1" "$MASTER_HAS_SCOPED" "Master sees the scoped-extra project"
+
+echo ""
+echo "=== GET /projects: member sees only their projects (default), not scoped-extra ==="
+MEMBER_LIST=$(api_get "$MEMBER_KEY" "$BASE/projects")
+MEMBER_HAS_DEFAULT=$(echo "$MEMBER_LIST" | jq --arg id "$PROJECT_ID" '[.items[] | select(.id == ($id | tonumber))] | length')
+MEMBER_HAS_SCOPED=$(echo "$MEMBER_LIST" | jq --arg id "$SCOPED_PROJECT_ID" '[.items[] | select(.id == ($id | tonumber))] | length')
+assert_eq "1" "$MEMBER_HAS_DEFAULT" "Member sees the default project"
+assert_eq "0" "$MEMBER_HAS_SCOPED" "Member does not see scoped-extra (not a member)"
+
+echo ""
+echo "=== GET /projects: non-member sees an empty list ==="
+NONMEMBER_LIST=$(api_get "$NONMEMBER_KEY" "$BASE/projects")
+NONMEMBER_COUNT=$(echo "$NONMEMBER_LIST" | jq '.items | length')
+assert_eq "0" "$NONMEMBER_COUNT" "Non-member receives an empty project list"
+
+echo ""
+echo "=== GET /projects: no auth returns 401 ==="
+STATUS=$(status_no_auth "$BASE/projects")
+assert_eq "401" "$STATUS" "Unauthenticated cannot list projects"
+
+# =============================================
+# 8. Non-master caller: POST /users → 403
 # =============================================
 # With is_master on AuthUser, a non-master caller is always Forbidden on
 # /users regardless of whether master_key is configured. The old 501

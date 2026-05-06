@@ -1923,7 +1923,7 @@ pub async fn cmd_project(cli: &Cli, action: &ProjectAction) -> Result<()> {
                 limit: *limit,
                 after,
             };
-            let page = project_ops.list_projects(&filter).await?;
+            let page = project_ops.list_projects(&filter, None).await?;
             match cli.output {
                 OutputFormat::Json => {
                     println!("{}", serde_json::to_string_pretty(&page)?);

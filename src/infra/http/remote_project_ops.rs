@@ -52,7 +52,11 @@ impl RemoteProjectOperations {
 impl ProjectOperations for RemoteProjectOperations {
     // --- Project CRUD ---
 
-    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>> {
+    async fn list_projects(
+        &self,
+        filter: &ListProjectsFilter,
+        _caller_user_id: Option<UserId>,
+    ) -> Result<ListPage<Project>> {
         let mut url = self.url("/api/v1/projects");
         let mut params: Vec<String> = Vec::new();
         if let Some(l) = filter.limit {
@@ -108,7 +112,7 @@ impl ProjectOperations for RemoteProjectOperations {
         // "list all + find" approach.
         let mut filter = ListProjectsFilter::default();
         loop {
-            let page = self.list_projects(&filter).await?;
+            let page = self.list_projects(&filter, None).await?;
             for p in page.items {
                 if p.name() == name {
                     return Ok(p);

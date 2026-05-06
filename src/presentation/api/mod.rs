@@ -1137,11 +1137,16 @@ async fn list_projects(
     Query(query): Query<ListProjectsQuery>,
 ) -> Result<Json<ListProjectsPageResponse>, ApiError> {
     require_auth_user(&auth, state.auth_enabled())?;
+    let caller_user_id = match auth.0.as_ref() {
+        Some(a) if a.is_master => None,
+        Some(a) => Some(a.user.id()),
+        None => None,
+    };
     let (limit, after) = decode_page_inputs::<ProjectId>(query.limit, query.after.as_deref())?;
     let filter = ListProjectsFilter { limit, after };
     let page = state
         .project_service
-        .list_projects(&filter)
+        .list_projects(&filter, caller_user_id)
         .await
         .map_err(classify_error)?;
     Ok(Json(ListProjectsPageResponse {

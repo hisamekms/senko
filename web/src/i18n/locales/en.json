@@ -8,7 +8,8 @@
     "theme": "Theme",
     "language": "Language",
     "project": "Project",
-    "projectPlaceholder": "Select a project"
+    "projectPlaceholder": "Select a project",
+    "noAccessibleProjects": "No accessible projects"
   },
   "theme": {
     "light": "Light",

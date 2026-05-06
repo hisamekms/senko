@@ -112,8 +112,19 @@ export function ProjectSwitcher({ currentProjectId }: ProjectSwitcherProps) {
     )
   }
 
-  if (error || projects.length === 0) {
+  if (error) {
     return null
+  }
+
+  if (projects.length === 0) {
+    return (
+      <span className={wrapperStyle}>
+        <span className={labelStyle}>{t('header.project')}:</span>
+        <span className={placeholderStyle}>
+          {t('header.noAccessibleProjects')}
+        </span>
+      </span>
+    )
   }
 
   return (

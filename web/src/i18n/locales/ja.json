@@ -8,7 +8,8 @@
     "theme": "テーマ",
     "language": "言語",
     "project": "プロジェクト",
-    "projectPlaceholder": "プロジェクトを選択"
+    "projectPlaceholder": "プロジェクトを選択",
+    "noAccessibleProjects": "アクセス可能なプロジェクトがありません"
   },
   "theme": {
     "light": "ライト",

@@ -22,7 +22,11 @@ use crate::domain::user::{AddProjectMemberParams, ProjectMember, Role, UserId};
 pub trait ProjectOperations: Send + Sync {
     // --- Project CRUD ---
 
-    async fn list_projects(&self, filter: &ListProjectsFilter) -> Result<ListPage<Project>>;
+    async fn list_projects(
+        &self,
+        filter: &ListProjectsFilter,
+        caller_user_id: Option<UserId>,
+    ) -> Result<ListPage<Project>>;
     async fn create_project(
         &self,
         params: &CreateProjectParams,
