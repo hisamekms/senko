@@ -10,6 +10,10 @@ const wrapperStyle = css({
   gap: '2',
 })
 
+const labelStyle = css({
+  color: 'fg',
+})
+
 const selectStyle = css({
   paddingX: '2',
   paddingY: '1',
@@ -33,7 +37,7 @@ export function LanguageSwitcher() {
 
   return (
     <label className={wrapperStyle}>
-      <span>{t('header.language')}:</span>
+      <span className={labelStyle}>{t('header.language')}:</span>
       <select
         className={selectStyle}
         value={SUPPORTED_LANGUAGES.includes(current) ? current : 'en'}

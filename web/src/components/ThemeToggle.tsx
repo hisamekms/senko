@@ -39,6 +39,10 @@ const thumbStyle = css({
   },
 })
 
+const switchLabelStyle = css({
+  color: 'fg',
+})
+
 export function ThemeToggle() {
   const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
@@ -54,7 +58,7 @@ export function ThemeToggle() {
       <Switch.Control className={controlStyle}>
         <Switch.Thumb className={thumbStyle} />
       </Switch.Control>
-      <Switch.Label>
+      <Switch.Label className={switchLabelStyle}>
         {isDark ? t('theme.dark') : t('theme.light')}
       </Switch.Label>
       <Switch.HiddenInput />
