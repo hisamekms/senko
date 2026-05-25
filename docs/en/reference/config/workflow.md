@@ -12,11 +12,29 @@ Project-wide workflow defaults.
 |---|---|---|---|
 | `merge_via` | string | `"direct"` | `"direct"` (git merge) or `"pr"` (requires PR merge verification) |
 | `auto_merge` | bool | `true` | With `merge_via="direct"`, auto-merge on task complete |
-| `branch_mode` | string | `"worktree"` | `"worktree"` (git worktree) or `"branch"` (regular branch) |
+| `branch_mode.type` | string | `"worktree"` | `"worktree"` (git worktree) or `"branch"` (regular branch) |
+| `branch_mode.create` | bool | `true` | `true`: the skill provisions a new resource / `false`: reuse an existing resource (the skill does not create one) |
 | `merge_strategy` | string | `"rebase"` | `"rebase"` or `"squash"` |
 | `branch_template` | string | `null` | Branch naming template; supports `{{id}}` / `{{slug}}` (e.g. `"senko/{{id}}-{{slug}}"`) |
 
-env overrides: `SENKO_MERGE_VIA` / `SENKO_AUTO_MERGE` / `SENKO_BRANCH_MODE` / `SENKO_MERGE_STRATEGY`
+### The four `branch_mode` combinations
+
+| `type` | `create` | Behavior |
+|---|---|---|
+| `worktree` | `true` (default) | The skill provisions a fresh worktree per task and switches into it |
+| `worktree` | `false` | Reuse an externally-managed worktree (created in advance by a human or another tool). If no matching worktree exists, the skill **stops with an error — it does not fall back** |
+| `branch` | `true` | The skill creates / switches the branch in the current checkout (no worktree) |
+| `branch` | `false` | Work on the currently checked-out branch; the skill performs no branch operations at all |
+
+**Backward compatibility:** the legacy string form `branch_mode = "worktree"` / `"branch"` is still accepted and treated as `{ type = <value>, create = true }`. You do not need to rewrite an existing `config.toml`. For new configurations, the table form is recommended.
+
+```toml
+[workflow.branch_mode]
+type = "worktree"
+create = true
+```
+
+env overrides: `SENKO_MERGE_VIA` / `SENKO_AUTO_MERGE` / `SENKO_BRANCH_MODE_TYPE` / `SENKO_BRANCH_MODE_CREATE` / `SENKO_MERGE_STRATEGY` (the old `SENKO_BRANCH_MODE` has been removed)
 
 ## `[workflow.<stage>]`
 

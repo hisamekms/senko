@@ -105,7 +105,10 @@ default_dod = [
 # Branch naming convention (worktree workflow)
 [workflow]
 branch_template = "feat/{{id}}-{{slug}}"
-branch_mode = "worktree"
+
+[workflow.branch_mode]
+type = "worktree"
+create = true
 
 # Desktop notification on completion (macOS)
 [cli.task_complete.hooks.notify]

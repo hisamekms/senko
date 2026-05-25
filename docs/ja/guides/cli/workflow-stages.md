@@ -45,7 +45,10 @@ skill は plan 生成時にこれを読み込み、不足があればエージ�
 ```toml
 [workflow]
 branch_template = "senko/{{id}}-{{slug}}"
-branch_mode = "worktree"
+
+[workflow.branch_mode]
+type = "worktree"
+create = true
 
 [workflow.branch_set]
 instructions = [

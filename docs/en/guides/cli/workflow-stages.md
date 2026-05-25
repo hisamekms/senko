@@ -45,7 +45,10 @@ The skill reads this while generating the plan and re-prompts the agent if anyth
 ```toml
 [workflow]
 branch_template = "senko/{{id}}-{{slug}}"
-branch_mode = "worktree"
+
+[workflow.branch_mode]
+type = "worktree"
+create = true
 
 [workflow.branch_set]
 instructions = [

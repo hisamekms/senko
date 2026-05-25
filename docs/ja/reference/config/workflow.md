@@ -12,11 +12,29 @@ Claude Code skill が読む **論理ステージ定義**。どの runtime で動
 |---|---|---|---|
 | `merge_via` | string | `"direct"` | `"direct"` (git merge) or `"pr"` (PR マージ検証が必要) |
 | `auto_merge` | bool | `true` | `merge_via="direct"` 時、task complete で自動マージ |
-| `branch_mode` | string | `"worktree"` | `"worktree"` (git worktree) or `"branch"` (通常 branch) |
+| `branch_mode.type` | string | `"worktree"` | `"worktree"` (git worktree) or `"branch"` (通常 branch) |
+| `branch_mode.create` | bool | `true` | `true`: skill が新規にリソースを作成 / `false`: 既存リソースを利用（skill は作成しない） |
 | `merge_strategy` | string | `"rebase"` | `"rebase"` or `"squash"` |
 | `branch_template` | string | `null` | ブランチ名テンプレート。`{{id}}` / `{{slug}}` が使える (例: `"senko/{{id}}-{{slug}}"`) |
 
-env override: `SENKO_MERGE_VIA` / `SENKO_AUTO_MERGE` / `SENKO_BRANCH_MODE` / `SENKO_MERGE_STRATEGY`
+### `branch_mode` の 4 組み合わせ
+
+| `type` | `create` | 挙動 |
+|---|---|---|
+| `worktree` | `true`（既定） | skill がタスクごとに worktree を新規作成して switch する |
+| `worktree` | `false` | 外部（人間 / 別ツール）が事前に作っておいた worktree を再利用する。worktree が見つからない場合は **fallback せずエラーで停止** |
+| `branch` | `true` | skill が現在の checkout で branch を作成 / switch する（worktree なし） |
+| `branch` | `false` | 現在のブランチで作業し、ブランチ操作は一切行わない |
+
+**後方互換:** 旧文字列形式 `branch_mode = "worktree"` / `"branch"` は引き続き受理され、`{ type = <値>, create = true }` と等価扱いされます。既存の `config.toml` を書き換える必要はありません。新規に書く場合はテーブル形式を推奨します。
+
+```toml
+[workflow.branch_mode]
+type = "worktree"
+create = true
+```
+
+env override: `SENKO_MERGE_VIA` / `SENKO_AUTO_MERGE` / `SENKO_BRANCH_MODE_TYPE` / `SENKO_BRANCH_MODE_CREATE` / `SENKO_MERGE_STRATEGY` （旧 `SENKO_BRANCH_MODE` は撤去されました）
 
 ## `[workflow.<stage>]`
 
