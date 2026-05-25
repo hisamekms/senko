@@ -1,10 +1,10 @@
-# senko config.toml マイグレーションガイド (v0.46.0 → v0.46.1)
+# senko config.toml マイグレーションガイド (v0.46.0 → v0.47.0)
 
-このドキュメントは、senko v0.46.0 以前で運用していた `branch_mode` 設定と `SENKO_BRANCH_MODE` 環境変数を、v0.46.1 で導入されたテーブル型スキーマに移行するための手順書です。
+このドキュメントは、senko v0.46.0 以前で運用していた `branch_mode` 設定と `SENKO_BRANCH_MODE` 環境変数を、v0.47.0 で導入されたテーブル型スキーマに移行するための手順書です。
 
 ## 概要
 
-v0.46.1 で `workflow.branch_mode` が **文字列 enum**（`"worktree"` / `"branch"`）から **`type` + `create` の 2 フィールドを持つテーブル型**へ拡張されました。これにより「worktree か branch か」と「skill が新規リソースを作成するか / 既存リソースを再利用するか」を直交に制御できます。
+v0.47.0 で `workflow.branch_mode` が **文字列 enum**（`"worktree"` / `"branch"`）から **`type` + `create` の 2 フィールドを持つテーブル型**へ拡張されました。これにより「worktree か branch か」と「skill が新規リソースを作成するか / 既存リソースを再利用するか」を直交に制御できます。
 
 このマイグレーションは **非破壊的** です。
 
@@ -64,11 +64,11 @@ create = true
 
 ## ルール 2: 環境変数の置換
 
-`SENKO_BRANCH_MODE` は v0.46.1 で撤去されました。代わりに `SENKO_BRANCH_MODE_TYPE` と `SENKO_BRANCH_MODE_CREATE` を使用します。
+`SENKO_BRANCH_MODE` は v0.47.0 で撤去されました。代わりに `SENKO_BRANCH_MODE_TYPE` と `SENKO_BRANCH_MODE_CREATE` を使用します。
 
 ### リネームされた環境変数
 
-| v0.46.0 以前 | v0.46.1 以降 | 値 |
+| v0.46.0 以前 | v0.47.0 以降 | 値 |
 |---|---|---|
 | `SENKO_BRANCH_MODE=worktree` | `SENKO_BRANCH_MODE_TYPE=worktree` | `worktree` / `branch` |
 | `SENKO_BRANCH_MODE=branch` | `SENKO_BRANCH_MODE_TYPE=branch` | 同上 |
@@ -78,7 +78,7 @@ create = true
 
 | 変数 | 備考 |
 |---|---|
-| `SENKO_BRANCH_MODE` | `SENKO_BRANCH_MODE_TYPE` に置換してください。設定したままにしても v0.46.1 では効果がありません |
+| `SENKO_BRANCH_MODE` | `SENKO_BRANCH_MODE_TYPE` に置換してください。設定したままにしても v0.47.0 では効果がありません |
 
 **Before（`.envrc` 等）:**
 ```sh
