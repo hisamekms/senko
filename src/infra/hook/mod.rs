@@ -1644,7 +1644,10 @@ mod tests {
 
     #[test]
     fn run_hook_command_emits_senko_hook_fired_on_success() {
-        let records = run_and_capture("true", Duration::from_secs(5));
+        // `cat >/dev/null` consumes stdin so the parent's `write_all("{}")`
+        // completes before the child exits, avoiding an EPIPE race that would
+        // make `run_hook_command` early-return `(None, None)`.
+        let records = run_and_capture("cat >/dev/null", Duration::from_secs(5));
         let fired = records
             .iter()
             .find(|r| r.event_name() == Some("senko.hook.fired"))
@@ -1677,7 +1680,7 @@ mod tests {
 
     #[test]
     fn run_hook_command_emits_senko_hook_failed_on_non_zero_exit() {
-        let records = run_and_capture("exit 1", Duration::from_secs(5));
+        let records = run_and_capture("cat >/dev/null; exit 1", Duration::from_secs(5));
         let failed = records
             .iter()
             .find(|r| r.event_name() == Some("senko.hook.failed"))
@@ -1811,7 +1814,7 @@ mod tests {
     #[test]
     fn async_hook_attaches_enduser_and_op_id_on_success() {
         let records = run_async_and_capture_with_principal(
-            "true",
+            "cat >/dev/null",
             Duration::from_secs(5),
             Some(alice()),
             Some("op-async-ok".into()),
@@ -1841,7 +1844,7 @@ mod tests {
     #[test]
     fn async_hook_attaches_enduser_and_op_id_on_non_zero_exit() {
         let records = run_async_and_capture_with_principal(
-            "exit 1",
+            "cat >/dev/null; exit 1",
             Duration::from_secs(5),
             Some(alice()),
             Some("op-async-fail".into()),
@@ -1899,8 +1902,12 @@ mod tests {
         // Defensive: when neither RESOLVED_USER nor senko.operation.id is in
         // scope (e.g., CLI mode), the worker's emit must not synthesise either
         // attribute. The forwarded thread-locals stay None.
-        let records =
-            run_async_and_capture_with_principal("true", Duration::from_secs(5), None, None);
+        let records = run_async_and_capture_with_principal(
+            "cat >/dev/null",
+            Duration::from_secs(5),
+            None,
+            None,
+        );
         let fired = records
             .iter()
             .find(|r| r.event_name() == Some("senko.hook.fired"))
