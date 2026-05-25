@@ -971,9 +971,12 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 [workflow]
 # merge_via = "direct"        # or "pr"
 # auto_merge = true
-# branch_mode = "worktree"    # or "branch"
 # merge_strategy = "rebase"   # or "squash"
 # branch_template = "senko/{{id}}-{{slug}}"
+
+# [workflow.branch_mode]
+# type = "worktree"   # or "branch"
+# create = true       # false reuses an existing worktree/branch (errors if absent)
 
 # [workflow.task_add]
 # default_dod = ["Write unit tests", "Update documentation"]

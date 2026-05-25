@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Deserializer, Serialize};
 
-pub use crate::domain::task::{BranchMode, MergeStrategy, MergeVia};
+pub use crate::domain::task::{BranchMode, BranchModeType, MergeStrategy, MergeVia};
 use crate::infra::xdg::XdgDirs;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -1388,11 +1388,18 @@ impl Config {
                 other => eprintln!("warning: unknown SENKO_AUTO_MERGE={other}, ignoring"),
             }
         }
-        if let Ok(val) = std::env::var("SENKO_BRANCH_MODE") {
+        if let Ok(val) = std::env::var("SENKO_BRANCH_MODE_TYPE") {
             match val.as_str() {
-                "worktree" => self.workflow.branch_mode = BranchMode::Worktree,
-                "branch" => self.workflow.branch_mode = BranchMode::Branch,
-                other => eprintln!("warning: unknown SENKO_BRANCH_MODE={other}, ignoring"),
+                "worktree" => self.workflow.branch_mode.kind = BranchModeType::Worktree,
+                "branch" => self.workflow.branch_mode.kind = BranchModeType::Branch,
+                other => eprintln!("warning: unknown SENKO_BRANCH_MODE_TYPE={other}, ignoring"),
+            }
+        }
+        if let Ok(val) = std::env::var("SENKO_BRANCH_MODE_CREATE") {
+            match val.to_lowercase().as_str() {
+                "true" | "1" | "yes" => self.workflow.branch_mode.create = true,
+                "false" | "0" | "no" => self.workflow.branch_mode.create = false,
+                other => eprintln!("warning: unknown SENKO_BRANCH_MODE_CREATE={other}, ignoring"),
             }
         }
         if let Ok(val) = std::env::var("SENKO_MERGE_STRATEGY") {
@@ -2062,6 +2069,7 @@ mod resolve_secrets_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
     fn contract_action_hooks_empty_by_default() {
@@ -2672,7 +2680,9 @@ mod tests {
         );
         // Defaults
         assert!(config.workflow.auto_merge);
-        assert_eq!(config.workflow.branch_mode, BranchMode::Worktree);
+        assert_eq!(config.workflow.branch_mode, BranchMode::default());
+        assert_eq!(config.workflow.branch_mode.kind, BranchModeType::Worktree);
+        assert!(config.workflow.branch_mode.create);
         assert_eq!(config.workflow.merge_strategy, MergeStrategy::Rebase);
     }
 
@@ -2774,5 +2784,172 @@ mod tests {
         .unwrap();
         let merged = base.merge(overlay);
         assert_eq!(merged.cli.browser, Some(false));
+    }
+
+    // --- BranchMode deserialization / env / overlay tests ---
+
+    fn parse_branch_mode(toml_str: &str) -> BranchMode {
+        let raw: RawConfig = toml::from_str(toml_str).unwrap();
+        raw.resolve().workflow.branch_mode
+    }
+
+    #[test]
+    fn branch_mode_legacy_string_worktree() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow]
+            branch_mode = "worktree"
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Worktree);
+        assert!(bm.create);
+    }
+
+    #[test]
+    fn branch_mode_legacy_string_branch() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow]
+            branch_mode = "branch"
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Branch);
+        assert!(bm.create);
+    }
+
+    #[test]
+    fn branch_mode_modern_worktree_create_true() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow.branch_mode]
+            type = "worktree"
+            create = true
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Worktree);
+        assert!(bm.create);
+    }
+
+    #[test]
+    fn branch_mode_modern_worktree_create_false() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow.branch_mode]
+            type = "worktree"
+            create = false
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Worktree);
+        assert!(!bm.create);
+    }
+
+    #[test]
+    fn branch_mode_modern_branch_create_true() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow.branch_mode]
+            type = "branch"
+            create = true
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Branch);
+        assert!(bm.create);
+    }
+
+    #[test]
+    fn branch_mode_modern_branch_create_false() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow.branch_mode]
+            type = "branch"
+            create = false
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Branch);
+        assert!(!bm.create);
+    }
+
+    #[test]
+    fn branch_mode_modern_create_defaults_to_true() {
+        let bm = parse_branch_mode(
+            r#"
+            [workflow.branch_mode]
+            type = "branch"
+        "#,
+        );
+        assert_eq!(bm.kind, BranchModeType::Branch);
+        assert!(bm.create);
+    }
+
+    #[test]
+    #[serial(branch_mode_env)]
+    fn branch_mode_env_type_overrides() {
+        let mut config = Config::default();
+        // SAFETY: env vars are test-local; serial guard prevents races.
+        unsafe {
+            std::env::set_var("SENKO_BRANCH_MODE_TYPE", "branch");
+        }
+        config.apply_env();
+        unsafe {
+            std::env::remove_var("SENKO_BRANCH_MODE_TYPE");
+        }
+        assert_eq!(config.workflow.branch_mode.kind, BranchModeType::Branch);
+        assert!(config.workflow.branch_mode.create);
+    }
+
+    #[test]
+    #[serial(branch_mode_env)]
+    fn branch_mode_env_create_overrides() {
+        let mut config = Config::default();
+        // SAFETY: env vars are test-local; serial guard prevents races.
+        unsafe {
+            std::env::set_var("SENKO_BRANCH_MODE_CREATE", "false");
+        }
+        config.apply_env();
+        unsafe {
+            std::env::remove_var("SENKO_BRANCH_MODE_CREATE");
+        }
+        assert_eq!(config.workflow.branch_mode.kind, BranchModeType::Worktree);
+        assert!(!config.workflow.branch_mode.create);
+    }
+
+    #[test]
+    #[serial(branch_mode_env)]
+    fn branch_mode_legacy_env_var_is_removed() {
+        // SENKO_BRANCH_MODE (the pre-split variable) must no longer take effect.
+        let mut config = Config::default();
+        // SAFETY: env vars are test-local; serial guard prevents races.
+        unsafe {
+            std::env::set_var("SENKO_BRANCH_MODE", "branch");
+        }
+        config.apply_env();
+        unsafe {
+            std::env::remove_var("SENKO_BRANCH_MODE");
+        }
+        // Default unchanged because the legacy variable is no longer consulted.
+        assert_eq!(config.workflow.branch_mode, BranchMode::default());
+    }
+
+    #[test]
+    fn branch_mode_overlay_replaces_base() {
+        let base: RawConfig = toml::from_str(
+            r#"
+            [workflow.branch_mode]
+            type = "worktree"
+            create = true
+        "#,
+        )
+        .unwrap();
+        let overlay: RawConfig = toml::from_str(
+            r#"
+            [workflow.branch_mode]
+            type = "branch"
+            create = false
+        "#,
+        )
+        .unwrap();
+        let merged = base.merge(overlay).resolve();
+        assert_eq!(merged.workflow.branch_mode.kind, BranchModeType::Branch);
+        assert!(!merged.workflow.branch_mode.create);
     }
 }

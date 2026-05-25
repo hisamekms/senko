@@ -885,7 +885,11 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
             println!("  [workflow]");
             println!("    merge_via: {}", config.workflow.merge_via);
             println!("    auto_merge: {}", config.workflow.auto_merge);
-            println!("    branch_mode: {}", config.workflow.branch_mode);
+            println!("    branch_mode.type: {}", config.workflow.branch_mode.kind);
+            println!(
+                "    branch_mode.create: {}",
+                config.workflow.branch_mode.create
+            );
             println!("    merge_strategy: {}", config.workflow.merge_strategy);
             println!("  [cli hooks]");
             print_task_action_hooks("cli", &config.cli.hooks);

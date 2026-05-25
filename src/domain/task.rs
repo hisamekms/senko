@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use super::contract::ContractId;
 use super::error::DomainError;
@@ -83,17 +83,66 @@ impl fmt::Display for MergeVia {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
-pub enum BranchMode {
+pub enum BranchModeType {
     #[default]
     Worktree,
     Branch,
 }
 
-impl fmt::Display for BranchMode {
+impl fmt::Display for BranchModeType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BranchMode::Worktree => write!(f, "worktree"),
-            BranchMode::Branch => write!(f, "branch"),
+            BranchModeType::Worktree => write!(f, "worktree"),
+            BranchModeType::Branch => write!(f, "branch"),
+        }
+    }
+}
+
+/// Workflow branch strategy: `kind` selects worktree-vs-branch, `create`
+/// chooses whether to provision a fresh one or reuse an existing resource.
+///
+/// Deserializes from either the legacy string form (`branch_mode = "worktree"`)
+/// or the new table form (`branch_mode = { type = "worktree", create = true }`).
+/// The legacy form is treated as `{ kind = <value>, create = true }`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct BranchMode {
+    #[serde(rename = "type")]
+    pub kind: BranchModeType,
+    pub create: bool,
+}
+
+impl Default for BranchMode {
+    fn default() -> Self {
+        Self {
+            kind: BranchModeType::Worktree,
+            create: true,
+        }
+    }
+}
+
+fn default_branch_mode_create() -> bool {
+    true
+}
+
+impl<'de> Deserialize<'de> for BranchMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Helper {
+            Legacy(BranchModeType),
+            Modern {
+                #[serde(rename = "type")]
+                kind: BranchModeType,
+                #[serde(default = "default_branch_mode_create")]
+                create: bool,
+            },
+        }
+        match Helper::deserialize(deserializer)? {
+            Helper::Legacy(kind) => Ok(BranchMode { kind, create: true }),
+            Helper::Modern { kind, create } => Ok(BranchMode { kind, create }),
         }
     }
 }
