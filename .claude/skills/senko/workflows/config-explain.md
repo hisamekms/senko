@@ -23,7 +23,8 @@ For each section, explain every item's **current value**, whether it's the **def
 |---|---|---|---|
 | `merge_via` | `direct` | `direct`, `pr` | Controls whether the branch is merged directly or via PR. `pr` requires a PR URL and merge status check. |
 | `auto_merge` | `true` | `true`, `false` | Applies only to `merge_via = "direct"`. Controls whether the branch is merged automatically or requires user confirmation. Has no effect when `merge_via = "pr"`. |
-| `branch_mode` | `worktree` | `worktree`, `branch` | How task branches are created. `worktree` uses git worktrees (parallel work), `branch` uses regular branches. |
+| `branch_mode.type` | `worktree` | `worktree`, `branch` | How task branches are realized. `worktree` uses git worktrees (parallel work), `branch` uses regular branches in the current checkout. |
+| `branch_mode.create` | `true` | `true`, `false` | Whether the skill provisions a new resource. `false` reuses externally-provisioned resources: with `type="worktree"` the skill stops if the worktree is missing (no fallback); with `type="branch"` the skill works on the current branch without any branch operations. The legacy string form `branch_mode = "worktree"` / `"branch"` is accepted and expands to `{ type=<value>, create=true }`. |
 | `merge_strategy` | `rebase` | `rebase`, `squash` | Git merge strategy when merging task branches back to main. |
 | `branch_template` | `null` | string | Template for branch names. Variables: `{{id}}`, `{{slug}}`, `{{context.<key>}}` (from session context), `{{<name>:<opt1>\|<opt2>\|...}}` (enum, inferred from task). Example: `{{prefix:feat\|fix\|chore}}/{{id}}-{{slug}}`. |
 
@@ -185,7 +186,8 @@ Higher-priority sources override lower ones. The `senko config` output shows the
 |---|---|---|
 | `SENKO_MERGE_VIA` | `workflow.merge_via` | |
 | `SENKO_AUTO_MERGE` | `workflow.auto_merge` | |
-| `SENKO_BRANCH_MODE` | `workflow.branch_mode` | |
+| `SENKO_BRANCH_MODE_TYPE` | `workflow.branch_mode.type` | `worktree` \| `branch` |
+| `SENKO_BRANCH_MODE_CREATE` | `workflow.branch_mode.create` | `true`/`false`/`1`/`0`/`yes`/`no` |
 | `SENKO_MERGE_STRATEGY` | `workflow.merge_strategy` | |
 | `SENKO_CLI_REMOTE_URL` | `cli.remote.url` | |
 | `SENKO_CLI_REMOTE_TOKEN` | `cli.remote.token` | |

@@ -8,7 +8,10 @@ SENKO_BIN="${SENKO_BIN:-senko}"
 CONFIG_JSON=$("$SENKO_BIN" config)
 MERGE_VIA=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_via')
 AUTO_MERGE=$(echo "$CONFIG_JSON" | jq -r '.workflow.auto_merge')
-BRANCH_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode')
+# branch_mode supports legacy string form ("worktree" | "branch") and modern
+# table form ({type, create}). Legacy form is treated as { type=<value>, create=true }.
+BRANCH_MODE_TYPE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode | if type == "string" then . else .type end')
+BRANCH_MODE_CREATE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode | if type == "string" then true else .create end')
 MERGE_STRATEGY=$(echo "$CONFIG_JSON" | jq -r '.workflow.merge_strategy')
 
 # Emit instructions for a workflow stage as bullet points.
@@ -151,7 +154,10 @@ emit_metadata_step "branch_cleanup" "$TASK_ID"
 emit_hooks "branch_cleanup" "pre"
 emit_instructions "branch_cleanup"
 
-if [ "$BRANCH_MODE" = "worktree" ]; then
+# Only emit worktree cleanup when the skill actually created the worktree
+# (type=worktree AND create=true). Externally-managed worktrees
+# (create=false) and branch modes are not cleaned up by the skill.
+if [ "$BRANCH_MODE_TYPE" = "worktree" ] && [ "$BRANCH_MODE_CREATE" = "true" ]; then
   echo "- Delete the worktree (following the project's worktree-removal procedure)"
 fi
 

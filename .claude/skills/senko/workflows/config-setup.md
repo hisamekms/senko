@@ -26,7 +26,19 @@ Walk through sections in this order:
 3. **workflow** — How tasks are completed and branches managed:
    - `merge_via`: direct merge or PR-based completion?
    - `auto_merge`: when merge_via=direct, auto-merge branch without user confirmation?
-   - `branch_mode`: use git worktrees or regular branches?
+   - `branch_mode`: a table with two fields, asked separately:
+     - `branch_mode.type`: `worktree` (git worktrees, parallel work) or `branch` (regular branches in the current checkout)
+     - `branch_mode.create`: `true` (skill provisions a fresh resource per task) or `false` (skill expects an externally-provisioned resource and stops with an error if missing, for `type="worktree"`; or works on the current branch with no operations, for `type="branch"`)
+     - Four combinations and their behavior:
+
+       | type     | create | behavior                                                       |
+       |----------|--------|----------------------------------------------------------------|
+       | worktree | true   | skill creates a new worktree per task (default)                |
+       | worktree | false  | skill locates an existing worktree; errors out if missing      |
+       | branch   | true   | skill creates/switches to the branch in the current checkout   |
+       | branch   | false  | skill works on the currently checked-out branch, no operations |
+
+     - Legacy string form `branch_mode = "worktree"` / `"branch"` is still accepted and treated as `{ type=<value>, create=true }`. New configs should prefer the table form.
    - `merge_strategy`: rebase or squash merge?
    - `branch_template`: custom branch name template? Guide the user through variable selection:
      - `{{id}}` — task ID (always available)

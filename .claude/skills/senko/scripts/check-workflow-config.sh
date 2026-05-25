@@ -23,11 +23,16 @@ case "$MERGE_VIA" in
   *) error "invalid merge_via: $MERGE_VIA (expected: direct, pr)" ;;
 esac
 
-# Validate branch_mode
-BRANCH_MODE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode')
-case "$BRANCH_MODE" in
+# Validate branch_mode (accept both legacy string form and modern table form).
+BRANCH_MODE_TYPE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode | if type == "string" then . else .type end')
+BRANCH_MODE_CREATE=$(echo "$CONFIG_JSON" | jq -r '.workflow.branch_mode | if type == "string" then true else .create end')
+case "$BRANCH_MODE_TYPE" in
   worktree|branch) ;;
-  *) error "invalid branch_mode: $BRANCH_MODE (expected: worktree, branch)" ;;
+  *) error "invalid branch_mode.type: $BRANCH_MODE_TYPE (expected: worktree, branch)" ;;
+esac
+case "$BRANCH_MODE_CREATE" in
+  true|false) ;;
+  *) error "invalid branch_mode.create: $BRANCH_MODE_CREATE (expected: true, false)" ;;
 esac
 
 # Validate merge_strategy

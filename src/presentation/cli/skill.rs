@@ -309,6 +309,7 @@ mod tests {
         let scripts_dir = senko_dir.join("scripts");
         for name in [
             "check-workflow-config.sh",
+            "generate-branch-setup.sh",
             "generate-plan-sections.sh",
             "rebase-merge.sh",
             "squash-merge.sh",

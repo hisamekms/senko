@@ -114,7 +114,16 @@ senko config --init                    # generate template config.toml
 - **Workflow configuration** (`[workflow]` in `.senko/config.toml`):
   - `merge_via`: `direct` (default) or `pr`
   - `auto_merge`: `true` (default) / `false` — applies only to `merge_via = "direct"`
-  - `branch_mode`: `worktree` (default) or `branch`
+  - `branch_mode`: table with `type` and `create` fields:
+    - `type`: `worktree` (default) or `branch`
+    - `create`: `true` (default) or `false` — whether the skill provisions a new resource or expects an existing one
+    - Four combinations:
+      - `{type="worktree", create=true}` (default): skill creates a fresh worktree per task
+      - `{type="worktree", create=false}`: reuse an externally-managed worktree; the skill stops with an error if the worktree is missing (no fallback)
+      - `{type="branch", create=true}`: skill creates/switches the branch in the current checkout (no worktree)
+      - `{type="branch", create=false}`: skill works on the current branch without any branch operations
+    - Legacy string form `branch_mode = "worktree"` / `"branch"` is still accepted and treated as `{ type=<value>, create=true }` (backward compatible).
+    - Environment overrides: `SENKO_BRANCH_MODE_TYPE` (`worktree`|`branch`), `SENKO_BRANCH_MODE_CREATE` (`true`|`false`/`1`|`0`/`yes`|`no`). The previous `SENKO_BRANCH_MODE` variable has been removed.
   - `merge_strategy`: `rebase` (default) or `squash`
   - `branch_template`: optional branch name template. Supported variables:
     - `{{id}}` — task ID

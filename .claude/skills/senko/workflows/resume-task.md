@@ -39,9 +39,17 @@ bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh task_resume post
 
 Execute any commands printed by the emit-hooks calls in order. Omit `--metadata` if there are no fields to pass.
 
-## Step 3: Reuse worktree
+## Step 3: Reuse branch / worktree
 
-Use the `branch` field from `senko task get <id>` as the branch name. The worktree for this branch most likely already exists from the prior session — reuse it; do **not** recreate. Only create a fresh worktree (following the project's worktree convention) if it is genuinely missing, and confirm with the user before doing so.
+Resume reuses existing resources from the prior session. Generate the per-task branch-setup instructions in `resume` mode and follow them verbatim:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/generate-branch-setup.sh <id> --mode resume
+```
+
+The script reads `workflow.branch_mode` (table form `{type, create}` or legacy string) plus the task's `branch` field. In resume mode, even when `create=true` the instructions prefer reusing the existing worktree/branch first, and only fall back to fresh creation after explicit user confirmation. `create=false` modes behave the same as in execute mode (no provisioning).
+
+Run the printed instructions before proceeding to Step 4. If the script exits non-zero, stop and report the error to the user.
 
 ## Step 4: Resume work
 

@@ -65,9 +65,17 @@ done
 
 Surface the Contract's title, description, DoD checklist, and the full note list into the assistant's working context before moving on. Prior sessions may have recorded decisions, gotchas, or scope clarifications there.
 
-### Step 2: Create Worktree
+### Step 2: Set up branch / worktree
 
-Use the `branch` field from `senko task get <id>` as the branch name. If `branch` is not set (non-repo task), skip worktree creation and proceed to Step 3. Create a worktree for this branch following the project's worktree convention.
+The skill is `branch_mode`-aware: it does not assume worktree creation. Generate the per-task branch-setup instructions and follow them verbatim:
+
+```bash
+bash ${CLAUDE_SKILL_DIR}/scripts/generate-branch-setup.sh <id>
+```
+
+The script reads `workflow.branch_mode` (table form `{type, create}` or legacy string) plus the task's `branch` field, then prints the instructions for the matching combination of (`type`, `create`). A non-repo task (`branch` is null) is handled with a skip message.
+
+Run the printed instructions before proceeding to Step 3. If the script exits non-zero, stop and report the error to the user.
 
 ### Step 3: Plan Mode
 
