@@ -303,23 +303,37 @@ fn normalize_title_query(raw: &Option<String>) -> Result<Option<String>, ApiErro
     Ok(Some(trimmed.to_string()))
 }
 
-/// Decode a base64 cursor string and verify its kind matches the requested
-/// `order_by`. Returns `None` if `raw` is `None`.
+/// Decode a base64 cursor string and verify both its kind (`order_by` axis)
+/// and its direction (`order`) match the request. Returns `None` if `raw` is
+/// `None`.
 ///
 /// `expected_kind` is one of `"id"`, `"updated_at"`, `"priority"` —
-/// see `TaskOrderBy::cursor_kind` / `ContractOrderBy::cursor_kind`.
+/// see `TaskOrderBy::cursor_kind` / `ContractOrderBy::cursor_kind`. The
+/// direction check guards against silent mis-paging when a `next_cursor`
+/// minted with one `order` is replayed against another.
 fn decode_cursor_for_order(
     raw: Option<&str>,
     expected_kind: &'static str,
+    expected_order: ListOrder,
 ) -> Result<Option<CursorPayload>, ApiError> {
     let Some(raw) = raw else { return Ok(None) };
     let payload =
         Cursor::decode_payload(raw).map_err(|_| ApiError::BadRequest("invalid cursor".into()))?;
-    let got = payload.kind();
-    if got != expected_kind {
+    let got_kind = payload.kind();
+    if got_kind != expected_kind {
         return Err(classify_domain(DomainError::CursorMismatch {
+            dimension: "order_by",
             expected: expected_kind,
-            got,
+            got: got_kind,
+        }));
+    }
+    let expected_dir: crate::domain::pagination::CursorDirection = expected_order.into();
+    let got_dir = payload.direction();
+    if got_dir != expected_dir {
+        return Err(classify_domain(DomainError::CursorMismatch {
+            dimension: "order",
+            expected: expected_dir.as_str(),
+            got: got_dir.as_str(),
         }));
     }
     Ok(Some(payload))
@@ -1341,7 +1355,7 @@ async fn list_tasks(
         None => ListOrder::default(),
     };
 
-    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind())?;
+    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind(), order)?;
 
     let (assignee_user_id, assignee_self) =
         resolve_query_assignee_self(query.assignee_user_id, &auth)?;
@@ -2288,7 +2302,7 @@ async fn list_contracts(
         None => ListOrder::default(),
     };
 
-    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind())?;
+    let after = decode_cursor_for_order(query.after.as_deref(), order_by.cursor_kind(), order)?;
 
     let title = normalize_title_query(&query.title)?;
 
@@ -3458,6 +3472,69 @@ mod tests {
     fn classify_upstream_500_becomes_internal() {
         let err = classify_error(upstream_error(500, "server error"));
         assert_api_error_status(err, StatusCode::INTERNAL_SERVER_ERROR, "server error");
+    }
+
+    // --- decode_cursor_for_order tests ---
+
+    fn ok_or_panic<T>(r: Result<T, ApiError>) -> T {
+        match r {
+            Ok(v) => v,
+            Err(e) => panic!(
+                "expected Ok, got error with status {:?}",
+                e.into_response().status()
+            ),
+        }
+    }
+
+    fn err_or_panic<T>(r: Result<T, ApiError>) -> ApiError {
+        match r {
+            Ok(_) => panic!("expected Err"),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn decode_cursor_for_order_none_returns_none() {
+        let out = ok_or_panic(decode_cursor_for_order(None, "id", ListOrder::Asc));
+        assert!(out.is_none());
+    }
+
+    #[test]
+    fn decode_cursor_for_order_matching_direction_succeeds() {
+        use crate::domain::pagination::{Cursor, CursorDirection};
+        let raw = Cursor::encode_id(42i64, CursorDirection::Asc);
+        let out = ok_or_panic(decode_cursor_for_order(Some(&raw), "id", ListOrder::Asc));
+        assert!(out.is_some());
+    }
+
+    #[test]
+    fn decode_cursor_for_order_direction_mismatch_returns_bad_request() {
+        use crate::domain::pagination::{Cursor, CursorDirection};
+        // Cursor was minted Desc; request asks for Asc → CursorMismatch.
+        let raw = Cursor::encode_id(42i64, CursorDirection::Desc);
+        let err = err_or_panic(decode_cursor_for_order(Some(&raw), "id", ListOrder::Asc));
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn decode_cursor_for_order_kind_mismatch_returns_bad_request() {
+        use crate::domain::pagination::{Cursor, CursorDirection};
+        // updated_at cursor against id order_by.
+        let raw = Cursor::encode_updated_at("2026-01-01T00:00:00Z", 1i64, CursorDirection::Asc);
+        let err = err_or_panic(decode_cursor_for_order(Some(&raw), "id", ListOrder::Asc));
+        let resp = err.into_response();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn decode_cursor_for_order_legacy_no_dir_decodes_as_asc() {
+        // A pre-direction cursor (no `dir` field on the wire) must validate
+        // against the default Asc request without error.
+        use base64::Engine as _;
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"id\":7}");
+        let out = ok_or_panic(decode_cursor_for_order(Some(&raw), "id", ListOrder::Asc));
+        assert!(out.is_some());
     }
 
     // --- has_auth_credentials tests ---

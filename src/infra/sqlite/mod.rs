@@ -1670,7 +1670,7 @@ fn list_tasks(
     project_id: ProjectId,
     filter: &ListTasksFilter,
 ) -> Result<ListTasksPage> {
-    use crate::domain::pagination::{CursorPayload, TaggedCursor};
+    use crate::domain::pagination::{CursorDirection, CursorPayload, TaggedCursor};
     use crate::domain::task::{ListOrder, TaskOrderBy};
 
     let mut conditions = Vec::new();
@@ -1689,24 +1689,32 @@ fn list_tasks(
     // SQLite rowid. (`tasks.id` is a global AUTOINCREMENT counter; rows from
     // different projects share the same `task_number` space.)
     //
-    // The handler validated that `after.kind() == order_by.cursor_kind()` so a
-    // mismatched pair cannot reach here.
-    let cmp_op = match filter.order {
-        ListOrder::Asc => ">",
-        ListOrder::Desc => "<",
-    };
+    // The comparison operator is derived from `after.direction()` so the
+    // cursor itself dictates orientation. The REST handler validates that
+    // `after.direction() == filter.order` before reaching here, so this can
+    // never disagree with the ORDER BY clause below in practice.
     if let Some(after) = filter.after.as_ref() {
+        let cmp_op = match after.direction() {
+            CursorDirection::Asc => ">",
+            CursorDirection::Desc => "<",
+        };
         match (filter.order_by, after) {
             (TaskOrderBy::Id, CursorPayload::Id(c)) => {
                 conditions.push(format!("t.task_number {cmp_op} ?"));
                 param_values.push(Box::new(c.id));
             }
-            (TaskOrderBy::UpdatedAt, CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id })) => {
+            (
+                TaskOrderBy::UpdatedAt,
+                CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id, .. }),
+            ) => {
                 conditions.push(format!("(t.updated_at, t.task_number) {cmp_op} (?, ?)"));
                 param_values.push(Box::new(v.clone()));
                 param_values.push(Box::new(*id));
             }
-            (TaskOrderBy::Priority, CursorPayload::Tagged(TaggedCursor::Priority { v, id })) => {
+            (
+                TaskOrderBy::Priority,
+                CursorPayload::Tagged(TaggedCursor::Priority { v, id, .. }),
+            ) => {
                 conditions.push(format!("(t.priority, t.task_number) {cmp_op} (?, ?)"));
                 param_values.push(Box::new(*v as i64));
                 param_values.push(Box::new(*id));
@@ -1873,13 +1881,14 @@ fn list_tasks(
     }
 
     let order_by = filter.order_by;
+    let dir: CursorDirection = filter.order.into();
     Ok(crate::domain::pagination::build_page(
         items,
         filter.limit,
         |t| match order_by {
-            TaskOrderBy::Id => Cursor::encode_id(t.id()),
-            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id()),
-            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id()),
+            TaskOrderBy::Id => Cursor::encode_id(t.id(), dir),
+            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id(), dir),
+            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id(), dir),
         },
     ))
 }
@@ -2367,18 +2376,20 @@ fn list_contracts(
     filter: &ListContractsFilter,
 ) -> Result<ListPage<Contract>> {
     use crate::domain::contract::ContractOrderBy;
-    use crate::domain::pagination::{CursorPayload, TaggedCursor};
+    use crate::domain::pagination::{CursorDirection, CursorPayload, TaggedCursor};
     use crate::domain::task::ListOrder;
 
     let mut sql = String::from("SELECT c.id FROM contracts c WHERE c.project_id = ?1");
     let mut param_values: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
     param_values.push(Box::new(project_id));
 
-    let cmp_op = match filter.order {
-        ListOrder::Asc => ">",
-        ListOrder::Desc => "<",
-    };
+    // Cursor comparison operator is taken from the cursor's own direction;
+    // the REST handler validates `after.direction() == filter.order` upstream.
     if let Some(after) = filter.after.as_ref() {
+        let cmp_op = match after.direction() {
+            CursorDirection::Asc => ">",
+            CursorDirection::Desc => "<",
+        };
         match (filter.order_by, after) {
             (ContractOrderBy::Id, CursorPayload::Id(c)) => {
                 sql.push_str(&format!(" AND c.id {cmp_op} ?"));
@@ -2386,7 +2397,7 @@ fn list_contracts(
             }
             (
                 ContractOrderBy::UpdatedAt,
-                CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+                CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id, .. }),
             ) => {
                 sql.push_str(&format!(" AND (c.updated_at, c.id) {cmp_op} (?, ?)"));
                 param_values.push(Box::new(v.clone()));
@@ -2456,9 +2467,10 @@ fn list_contracts(
         items.push(get_contract(conn, id)?);
     }
     let order_by = filter.order_by;
+    let dir: CursorDirection = filter.order.into();
     Ok(build_page(items, filter.limit, |c| match order_by {
-        ContractOrderBy::Id => Cursor::encode_id(c.id()),
-        ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id()),
+        ContractOrderBy::Id => Cursor::encode_id(c.id(), dir),
+        ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id(), dir),
     }))
 }
 

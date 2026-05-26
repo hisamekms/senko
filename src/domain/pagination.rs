@@ -42,13 +42,38 @@ pub fn build_page<T>(
     }
 }
 
+/// Sort direction baked into a cursor so that the cursor itself carries the
+/// orientation it was minted under. Without this, a `next_cursor` from
+/// `order=asc` would silently mis-page when re-submitted with `order=desc`
+/// (the comparison operator would invert against an unchanged WHERE bound).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CursorDirection {
+    #[default]
+    Asc,
+    Desc,
+}
+
+impl CursorDirection {
+    /// Short label used in `CursorMismatch` errors. Stable wire string.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CursorDirection::Asc => "asc",
+            CursorDirection::Desc => "desc",
+        }
+    }
+}
+
 /// Decoded cursor payload.
 ///
 /// Wire format: base64 URL-safe (no padding) of one of these JSON shapes:
-/// - `{"id": <i64>}` — id-only cursor (paired with `order_by=id`).
-///   Backwards compatible with cursors emitted before composite cursors existed.
-/// - `{"k":"updated_at","v":"<ISO 8601>","id":<i64>}` — for `order_by=updated_at`.
-/// - `{"k":"priority","v":<i32>,"id":<i64>}` — for `order_by=priority`.
+/// - `{"id": <i64>, "dir": "asc"|"desc"}` — id-only cursor (paired with `order_by=id`).
+/// - `{"k":"updated_at","v":"<ISO 8601>","id":<i64>,"dir":"asc"|"desc"}` — for `order_by=updated_at`.
+/// - `{"k":"priority","v":<i32>,"id":<i64>,"dir":"asc"|"desc"}` — for `order_by=priority`.
+///
+/// `dir` is optional on the wire: cursors emitted before direction was tracked
+/// (no `dir` field) decode as [`CursorDirection::Asc`] for backwards
+/// compatibility. Newly-emitted cursors always include `dir`.
 ///
 /// `serde(untagged)` lets the deserializer try the tagged form first and fall
 /// back to the bare-id form. Old clients that round-trip an `{"id": 42}` cursor
@@ -63,14 +88,26 @@ pub enum CursorPayload {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "k", rename_all = "snake_case")]
 pub enum TaggedCursor {
-    UpdatedAt { v: String, id: i64 },
-    Priority { v: i32, id: i64 },
+    UpdatedAt {
+        v: String,
+        id: i64,
+        #[serde(default)]
+        dir: CursorDirection,
+    },
+    Priority {
+        v: i32,
+        id: i64,
+        #[serde(default)]
+        dir: CursorDirection,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IdCursor {
     pub id: i64,
+    #[serde(default)]
+    pub dir: CursorDirection,
 }
 
 impl CursorPayload {
@@ -82,6 +119,15 @@ impl CursorPayload {
             CursorPayload::Tagged(TaggedCursor::Priority { .. }) => "priority",
         }
     }
+
+    /// Direction the cursor was minted under.
+    pub fn direction(&self) -> CursorDirection {
+        match self {
+            CursorPayload::Id(c) => c.dir,
+            CursorPayload::Tagged(TaggedCursor::UpdatedAt { dir, .. }) => *dir,
+            CursorPayload::Tagged(TaggedCursor::Priority { dir, .. }) => *dir,
+        }
+    }
 }
 
 /// Opaque cursor for list pagination.
@@ -89,29 +135,35 @@ pub struct Cursor;
 
 impl Cursor {
     /// Encode any id that can be converted into `i64` as an opaque id-only
-    /// cursor. Wire shape: `{"id": <i64>}`.
+    /// cursor. Direction defaults to [`CursorDirection::Asc`]; callers whose
+    /// list endpoint exposes ordering should use [`Cursor::encode_id`] with the
+    /// active direction instead.
     pub fn encode<T: Into<i64>>(id: T) -> String {
-        Self::encode_id(id)
+        Self::encode_id(id, CursorDirection::Asc)
     }
 
-    /// Encode an id-only cursor. Equivalent to [`Cursor::encode`].
-    pub fn encode_id<T: Into<i64>>(id: T) -> String {
-        encode_payload(&CursorPayload::Id(IdCursor { id: id.into() }))
+    /// Encode an id-only cursor with explicit direction.
+    pub fn encode_id<T: Into<i64>>(id: T, dir: CursorDirection) -> String {
+        encode_payload(&CursorPayload::Id(IdCursor { id: id.into(), dir }))
     }
 
-    /// Encode a composite cursor pinned to `(updated_at, id)`.
-    pub fn encode_updated_at<T: Into<i64>>(v: &str, id: T) -> String {
+    /// Encode a composite cursor pinned to `(updated_at, id)` with the
+    /// direction it was minted under.
+    pub fn encode_updated_at<T: Into<i64>>(v: &str, id: T, dir: CursorDirection) -> String {
         encode_payload(&CursorPayload::Tagged(TaggedCursor::UpdatedAt {
             v: v.to_string(),
             id: id.into(),
+            dir,
         }))
     }
 
-    /// Encode a composite cursor pinned to `(priority, id)`.
-    pub fn encode_priority<T: Into<i64>>(v: i32, id: T) -> String {
+    /// Encode a composite cursor pinned to `(priority, id)` with the direction
+    /// it was minted under.
+    pub fn encode_priority<T: Into<i64>>(v: i32, id: T, dir: CursorDirection) -> String {
         encode_payload(&CursorPayload::Tagged(TaggedCursor::Priority {
             v,
             id: id.into(),
+            dir,
         }))
     }
 
@@ -135,7 +187,7 @@ impl Cursor {
     /// Returns `InvalidCursor` if the cursor is composite (not id-only).
     pub fn decode<T: From<i64>>(raw: &str) -> Result<T, DomainError> {
         match Self::decode_payload(raw)? {
-            CursorPayload::Id(IdCursor { id }) => Ok(T::from(id)),
+            CursorPayload::Id(IdCursor { id, .. }) => Ok(T::from(id)),
             // Older callers that ask for a plain id but receive a composite
             // cursor are using the wrong API for the request shape; surface
             // it as a generic InvalidCursor rather than CursorMismatch (the
@@ -244,52 +296,141 @@ mod tests {
 
     #[test]
     fn composite_cursor_roundtrip_updated_at() {
-        let c = Cursor::encode_updated_at("2026-05-03T11:39:48Z", 42i64);
+        let c = Cursor::encode_updated_at("2026-05-03T11:39:48Z", 42i64, CursorDirection::Asc);
         let payload = Cursor::decode_payload(&c).unwrap();
         assert_eq!(
             payload,
             CursorPayload::Tagged(TaggedCursor::UpdatedAt {
                 v: "2026-05-03T11:39:48Z".to_string(),
                 id: 42,
+                dir: CursorDirection::Asc,
             })
         );
         assert_eq!(payload.kind(), "updated_at");
+        assert_eq!(payload.direction(), CursorDirection::Asc);
     }
 
     #[test]
     fn composite_cursor_roundtrip_priority() {
-        let c = Cursor::encode_priority(0, 7i64);
+        let c = Cursor::encode_priority(0, 7i64, CursorDirection::Desc);
         let payload = Cursor::decode_payload(&c).unwrap();
         assert_eq!(
             payload,
-            CursorPayload::Tagged(TaggedCursor::Priority { v: 0, id: 7 })
+            CursorPayload::Tagged(TaggedCursor::Priority {
+                v: 0,
+                id: 7,
+                dir: CursorDirection::Desc,
+            })
         );
         assert_eq!(payload.kind(), "priority");
+        assert_eq!(payload.direction(), CursorDirection::Desc);
     }
 
     #[test]
     fn id_cursor_roundtrip_via_payload_api() {
-        let c = Cursor::encode_id(123i64);
+        let c = Cursor::encode_id(123i64, CursorDirection::Desc);
         let payload = Cursor::decode_payload(&c).unwrap();
-        assert_eq!(payload, CursorPayload::Id(IdCursor { id: 123 }));
+        assert_eq!(
+            payload,
+            CursorPayload::Id(IdCursor {
+                id: 123,
+                dir: CursorDirection::Desc,
+            })
+        );
         assert_eq!(payload.kind(), "id");
+        assert_eq!(payload.direction(), CursorDirection::Desc);
     }
 
     #[test]
-    fn legacy_id_only_cursor_decodes_as_id_payload() {
-        // Bytes a pre-composite-cursor client would have stored:
+    fn legacy_id_only_cursor_decodes_as_asc() {
+        // Bytes a pre-direction client would have stored:
         //   base64(URL_SAFE_NO_PAD)( {"id": 99} )
+        // — no `dir`, must decode as Asc.
         use base64::Engine as _;
         let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(b"{\"id\":99}");
         let payload = Cursor::decode_payload(&raw).unwrap();
-        assert_eq!(payload, CursorPayload::Id(IdCursor { id: 99 }));
+        assert_eq!(
+            payload,
+            CursorPayload::Id(IdCursor {
+                id: 99,
+                dir: CursorDirection::Asc,
+            })
+        );
+        assert_eq!(payload.direction(), CursorDirection::Asc);
+    }
+
+    #[test]
+    fn legacy_tagged_updated_at_cursor_decodes_as_asc() {
+        // Pre-direction wire for the updated_at variant.
+        use base64::Engine as _;
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"k":"updated_at","v":"2026-01-01T00:00:00Z","id":5}"#);
+        let payload = Cursor::decode_payload(&raw).unwrap();
+        assert_eq!(
+            payload,
+            CursorPayload::Tagged(TaggedCursor::UpdatedAt {
+                v: "2026-01-01T00:00:00Z".to_string(),
+                id: 5,
+                dir: CursorDirection::Asc,
+            })
+        );
+        assert_eq!(payload.direction(), CursorDirection::Asc);
+    }
+
+    #[test]
+    fn legacy_tagged_priority_cursor_decodes_as_asc() {
+        use base64::Engine as _;
+        let raw = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(br#"{"k":"priority","v":2,"id":11}"#);
+        let payload = Cursor::decode_payload(&raw).unwrap();
+        assert_eq!(
+            payload,
+            CursorPayload::Tagged(TaggedCursor::Priority {
+                v: 2,
+                id: 11,
+                dir: CursorDirection::Asc,
+            })
+        );
+        assert_eq!(payload.direction(), CursorDirection::Asc);
+    }
+
+    #[test]
+    fn new_encode_always_emits_dir_field() {
+        // The serialized wire of a freshly-encoded cursor always contains
+        // `"dir":"asc"` or `"dir":"desc"` so downstream consumers can rely
+        // on direction being present.
+        use base64::Engine as _;
+        let raw = Cursor::encode_id(7i64, CursorDirection::Asc);
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&raw)
+            .unwrap();
+        let json = std::str::from_utf8(&bytes).unwrap();
+        assert!(json.contains("\"dir\":\"asc\""), "{json}");
+
+        let raw_desc =
+            Cursor::encode_updated_at("2026-01-01T00:00:00Z", 1i64, CursorDirection::Desc);
+        let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .decode(&raw_desc)
+            .unwrap();
+        let json = std::str::from_utf8(&bytes).unwrap();
+        assert!(json.contains("\"dir\":\"desc\""), "{json}");
+    }
+
+    #[test]
+    fn cursor_encode_convenience_defaults_to_asc() {
+        // `Cursor::encode<T>(id)` is the dir-less shortcut used by list
+        // endpoints that don't expose ordering. It must default to Asc.
+        let raw = Cursor::encode(42i64);
+        let payload = Cursor::decode_payload(&raw).unwrap();
+        assert_eq!(payload.direction(), CursorDirection::Asc);
     }
 
     #[test]
     fn legacy_decode_t_rejects_composite_cursor() {
         // A composite cursor cannot be decoded back into a plain id newtype —
         // the call site must have asked the wrong way.
-        let composite = Cursor::encode_updated_at("2026-01-01T00:00:00Z", 1i64);
+        let composite =
+            Cursor::encode_updated_at("2026-01-01T00:00:00Z", 1i64, CursorDirection::Asc);
         assert!(Cursor::decode::<i64>(&composite).is_err());
     }
 

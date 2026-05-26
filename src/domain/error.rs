@@ -71,8 +71,12 @@ pub enum DomainError {
     #[error("invalid cursor")]
     InvalidCursor,
 
-    #[error("cursor does not match order_by: expected {expected}, got {got}")]
+    #[error("cursor does not match {dimension}: expected {expected}, got {got}")]
     CursorMismatch {
+        /// Which axis of the cursor mismatched the request: `"order_by"` for
+        /// `kind` (id / updated_at / priority) mismatch, `"order"` for
+        /// direction (asc / desc) mismatch.
+        dimension: &'static str,
         expected: &'static str,
         got: &'static str,
     },

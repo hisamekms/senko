@@ -1413,7 +1413,7 @@ impl TaskQueryPort for PostgresBackend {
     ) -> Result<ListTasksPage> {
         let pool = self.pool().await?;
 
-        use crate::domain::pagination::{CursorPayload, TaggedCursor};
+        use crate::domain::pagination::{CursorDirection, CursorPayload, TaggedCursor};
         use crate::domain::task::{ListOrder, TaskOrderBy};
 
         let mut conditions: Vec<String> = Vec::new();
@@ -1431,14 +1431,15 @@ impl TaskQueryPort for PostgresBackend {
 
         // Cursor (after) — same shape as the SQLite branch. We compare against
         // `t.task_number` (per-project sequential) rather than `t.id` (global
-        // sequence) because the cursor encodes `Task.id() == task_number`. The
-        // handler validated that `after.kind() == order_by.cursor_kind()` so a
-        // mismatched pair cannot reach here.
-        let cmp_op = match filter.order {
-            ListOrder::Asc => ">",
-            ListOrder::Desc => "<",
-        };
+        // sequence) because the cursor encodes `Task.id() == task_number`.
+        // Comparison operator is derived from `after.direction()` so the cursor
+        // itself dictates orientation; the REST handler validates that
+        // `after.direction() == filter.order` before reaching here.
         if let Some(after) = filter.after.as_ref() {
+            let cmp_op = match after.direction() {
+                CursorDirection::Asc => ">",
+                CursorDirection::Desc => "<",
+            };
             match (filter.order_by, after) {
                 (TaskOrderBy::Id, CursorPayload::Id(c)) => {
                     conditions.push(format!("t.task_number {cmp_op} ${param_idx}"));
@@ -1447,7 +1448,7 @@ impl TaskQueryPort for PostgresBackend {
                 }
                 (
                     TaskOrderBy::UpdatedAt,
-                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id, .. }),
                 ) => {
                     let v_idx = param_idx;
                     let id_idx = param_idx + 1;
@@ -1460,7 +1461,7 @@ impl TaskQueryPort for PostgresBackend {
                 }
                 (
                     TaskOrderBy::Priority,
-                    CursorPayload::Tagged(TaggedCursor::Priority { v, id }),
+                    CursorPayload::Tagged(TaggedCursor::Priority { v, id, .. }),
                 ) => {
                     let v_idx = param_idx;
                     let id_idx = param_idx + 1;
@@ -1662,10 +1663,11 @@ impl TaskQueryPort for PostgresBackend {
         }
 
         let order_by = filter.order_by;
+        let dir: CursorDirection = filter.order.into();
         Ok(build_page(items, filter.limit, |t| match order_by {
-            TaskOrderBy::Id => Cursor::encode_id(t.id()),
-            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id()),
-            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id()),
+            TaskOrderBy::Id => Cursor::encode_id(t.id(), dir),
+            TaskOrderBy::UpdatedAt => Cursor::encode_updated_at(t.updated_at(), t.id(), dir),
+            TaskOrderBy::Priority => Cursor::encode_priority(t.priority() as i32, t.id(), dir),
         }))
     }
 
@@ -2114,7 +2116,7 @@ impl ContractRepository for PostgresBackend {
         filter: &ListContractsFilter,
     ) -> Result<ListPage<Contract>> {
         use crate::domain::contract::ContractOrderBy;
-        use crate::domain::pagination::{CursorPayload, TaggedCursor};
+        use crate::domain::pagination::{CursorDirection, CursorPayload, TaggedCursor};
         use crate::domain::task::ListOrder;
 
         let pool = self.pool().await?;
@@ -2128,11 +2130,13 @@ impl ContractRepository for PostgresBackend {
         let mut idx = 2;
         binds.push(BindVal::Int(project_id.into()));
 
-        let cmp_op = match filter.order {
-            ListOrder::Asc => ">",
-            ListOrder::Desc => "<",
-        };
+        // Cursor cmp_op derived from cursor's own direction (handler-validated
+        // to match `filter.order`).
         if let Some(after) = filter.after.as_ref() {
+            let cmp_op = match after.direction() {
+                CursorDirection::Asc => ">",
+                CursorDirection::Desc => "<",
+            };
             match (filter.order_by, after) {
                 (ContractOrderBy::Id, CursorPayload::Id(c)) => {
                     sql.push_str(&format!(" AND c.id {cmp_op} ${idx}"));
@@ -2141,7 +2145,7 @@ impl ContractRepository for PostgresBackend {
                 }
                 (
                     ContractOrderBy::UpdatedAt,
-                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id }),
+                    CursorPayload::Tagged(TaggedCursor::UpdatedAt { v, id, .. }),
                 ) => {
                     let v_idx = idx;
                     let id_idx = idx + 1;
@@ -2230,9 +2234,10 @@ impl ContractRepository for PostgresBackend {
             items.push(get_contract_by_id(pool, id).await?);
         }
         let order_by = filter.order_by;
+        let dir: CursorDirection = filter.order.into();
         Ok(build_page(items, filter.limit, |c| match order_by {
-            ContractOrderBy::Id => Cursor::encode_id(c.id()),
-            ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id()),
+            ContractOrderBy::Id => Cursor::encode_id(c.id(), dir),
+            ContractOrderBy::UpdatedAt => Cursor::encode_updated_at(c.updated_at(), c.id(), dir),
         }))
     }
 

@@ -378,6 +378,25 @@ impl FromStr for ListOrder {
     }
 }
 
+impl ListOrder {
+    /// Stable wire string (`"asc"` / `"desc"`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ListOrder::Asc => "asc",
+            ListOrder::Desc => "desc",
+        }
+    }
+}
+
+impl From<ListOrder> for crate::domain::pagination::CursorDirection {
+    fn from(o: ListOrder) -> Self {
+        match o {
+            ListOrder::Asc => crate::domain::pagination::CursorDirection::Asc,
+            ListOrder::Desc => crate::domain::pagination::CursorDirection::Desc,
+        }
+    }
+}
+
 /// Sort key for `list_tasks`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum TaskOrderBy {
