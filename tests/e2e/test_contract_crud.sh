@@ -105,6 +105,45 @@ assert_eq "2" "$(echo "$PAGE2" | jq '.items | length')" "page2 has remaining 2 c
 assert_eq "null" "$(echo "$PAGE2" | jq -r '.next_cursor')" "page2 has no more"
 assert_exit_code 1 run_lf --output json contract list --after not-a-valid-cursor
 
+# 7c. --order desc returns ID descending (CLI default is also desc)
+echo "[7c] contract list --order desc"
+LIST_DESC="$(run_lf --output json contract list --order desc)"
+DESC_IDS="$(echo "$LIST_DESC" | jq -r '.items[].id' | tr '\n' ',' | sed 's/,$//')"
+DESC_IDS_SORTED="$(echo "$LIST_DESC" | jq -r '.items[].id' | sort -rn | tr '\n' ',' | sed 's/,$//')"
+assert_eq "$DESC_IDS_SORTED" "$DESC_IDS" "contract list --order desc sorts by id desc"
+
+LIST_DEFAULT="$(run_lf --output json contract list)"
+DEFAULT_IDS="$(echo "$LIST_DEFAULT" | jq -r '.items[].id' | tr '\n' ',' | sed 's/,$//')"
+assert_eq "$DESC_IDS" "$DEFAULT_IDS" "contract list CLI default is desc"
+
+# 7d. --order-by updated_at returns the touched contract first under desc
+echo "[7d] contract list --order-by updated_at --order desc"
+# updated_at is stored at second resolution; sleep so the touch lands in a
+# later bucket than the most recent prior contract creation.
+sleep 2
+run_lf contract edit "$FULL_ID" --title "Full Contract" >/dev/null
+LIST_RECENT="$(run_lf --output json contract list --order-by updated_at --order desc)"
+RECENT_FIRST_ID="$(echo "$LIST_RECENT" | jq -r '.items[0].id')"
+assert_eq "$FULL_ID" "$RECENT_FIRST_ID" "most recently updated contract appears first"
+
+# 7e. cursor direction mismatch is rejected
+echo "[7e] contract list cursor direction mismatch is rejected"
+PAGE_DESC="$(run_lf --output json contract list --order desc --limit 1)"
+CURSOR_DESC="$(echo "$PAGE_DESC" | jq -r '.next_cursor')"
+if [[ "$CURSOR_DESC" == "null" || -z "$CURSOR_DESC" ]]; then
+  echo "FAIL: expected non-null cursor under --order desc --limit 1"
+  exit 1
+fi
+MISMATCH_OUT="$(run_lf contract list --order asc --after "$CURSOR_DESC" 2>&1 || true)"
+if echo "$MISMATCH_OUT" | grep -qi "cursor does not match order"; then
+  echo "PASS: cursor direction mismatch rejected"
+else
+  echo "FAIL: expected 'cursor does not match order' error"
+  echo "$MISMATCH_OUT"
+  exit 1
+fi
+assert_exit_code 1 run_lf contract list --order asc --after "$CURSOR_DESC"
+
 # 8. edit scalar fields
 echo "[8] Edit scalar fields"
 OUT="$(run_lf --output json contract edit "$FULL_ID" --title "Renamed")"

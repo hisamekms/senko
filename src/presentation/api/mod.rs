@@ -519,6 +519,7 @@ struct ListTasksQuery {
     #[serde(default)]
     after: Option<String>,
     /// Sort key. One of `id` (default), `updated_at`, `priority`.
+    /// Tie-breaker is `id` in the same direction as the primary key.
     #[serde(default)]
     #[param(inline)]
     order_by: Option<String>,
@@ -548,6 +549,7 @@ struct ListContractsQuery {
     #[serde(default)]
     after: Option<String>,
     /// Sort key. One of `id` (default), `updated_at`.
+    /// Tie-breaker is `id` in the same direction as the primary key.
     #[serde(default)]
     #[param(inline)]
     order_by: Option<String>,

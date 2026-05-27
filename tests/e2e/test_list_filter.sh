@@ -206,4 +206,65 @@ else
   echo "PASS: no '... more:' line when there's no next page"
 fi
 
+# --- Case 11: --order desc returns ID descending ---
+echo "[11] task list --order desc returns ID descending"
+LIST_DESC="$(run_lf --output json task list --order desc)"
+DESC_IDS="$(echo "$LIST_DESC" | jq -r '.items[].id' | tr '\n' ',' | sed 's/,$//')"
+DESC_IDS_SORTED="$(echo "$LIST_DESC" | jq -r '.items[].id' | sort -rn | tr '\n' ',' | sed 's/,$//')"
+assert_eq "$DESC_IDS_SORTED" "$DESC_IDS" "--order desc returns items sorted by id desc"
+
+# --- Case 12: CLI default is desc (no --order) ---
+echo "[12] CLI default --order is desc"
+LIST_DEFAULT_ORDER="$(run_lf --output json task list)"
+DEFAULT_IDS="$(echo "$LIST_DEFAULT_ORDER" | jq -r '.items[].id' | tr '\n' ',' | sed 's/,$//')"
+DEFAULT_IDS_SORTED="$(echo "$LIST_DEFAULT_ORDER" | jq -r '.items[].id' | sort -rn | tr '\n' ',' | sed 's/,$//')"
+assert_eq "$DEFAULT_IDS_SORTED" "$DEFAULT_IDS" "no --order flag yields id desc (CLI default)"
+
+# --- Case 13: --order-by updated_at --order desc returns updated_at desc, ties by id desc ---
+echo "[13] --order-by updated_at --order desc"
+# updated_at is stored at second resolution; sleep so the touch lands in a
+# later bucket than the most recent prior edit.
+sleep 2
+run_lf task edit "$A_ID" --background "touch a" >/dev/null
+LIST_RECENT="$(run_lf --output json task list --order-by updated_at --order desc)"
+RECENT_FIRST_ID="$(echo "$LIST_RECENT" | jq -r '.items[0].id')"
+assert_eq "$A_ID" "$RECENT_FIRST_ID" "task touched most recently appears first under updated_at desc"
+
+# --- Case 14: cursor direction mismatch is rejected ---
+echo "[14] cursor direction mismatch is rejected"
+# Get a cursor under --order desc, then re-use it with --order asc.
+PAGE_DESC="$(run_lf --output json task list --order desc --limit 1)"
+CURSOR_DESC="$(echo "$PAGE_DESC" | jq -r '.next_cursor')"
+if [[ "$CURSOR_DESC" == "null" || -z "$CURSOR_DESC" ]]; then
+  echo "FAIL: expected non-null cursor under --order desc --limit 1"
+  exit 1
+fi
+MISMATCH_OUT="$(run_lf task list --order asc --after "$CURSOR_DESC" 2>&1 || true)"
+if echo "$MISMATCH_OUT" | grep -qi "cursor does not match order"; then
+  echo "PASS: cursor direction mismatch rejected with CursorMismatch error"
+else
+  echo "FAIL: expected 'cursor does not match order' error"
+  echo "---output---"
+  echo "$MISMATCH_OUT"
+  echo "------------"
+  exit 1
+fi
+assert_exit_code 1 run_lf task list --order asc --after "$CURSOR_DESC"
+
+# --- Case 15: cursor kind mismatch is rejected ---
+echo "[15] cursor kind (order_by) mismatch is rejected"
+# Cursor minted under order_by=id used with order_by=updated_at must mismatch.
+PAGE_ID="$(run_lf --output json task list --order desc --limit 1)"
+CURSOR_ID="$(echo "$PAGE_ID" | jq -r '.next_cursor')"
+KIND_OUT="$(run_lf task list --order-by updated_at --order desc --after "$CURSOR_ID" 2>&1 || true)"
+if echo "$KIND_OUT" | grep -qi "cursor does not match order_by"; then
+  echo "PASS: cursor kind mismatch rejected with CursorMismatch error"
+else
+  echo "FAIL: expected 'cursor does not match order_by' error"
+  echo "---output---"
+  echo "$KIND_OUT"
+  echo "------------"
+  exit 1
+fi
+
 test_summary

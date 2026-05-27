@@ -26,10 +26,11 @@ use crate::domain::contract::{
     ContractId, ContractOrderBy, CreateContractParams, ListContractNotesFilter,
     ListContractsFilter, UpdateContractArrayParams, UpdateContractParams,
 };
+use crate::domain::error::DomainError;
 use crate::domain::metadata_field::{
     CreateMetadataFieldParams, ListMetadataFieldsFilter, MetadataFieldType, validate_field_name,
 };
-use crate::domain::pagination::{Cursor, CursorPayload};
+use crate::domain::pagination::{Cursor, CursorDirection, CursorPayload};
 use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
 };
@@ -139,14 +140,36 @@ async fn lookup_user(
     user_ops.get_user(user_id).await.ok()
 }
 
-/// Decode an `--after` cursor that the CLI emits — always id-only because the
-/// CLI list commands do not expose `--order-by`. A composite cursor here means
-/// the user passed something the CLI cannot consume.
-fn decode_id_only_cursor(raw: &str) -> Result<CursorPayload> {
+/// Decode an `--after` cursor and validate that its kind matches
+/// `expected_kind` (the `order_by` axis) and its direction matches
+/// `expected_order`. Surfaces [`DomainError::CursorMismatch`] for kind /
+/// direction mismatches so the CLI prints "cursor does not match
+/// {order_by|order}: expected X, got Y" verbatim.
+fn decode_cursor_for_order_cli(
+    raw: &str,
+    expected_kind: &'static str,
+    expected_order: ListOrder,
+) -> Result<CursorPayload> {
     let payload =
         Cursor::decode_payload(raw).map_err(|_| anyhow::anyhow!("invalid --after cursor"))?;
-    if !matches!(payload, CursorPayload::Id(_)) {
-        bail!("--after cursor is not compatible with this command (expected id-only cursor)");
+    let got_kind = payload.kind();
+    if got_kind != expected_kind {
+        return Err(DomainError::CursorMismatch {
+            dimension: "order_by",
+            expected: expected_kind,
+            got: got_kind,
+        }
+        .into());
+    }
+    let expected_dir: CursorDirection = expected_order.into();
+    let got_dir = payload.direction();
+    if got_dir != expected_dir {
+        return Err(DomainError::CursorMismatch {
+            dimension: "order",
+            expected: expected_dir.as_str(),
+            got: got_dir.as_str(),
+        }
+        .into());
     }
     Ok(payload)
 }
@@ -345,6 +368,8 @@ pub async fn cmd_list(
     id_max: Option<TaskId>,
     limit: Option<u32>,
     after: Option<String>,
+    order_by: Option<String>,
+    order: String,
 ) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let config = load_config(cli, &root)?;
@@ -392,8 +417,18 @@ pub async fn cmd_list(
     }
     let effective_limit = limit.or(Some(50));
 
+    let order: ListOrder = order.parse().context("invalid --order value")?;
+    let order_by: TaskOrderBy = match order_by.as_deref() {
+        Some(s) => s.parse().context("invalid --order-by value")?,
+        None => TaskOrderBy::default(),
+    };
+
     let after = match after.as_deref() {
-        Some(raw) => Some(decode_id_only_cursor(raw)?),
+        Some(raw) => Some(decode_cursor_for_order_cli(
+            raw,
+            order_by.cursor_kind(),
+            order,
+        )?),
         None => None,
     };
 
@@ -413,8 +448,8 @@ pub async fn cmd_list(
         title: None,
         limit: effective_limit,
         after,
-        order_by: TaskOrderBy::default(),
-        order: ListOrder::default(),
+        order_by,
+        order,
     };
 
     let page = task_ops.list_tasks(project_id, &filter).await?;
@@ -2864,9 +2899,24 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 }
             }
         }
-        ContractAction::List { tag, limit, after } => {
+        ContractAction::List {
+            tag,
+            limit,
+            after,
+            order_by,
+            order,
+        } => {
+            let order: ListOrder = order.parse().context("invalid --order value")?;
+            let order_by: ContractOrderBy = match order_by.as_deref() {
+                Some(s) => s.parse().context("invalid --order-by value")?,
+                None => ContractOrderBy::default(),
+            };
             let after = match after.as_deref() {
-                Some(raw) => Some(decode_id_only_cursor(raw)?),
+                Some(raw) => Some(decode_cursor_for_order_cli(
+                    raw,
+                    order_by.cursor_kind(),
+                    order,
+                )?),
                 None => None,
             };
             let filter = ListContractsFilter {
@@ -2875,8 +2925,8 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 completed: None,
                 limit: *limit,
                 after,
-                order_by: ContractOrderBy::default(),
-                order: ListOrder::default(),
+                order_by,
+                order,
             };
             let page = contract_ops.list_contracts(project_id, &filter).await?;
             match cli.output {

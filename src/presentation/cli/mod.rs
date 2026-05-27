@@ -316,6 +316,13 @@ pub enum TaskAction {
         /// Opaque cursor from a previous response's `next_cursor` to fetch the next page
         #[arg(long)]
         after: Option<String>,
+        /// Sort key. One of `id` (default), `updated_at`, `priority`.
+        /// Tie-breaker is `id` in the same direction as the primary key.
+        #[arg(long)]
+        order_by: Option<String>,
+        /// Sort direction. One of `asc`, `desc`. CLI default is `desc`.
+        #[arg(long, default_value = "desc")]
+        order: String,
     },
     /// Get task details
     Get {
@@ -501,6 +508,13 @@ pub enum ContractAction {
         /// Opaque cursor from a previous response's `next_cursor`
         #[arg(long)]
         after: Option<String>,
+        /// Sort key. One of `id` (default), `updated_at`.
+        /// Tie-breaker is `id` in the same direction as the primary key.
+        #[arg(long)]
+        order_by: Option<String>,
+        /// Sort direction. One of `asc`, `desc`. CLI default is `desc`.
+        #[arg(long, default_value = "desc")]
+        order: String,
     },
     /// Get contract details
     Get {
@@ -1109,6 +1123,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                 id_max,
                 limit,
                 after,
+                order_by,
+                order,
             } => {
                 handlers::cmd_list(
                     &cli,
@@ -1123,6 +1139,8 @@ pub async fn run(cli: Cli) -> Result<()> {
                     *id_max,
                     *limit,
                     after.clone(),
+                    order_by.clone(),
+                    order.clone(),
                 )
                 .await
             }
