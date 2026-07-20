@@ -58,8 +58,16 @@ fn build_cli_overrides(cli: &Cli) -> CliOverrides {
         postgres_url: cli.postgres_url.clone(),
         project: cli.project.clone(),
         user: cli.user.clone(),
+        local: cli.local || env_flag("SENKO_LOCAL"),
         ..Default::default()
     }
+}
+
+/// True when the env var is set to a truthy value ("1" / "true" / "yes").
+fn env_flag(name: &str) -> bool {
+    std::env::var(name)
+        .map(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
 }
 
 fn load_config(cli: &Cli, root: &std::path::Path) -> Result<Config> {
@@ -1012,6 +1020,9 @@ pub fn cmd_config(cli: &Cli, init: bool) -> Result<()> {
 
 #[derive(Debug, serde::Serialize)]
 struct DoctorReport {
+    /// Backend that CLI commands would actually use with the current
+    /// config + env + CLI flags (remote HTTP wins over sqlite/postgres).
+    backend: crate::infra::hook::BackendInfo,
     hooks: Vec<HookDiagnostic>,
     has_errors: bool,
 }
@@ -1037,6 +1048,7 @@ struct CheckResult {
 #[serde(rename_all = "lowercase")]
 enum CheckStatus {
     Ok,
+    Warning,
     Error,
 }
 
@@ -1095,6 +1107,17 @@ fn print_task_action_hooks(label: &str, hooks: &crate::infra::config::TaskAction
 
 fn run_hook_checks(def: &crate::infra::config::HookDef) -> Vec<CheckResult> {
     let mut checks = Vec::new();
+
+    // Check that on_failure=abort can actually take effect (sync+pre only)
+    if let Some(reason) = crate::infra::hook::abort_ineffective_reason(def) {
+        checks.push(CheckResult {
+            check: "abort_effective".to_string(),
+            target: format!("when={:?} mode={:?} on_failure=abort", def.when, def.mode)
+                .to_lowercase(),
+            status: CheckStatus::Warning,
+            message: Some(reason.to_string()),
+        });
+    }
 
     // Check required env_vars (required=true + unset + no default)
     for spec in &def.env_vars {
@@ -1165,7 +1188,10 @@ fn run_hook_checks(def: &crate::infra::config::HookDef) -> Vec<CheckResult> {
 pub fn cmd_doctor(cli: &Cli) -> Result<()> {
     let root = resolve_project_root(cli.project_root.as_deref())?;
     let xdg = crate::infra::xdg::XdgDirs::from_env();
-    let config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
+    let mut config = crate::bootstrap::load_config(&root, cli.config.as_deref(), &xdg)?;
+    config.apply_cli(&build_cli_overrides(cli));
+
+    let backend = crate::bootstrap::resolve_backend_info(&config, &root);
 
     let runtime_sections: [(&str, &crate::infra::config::TaskActionHooks); 3] = [
         ("cli", &config.cli.hooks),
@@ -1220,6 +1246,7 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
         .any(|d| d.checks.iter().any(|c| c.status == CheckStatus::Error));
 
     let report = DoctorReport {
+        backend,
         hooks: diagnostics,
         has_errors,
     };
@@ -1229,6 +1256,18 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         OutputFormat::Text => {
+            match &report.backend {
+                crate::infra::hook::BackendInfo::Http { api_url } => {
+                    println!("Backend: remote ({api_url})");
+                }
+                crate::infra::hook::BackendInfo::Postgresql => {
+                    println!("Backend: postgresql");
+                }
+                crate::infra::hook::BackendInfo::Sqlite { db_file_path } => {
+                    println!("Backend: sqlite ({db_file_path})");
+                }
+            }
+            println!();
             println!("Hook diagnostics");
             println!("================");
             if report.hooks.is_empty() {
@@ -1240,12 +1279,14 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
                     for check in &diag.checks {
                         let icon = match check.status {
                             CheckStatus::Ok => "\u{2713}",
+                            CheckStatus::Warning => "!",
                             CheckStatus::Error => "\u{2717}",
                         };
                         let label = match check.check.as_str() {
                             "env_var" => format!("env {}", check.target),
                             "script_exists" => format!("script exists: {}", check.target),
                             "script_executable" => format!("script executable: {}", check.target),
+                            "abort_effective" => format!("abort effective: {}", check.target),
                             _ => check.target.clone(),
                         };
                         match &check.message {
@@ -1261,10 +1302,17 @@ pub fn cmd_doctor(cli: &Cli) -> Result<()> {
                 .flat_map(|d| &d.checks)
                 .filter(|c| c.status == CheckStatus::Error)
                 .count();
-            if error_count > 0 {
-                println!("\nResult: {error_count} issue(s) found");
-            } else {
-                println!("\nResult: all checks passed");
+            let warning_count: usize = report
+                .hooks
+                .iter()
+                .flat_map(|d| &d.checks)
+                .filter(|c| c.status == CheckStatus::Warning)
+                .count();
+            match (error_count, warning_count) {
+                (0, 0) => println!("\nResult: all checks passed"),
+                (0, w) => println!("\nResult: all checks passed, {w} warning(s)"),
+                (e, 0) => println!("\nResult: {e} issue(s) found"),
+                (e, w) => println!("\nResult: {e} issue(s) found, {w} warning(s)"),
             }
         }
     }
@@ -3318,6 +3366,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3394,6 +3443,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3462,6 +3512,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3522,6 +3573,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3588,6 +3640,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: Some(tmp.path().join("data.db")),
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3794,6 +3847,39 @@ mod tests {
     }
 
     #[test]
+    fn run_hook_checks_warns_on_pre_async_abort() {
+        let mut def = make_hook_def("echo test", vec![]);
+        def.when = crate::infra::config::HookWhen::Pre;
+        let checks = super::run_hook_checks(&def);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].check, "abort_effective");
+        assert_eq!(checks[0].status, super::CheckStatus::Warning);
+    }
+
+    #[test]
+    fn run_hook_checks_warns_on_post_sync_abort() {
+        let mut def = make_hook_def("echo test", vec![]);
+        def.mode = crate::infra::config::HookMode::Sync;
+        let checks = super::run_hook_checks(&def);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].check, "abort_effective");
+        assert_eq!(checks[0].status, super::CheckStatus::Warning);
+    }
+
+    #[test]
+    fn run_hook_checks_silent_when_abort_is_effective_or_defaulted() {
+        // pre+sync+abort: abort takes effect — no warning
+        let mut def = make_hook_def("echo test", vec![]);
+        def.when = crate::infra::config::HookWhen::Pre;
+        def.mode = crate::infra::config::HookMode::Sync;
+        assert!(super::run_hook_checks(&def).is_empty());
+
+        // post+async+abort is the all-default combination — stays silent
+        let def = make_hook_def("echo test", vec![]);
+        assert!(super::run_hook_checks(&def).is_empty());
+    }
+
+    #[test]
     fn cli_me_response_deserializes_with_null_session() {
         let json = r#"{"user":{"username":"alice","display_name":"Alice"},"session":null}"#;
         let me: super::CliMeResponse = serde_json::from_str(json).unwrap();
@@ -3855,6 +3941,7 @@ url = "http://localhost:3142"
             dry_run: false,
             log_dir: None,
             db_path: None,
+            local: false,
             postgres_url: None,
             project: None,
             user: None,
@@ -3893,6 +3980,7 @@ token = "my-api-key"
             dry_run: false,
             log_dir: None,
             db_path: None,
+            local: false,
             postgres_url: None,
             project: None,
             user: None,

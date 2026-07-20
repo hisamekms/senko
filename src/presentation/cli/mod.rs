@@ -85,6 +85,11 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub db_path: Option<PathBuf>,
 
+    /// Force the local backend, ignoring [cli.remote] url and
+    /// SENKO_CLI_REMOTE_URL (env: SENKO_LOCAL)
+    #[arg(long, global = true)]
+    pub local: bool,
+
     /// PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
     #[arg(long, global = true)]
     pub postgres_url: Option<String>,

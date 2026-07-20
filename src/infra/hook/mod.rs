@@ -1160,18 +1160,32 @@ pub fn warn_about_mismatched_runtime_sections(config: &Config, runtime: &Runtime
     }
 }
 
+/// Return a warning message when the hook's `on_failure = abort` can never
+/// take effect. Abort is only honored for `mode = sync` + `when = pre`
+/// (see `execute_hook_batch`). The all-default combination
+/// (post + async + abort) is not reported: `on_failure` defaults to `abort`,
+/// so flagging it would warn on every hook that only sets `command`.
+pub fn abort_ineffective_reason(hook: &HookDef) -> Option<&'static str> {
+    if hook.on_failure != OnFailure::Abort {
+        return None;
+    }
+    match (hook.when, hook.mode) {
+        (HookWhen::Pre, HookMode::Sync) => None,
+        (HookWhen::Pre, HookMode::Async) => {
+            Some("pre+async hooks cannot abort; on_failure=abort is effectively warn")
+        }
+        (HookWhen::Post, HookMode::Sync) => {
+            Some("post hooks cannot abort; on_failure=abort requires when=pre + mode=sync")
+        }
+        (HookWhen::Post, HookMode::Async) => None,
+    }
+}
+
 /// Emit load-time warnings for hook definitions with unreachable / ambiguous flags.
 /// `section_label` identifies where the hook lives (e.g., `cli.task_complete`).
 pub fn validate_hook_def(section_label: &str, name: &str, hook: &HookDef, is_task_select: bool) {
-    if matches!(hook.when, HookWhen::Pre)
-        && matches!(hook.mode, HookMode::Async)
-        && matches!(hook.on_failure, OnFailure::Abort)
-    {
-        tracing::warn!(
-            section = section_label,
-            hook = name,
-            "pre+async hooks cannot abort; on_failure=abort is effectively warn"
-        );
+    if let Some(reason) = abort_ineffective_reason(hook) {
+        tracing::warn!(section = section_label, hook = name, "{reason}");
     }
     if hook.on_result.is_some() && hook.on_result != Some(OnResult::Any) && !is_task_select {
         tracing::warn!(

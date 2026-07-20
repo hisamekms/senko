@@ -11,6 +11,7 @@ Complete list of `senko` subcommands.
 --dry-run               show what would happen without executing (state-changing commands only)
 --log-dir <PATH>        log output directory (default: $XDG_STATE_HOME/senko)
 --db-path <PATH>        SQLite DB file path (env: SENKO_DB_PATH)
+--local                 force the local backend, ignoring [cli.remote] url / SENKO_CLI_REMOTE_URL (env: SENKO_LOCAL)
 --postgres-url <URL>    PostgreSQL connection URL (env: SENKO_POSTGRES_URL)
 --project <NAME>        project to operate on (env: SENKO_PROJECT)
 --user <NAME>           user to act as (env: SENKO_USER)
@@ -315,6 +316,7 @@ senko dev seed reset
 | `SENKO_PROJECT` | Project to operate on |
 | `SENKO_USER` | User to act as |
 | `SENKO_DB_PATH` | SQLite DB path |
+| `SENKO_LOCAL` | `1`/`true`/`yes` acts like `--local` (force the local backend, ignoring remote settings) |
 | `SENKO_POSTGRES_URL` | PostgreSQL connection URL |
 | `SENKO_CLI_REMOTE_URL` | Remote server URL |
 | `SENKO_CLI_REMOTE_TOKEN` | API token for remote access |

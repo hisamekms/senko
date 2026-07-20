@@ -20,6 +20,7 @@ use crate::domain::task::{
 };
 use crate::domain::user::UserId;
 use crate::infra::config::HookWhen;
+use crate::infra::hook::FireOutcome;
 
 use super::client::HttpClient;
 use super::{
@@ -95,6 +96,29 @@ impl RemoteTaskOperations {
 
     fn client(&self) -> &reqwest::Client {
         self.http.reqwest()
+    }
+
+    /// Fire a pre-hook and abort before the HTTP call when a sync pre-hook
+    /// fails with `on_failure = abort`. Mirrors `LocalTaskOperations`.
+    async fn fire_pre(
+        &self,
+        trigger: &HookTrigger,
+        event: &str,
+        task: Option<&Task>,
+        prev_status: Option<TaskStatus>,
+    ) -> Result<()> {
+        if self
+            .hooks
+            .fire(trigger, HookWhen::Pre, task, prev_status, None)
+            .await
+            == FireOutcome::Abort
+        {
+            return Err(DomainError::HookAborted {
+                event: event.into(),
+            }
+            .into());
+        }
+        Ok(())
     }
 }
 
@@ -202,6 +226,10 @@ impl TaskOperations for RemoteTaskOperations {
     // --- State transitions ---
 
     async fn create_task(&self, project_id: ProjectId, params: &CreateTaskParams) -> Result<Task> {
+        // Pre hook: a preview task object is not available; pass None.
+        let trigger = HookTrigger::Task(TaskEvent::Created);
+        self.fire_pre(&trigger, "task_add", None, None).await?;
+
         let resp = self
             .prepare(
                 self.client()
@@ -214,13 +242,7 @@ impl TaskOperations for RemoteTaskOperations {
 
         let _ = self
             .hooks
-            .fire(
-                &HookTrigger::Task(TaskEvent::Created),
-                HookWhen::Post,
-                Some(&task),
-                None,
-                None,
-            )
+            .fire(&trigger, HookWhen::Post, Some(&task), None, None)
             .await;
 
         crate::emit_task_event!(
@@ -234,7 +256,12 @@ impl TaskOperations for RemoteTaskOperations {
     }
 
     async fn publish_task(&self, project_id: ProjectId, id: TaskId) -> Result<Task> {
-        let prev_status = self.get_task(project_id, id).await?.status();
+        let prev = self.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Published);
+        self.fire_pre(&trigger, "task_publish", Some(&prev), Some(prev_status))
+            .await?;
 
         let resp = self
             .prepare(
@@ -248,7 +275,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Published),
+                &trigger,
                 HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
@@ -276,7 +303,12 @@ impl TaskOperations for RemoteTaskOperations {
         _user_id: Option<UserId>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
-        let prev_status = self.get_task(project_id, id).await?.status();
+        let prev = self.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Started);
+        self.fire_pre(&trigger, "task_start", Some(&prev), Some(prev_status))
+            .await?;
 
         // user_id is resolved server-side from the authenticated request — the
         // client no longer sends it in the body. See #330.
@@ -308,7 +340,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Started),
+                &trigger,
                 HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
@@ -335,7 +367,12 @@ impl TaskOperations for RemoteTaskOperations {
         session_id: Option<String>,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
-        let prev_status = self.get_task(project_id, id).await?.status();
+        let prev = self.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Resumed);
+        self.fire_pre(&trigger, "task_resume", Some(&prev), Some(prev_status))
+            .await?;
 
         let mut body = json!({ "session_id": session_id });
         if let Some(ref meta_update) = metadata {
@@ -365,7 +402,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Resumed),
+                &trigger,
                 HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
@@ -393,6 +430,12 @@ impl TaskOperations for RemoteTaskOperations {
         include_unassigned: bool,
         metadata: Option<MetadataUpdate>,
     ) -> Result<Task> {
+        // Pre hook: selection happens server-side, so the task to be started
+        // is not known yet; pass None like `create_task` does.
+        let start_trigger = HookTrigger::Task(TaskEvent::Started);
+        self.fire_pre(&start_trigger, "task_start", None, None)
+            .await?;
+
         // user_id is resolved server-side from the authenticated request — the
         // client no longer sends it in the body. See #330.
         let mut body =
@@ -460,7 +503,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Started),
+                &start_trigger,
                 HookWhen::Post,
                 Some(&task),
                 Some(TaskStatus::Todo),
@@ -486,7 +529,12 @@ impl TaskOperations for RemoteTaskOperations {
         id: TaskId,
         skip_pr_check: bool,
     ) -> Result<CompleteResult> {
-        let prev_status = self.get_task(project_id, id).await?.status();
+        let prev = self.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Completed);
+        self.fire_pre(&trigger, "task_complete", Some(&prev), Some(prev_status))
+            .await?;
 
         let body = if skip_pr_check {
             json!({ "skip_pr_check": true })
@@ -507,7 +555,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Completed),
+                &trigger,
                 HookWhen::Post,
                 Some(&api_resp.task),
                 Some(prev_status),
@@ -536,7 +584,12 @@ impl TaskOperations for RemoteTaskOperations {
         id: TaskId,
         reason: Option<String>,
     ) -> Result<Task> {
-        let prev_status = self.get_task(project_id, id).await?.status();
+        let prev = self.get_task(project_id, id).await?;
+        let prev_status = prev.status();
+
+        let trigger = HookTrigger::Task(TaskEvent::Canceled);
+        self.fire_pre(&trigger, "task_cancel", Some(&prev), Some(prev_status))
+            .await?;
 
         let body = match reason {
             Some(ref r) => json!({ "reason": r }),
@@ -555,7 +608,7 @@ impl TaskOperations for RemoteTaskOperations {
         let _ = self
             .hooks
             .fire(
-                &HookTrigger::Task(TaskEvent::Canceled),
+                &trigger,
                 HookWhen::Post,
                 Some(&task),
                 Some(prev_status),
@@ -1175,6 +1228,161 @@ mod tests {
 
     fn make_remote_ops(base_url: &str) -> RemoteTaskOperations {
         RemoteTaskOperations::new(base_url, None, BTreeMap::new(), Arc::new(NoOpHookExecutor))
+    }
+
+    /// HookExecutor that aborts every pre-hook and records each `fire` call
+    /// as `(when, event_key)`.
+    struct AbortingPreHookExecutor {
+        fired: std::sync::Mutex<Vec<(crate::infra::config::HookWhen, String)>>,
+    }
+
+    impl AbortingPreHookExecutor {
+        fn new() -> Self {
+            Self {
+                fired: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl crate::application::port::HookExecutor for AbortingPreHookExecutor {
+        async fn fire(
+            &self,
+            trigger: &crate::application::HookTrigger,
+            when: crate::infra::config::HookWhen,
+            _task: Option<&crate::domain::task::Task>,
+            _from_status: Option<crate::domain::task::TaskStatus>,
+            _unblocked: Option<Vec<crate::domain::task::UnblockedTask>>,
+        ) -> crate::infra::hook::FireOutcome {
+            self.fired
+                .lock()
+                .unwrap()
+                .push((when, format!("{trigger:?}")));
+            if when == crate::infra::config::HookWhen::Pre {
+                crate::infra::hook::FireOutcome::Abort
+            } else {
+                crate::infra::hook::FireOutcome::Continue
+            }
+        }
+
+        async fn fire_contract(
+            &self,
+            _trigger: &crate::application::HookTrigger,
+            _when: crate::infra::config::HookWhen,
+            _contract: Option<&crate::domain::contract::Contract>,
+        ) -> crate::infra::hook::FireOutcome {
+            crate::infra::hook::FireOutcome::Continue
+        }
+    }
+
+    /// Spawn an upstream that records every `METHOD path` it receives and
+    /// answers like `spawn_mock_upstream`.
+    async fn spawn_recording_upstream() -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_clone = seen.clone();
+        let app: Router = Router::new().route(
+            "/{*rest}",
+            any(
+                move |req: axum::http::Request<axum::body::Body>| async move {
+                    let path = req.uri().path().to_string();
+                    seen_clone
+                        .lock()
+                        .unwrap()
+                        .push(format!("{} {}", req.method(), path));
+                    let task = mock_task_with_contract(None);
+                    if path.ends_with("/complete") {
+                        Json(json!({ "task": task, "unblocked_tasks": [] }))
+                    } else {
+                        Json(task)
+                    }
+                },
+            ),
+        );
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    /// A pre-hook abort must prevent the mutating HTTP call entirely and
+    /// surface as `DomainError::HookAborted`.
+    #[tokio::test]
+    async fn publish_pre_hook_abort_prevents_http_call() {
+        let (base, seen) = spawn_recording_upstream().await;
+        let hooks = Arc::new(AbortingPreHookExecutor::new());
+        let ops = RemoteTaskOperations::new(&base, None, BTreeMap::new(), hooks.clone());
+
+        let err = ops
+            .publish_task(ProjectId(7), TaskId(1))
+            .await
+            .expect_err("pre-hook abort should fail publish");
+        let domain_err = err
+            .downcast_ref::<crate::domain::error::DomainError>()
+            .expect("should be a DomainError");
+        assert!(
+            matches!(
+                domain_err,
+                crate::domain::error::DomainError::HookAborted { event } if event.as_str() == "task_publish"
+            ),
+            "unexpected error: {domain_err:?}"
+        );
+
+        let requests = seen.lock().unwrap().clone();
+        assert!(
+            !requests.iter().any(|r| r.contains("/publish")),
+            "publish POST must not be sent after pre-hook abort, got: {requests:?}"
+        );
+
+        let fired = hooks.fired.lock().unwrap().clone();
+        assert!(
+            fired
+                .iter()
+                .any(|(w, _)| *w == crate::infra::config::HookWhen::Pre),
+            "pre-hook should have fired"
+        );
+        assert!(
+            !fired
+                .iter()
+                .any(|(w, _)| *w == crate::infra::config::HookWhen::Post),
+            "post-hook must not fire when aborted"
+        );
+    }
+
+    /// Every mutating state transition must fire its pre-hook and stop at the
+    /// abort without reaching the upstream endpoint.
+    #[tokio::test]
+    async fn all_transitions_fire_pre_hook_and_abort() {
+        let (base, seen) = spawn_recording_upstream().await;
+        let hooks = Arc::new(AbortingPreHookExecutor::new());
+        let ops = RemoteTaskOperations::new(&base, None, BTreeMap::new(), hooks);
+
+        assert!(
+            ops.create_task(ProjectId(7), &empty_create_params())
+                .await
+                .is_err()
+        );
+        assert!(
+            ops.start_task(ProjectId(7), TaskId(1), None, None, None)
+                .await
+                .is_err()
+        );
+        assert!(ops.resume_task(ProjectId(7), TaskId(1), None, None).await.is_err());
+        assert!(ops.next_task(ProjectId(7), None, None, true, None).await.is_err());
+        assert!(ops.complete_task(ProjectId(7), TaskId(1), false).await.is_err());
+        assert!(
+            ops.cancel_task(ProjectId(7), TaskId(1), Some("r".into()))
+                .await
+                .is_err()
+        );
+
+        let requests = seen.lock().unwrap().clone();
+        let mutating: Vec<&String> = requests.iter().filter(|r| r.starts_with("POST")).collect();
+        assert!(
+            mutating.is_empty(),
+            "no mutating request may reach the upstream after pre-hook abort, got: {mutating:?}"
+        );
     }
 
     /// Drive `body` under a tracing subscriber that bridges

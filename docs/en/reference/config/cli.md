@@ -19,6 +19,13 @@ The upstream the CLI connects to **instead of a local DB**. Setting this disable
 
 env overrides: `SENKO_CLI_REMOTE_URL` / `SENKO_CLI_REMOTE_TOKEN`
 
+> **Backend precedence**: when `url` is set, the remote backend **always wins**, even if `--db-path` / `SENKO_DB_PATH` is given (those only affect `[backend.sqlite] db_path`). To test against a local DB, temporarily disable the remote settings with the `--local` flag or `SENKO_LOCAL=1`. `senko doctor` prints the effective backend on its `Backend:` line.
+
+```bash
+# sandbox against local SQLite while keeping the remote config in place
+senko --local --db-path /tmp/sandbox.db task add --title "test"
+```
+
 If you don't want the token hard-coded:
 
 - Inject it via env.

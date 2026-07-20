@@ -1349,6 +1349,9 @@ pub struct CliOverrides {
     pub server_host: Option<String>,
     /// DEVELOPMENT-ONLY: enable auth bypass via `--dev-no-auth`. Cannot be reset by lower-priority sources.
     pub dev_no_auth: bool,
+    /// Force the local backend: clears `cli.remote.url` so backend selection
+    /// falls through to sqlite/postgres even when a remote URL is configured.
+    pub local: bool,
 }
 
 impl Config {
@@ -1692,6 +1695,10 @@ impl Config {
         }
         if overrides.dev_no_auth {
             self.server.auth.dev_bypass.enabled = true;
+        }
+        if overrides.local {
+            self.cli.remote.url = None;
+            self.cli.remote.token = None;
         }
     }
 
@@ -2590,6 +2597,30 @@ mod tests {
             ..Default::default()
         });
         assert!(config.server.auth.dev_bypass.enabled);
+    }
+
+    #[test]
+    fn apply_cli_local_clears_remote_url() {
+        let mut config = Config::default();
+        config.cli.remote.url = Some("https://senko.example.com".into());
+        config.cli.remote.token = Some("tok".into());
+        config.apply_cli(&CliOverrides {
+            local: true,
+            ..Default::default()
+        });
+        assert!(config.cli.remote.url.is_none());
+        assert!(config.cli.remote.token.is_none());
+    }
+
+    #[test]
+    fn apply_cli_without_local_keeps_remote_url() {
+        let mut config = Config::default();
+        config.cli.remote.url = Some("https://senko.example.com".into());
+        config.apply_cli(&CliOverrides::default());
+        assert_eq!(
+            config.cli.remote.url.as_deref(),
+            Some("https://senko.example.com")
+        );
     }
 
     #[test]
