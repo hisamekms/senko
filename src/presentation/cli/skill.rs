@@ -195,7 +195,8 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
             }
             if should_write_file(&path, file.content, yes)? {
                 fs::write(&path, file.content)?;
-                println!("written to {}", path.display());
+                let filename = file.segments.last().unwrap();
+                println!("{} written to {}", filename, path.display());
             }
         }
         return Ok(());
