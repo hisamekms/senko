@@ -73,7 +73,7 @@ Default is under `.claude/`. Override with `--output-dir`:
 senko skill-install --output-dir /custom/path
 ```
 
-With `--output-dir`, all files are written **flat**. To be recognized per the Claude Code convention, the final layout must still be `.claude/skills/<name>/SKILL.md`.
+With `--output-dir`, the directory structure (`workflows/`, `scripts/`, etc.) is preserved, since `SKILL.md` itself references those files via relative paths like `${CLAUDE_SKILL_DIR}/workflows/...`. To be recognized per the Claude Code convention, the final layout must still be `.claude/skills/<name>/SKILL.md`.
 
 ## Relation to Project Workflow Config
 
