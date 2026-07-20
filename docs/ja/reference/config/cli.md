@@ -19,6 +19,13 @@ CLI が **ローカル DB ではなくリモートサーバに繋ぐ** 時の接
 
 env override: `SENKO_CLI_REMOTE_URL` / `SENKO_CLI_REMOTE_TOKEN`
 
+> **backend の優先順位**: `url` が設定されていると、`--db-path` / `SENKO_DB_PATH` を指定しても **remote が常に優先される** (これらは `[backend.sqlite] db_path` にしか作用しない)。ローカル DB で検証したい時は `--local` フラグまたは `SENKO_LOCAL=1` で remote 設定を一時的に無効化する。現在どの backend が使われるかは `senko doctor` の `Backend:` 行で確認できる。
+
+```bash
+# remote 設定を残したままローカル SQLite でサンドボックス検証
+senko --local --db-path /tmp/sandbox.db task add --title "test"
+```
+
 token を config に直書きしたくない場合:
 
 - env 変数で注入

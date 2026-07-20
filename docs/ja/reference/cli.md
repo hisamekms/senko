@@ -11,6 +11,7 @@
 --dry-run               実行せずに出力だけ表示 (状態変更コマンドのみ)
 --log-dir <PATH>        ログ出力ディレクトリ (既定: $XDG_STATE_HOME/senko)
 --db-path <PATH>        SQLite DB ファイルパス (env: SENKO_DB_PATH)
+--local                 [cli.remote] url / SENKO_CLI_REMOTE_URL を無視してローカル backend を強制 (env: SENKO_LOCAL)
 --postgres-url <URL>    PostgreSQL 接続 URL (env: SENKO_POSTGRES_URL)
 --project <NAME>        操作対象プロジェクト (env: SENKO_PROJECT)
 --user <NAME>           操作ユーザ (env: SENKO_USER)
@@ -315,6 +316,7 @@ senko dev seed reset
 | `SENKO_PROJECT` | 操作対象プロジェクト名 |
 | `SENKO_USER` | 操作ユーザ名 |
 | `SENKO_DB_PATH` | SQLite DB のパス |
+| `SENKO_LOCAL` | `1`/`true`/`yes` で `--local` と同じ (remote 設定を無視してローカル backend を強制) |
 | `SENKO_POSTGRES_URL` | PostgreSQL 接続 URL |
 | `SENKO_CLI_REMOTE_URL` | リモートサーバ URL |
 | `SENKO_CLI_REMOTE_TOKEN` | リモート接続用 API token |

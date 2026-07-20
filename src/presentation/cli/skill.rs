@@ -260,6 +260,7 @@ mod tests {
             dry_run: false,
             log_dir: None,
             db_path: None,
+            local: false,
             postgres_url: None,
             project: None,
             user: None,

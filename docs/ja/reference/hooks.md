@@ -159,12 +159,23 @@ description = "タスク完了時に POST する宛先"
 
 起動中の runtime にマッチしない section に書かれた hook は **スキップされ、起動時に 1 回 warn が出る** ので、想定通りに動かない時はまず `senko doctor` と起動ログを確認してください。
 
+## Remote (HTTP) backend での hook
+
+`[cli.remote] url` 設定時 (および relay サーバ) も `cli.*` / `server.relay.*` の hook はクライアント側 (リクエストを送る側) で発火する:
+
+- `when = "pre"` は **HTTP リクエスト送信前** に走り、`sync` + `on_failure = "abort"` なら送信自体をキャンセルする
+- `when = "post"` はレスポンス受信後に走る
+
+ただしクライアント側 hook は各クライアントの設定次第で迂回できるため、**強制力のあるバリデーションは上流サーバの `[server.remote.*]` hook に置く** こと。relay / CLI 側の pre-hook はあくまで早期フィードバック用。
+
 ## ロード時検証
 
 `senko doctor` / サーバ起動時に以下が warning として出る:
 
-- `pre` + `async` + `on_failure = "abort"` — async は abort 不可 (事実上 warn)
-- `on_result` が `task_select` 以外に付いている — 無視される
+- `on_failure = "abort"` が効かない組合せ — abort が効くのは `sync` + `pre` のみ。`pre` + `async` や `sync` + `post` は事実上 warn になる (全キー省略時の既定値 `post` + `async` + `abort` は慣用的な設定のため警告対象外)
+- `on_result` が `task_select` 以外に付いている — 無視される (起動時のみ)
+
+`senko doctor` はこのほか hook script の存在・実行権限・必須 env 変数、および実効 backend (`Backend:` 行) を表示する。
 
 ## テスト
 

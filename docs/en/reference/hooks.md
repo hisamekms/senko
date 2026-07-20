@@ -159,12 +159,23 @@ For `contract_*` events the outer envelope is the same but the inner shape chang
 
 Hooks written under sections that don't match the active runtime are **skipped, and a single warn is logged at startup**. If things aren't firing, start by checking `senko doctor` and the startup logs.
 
+## Hooks with a Remote (HTTP) Backend
+
+With `[cli.remote] url` set (and on relay servers), `cli.*` / `server.relay.*` hooks fire on the client side (the side sending the request):
+
+- `when = "pre"` runs **before the HTTP request is sent**; with `sync` + `on_failure = "abort"` it cancels the request entirely.
+- `when = "post"` runs after the response is received.
+
+Client-side hooks can be bypassed by each client's own config, so **put enforcing validation in the upstream server's `[server.remote.*]` hooks**. Relay / CLI pre-hooks are for early feedback only.
+
 ## Load-Time Validation
 
 `senko doctor` / the server startup emits warnings about:
 
-- `pre` + `async` + `on_failure = "abort"` — async can't abort (effectively `warn`).
-- `on_result` attached to anything other than `task_select` — ignored.
+- Combinations where `on_failure = "abort"` can't take effect — abort only works with `sync` + `pre`. `pre` + `async` and `sync` + `post` are effectively `warn`. (The all-default combination `post` + `async` + `abort` is not flagged since it's the idiomatic minimal config.)
+- `on_result` attached to anything other than `task_select` — ignored (startup only).
+
+Beyond these, `senko doctor` also checks hook script existence / execute permission / required env vars, and prints the effective backend on its `Backend:` line.
 
 ## Testing
 
