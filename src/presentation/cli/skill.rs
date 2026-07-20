@@ -60,11 +60,29 @@ fn any_install_target_exists(base_dir: &Path) -> bool {
     })
 }
 
-/// Returns true if any installable file already exists (flat layout) under `dir`.
+/// Segments of an installable file's path relative to the skill/agent root
+/// (i.e. with the `["skills", "senko"]` or `["agents"]` prefix stripped), used
+/// when installing under a custom `--output-dir`. This preserves the
+/// directory structure (e.g. `workflows/auto-select.md`) that `SKILL.md`
+/// itself references via `${CLAUDE_SKILL_DIR}`.
+fn output_dir_segments(file: &InstallableFile) -> &'static [&'static str] {
+    if file.segments.len() >= 2 && file.segments[0] == "skills" && file.segments[1] == "senko" {
+        &file.segments[2..]
+    } else if !file.segments.is_empty() && file.segments[0] == "agents" {
+        &file.segments[1..]
+    } else {
+        file.segments
+    }
+}
+
+/// Returns true if any installable file already exists under `dir` when
+/// installed with `--output-dir` (directory structure preserved).
 fn any_install_target_exists_flat(dir: &Path) -> bool {
     INSTALLABLE_FILES.iter().any(|f| {
-        let filename = f.segments.last().unwrap();
-        dir.join(filename).exists()
+        let path = output_dir_segments(f)
+            .iter()
+            .fold(dir.to_path_buf(), |p, s| p.join(s));
+        path.exists()
     })
 }
 
@@ -102,11 +120,12 @@ fn clean_install_targets(base_dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Remove individual installable files (flat layout) from `dir` for clean install.
+/// Remove individual installable files from `dir` for clean install under `--output-dir`.
 fn clean_install_targets_flat(dir: &Path) -> Result<()> {
     for file in INSTALLABLE_FILES {
-        let filename = file.segments.last().unwrap();
-        let path = dir.join(filename);
+        let path = output_dir_segments(file)
+            .iter()
+            .fold(dir.to_path_buf(), |p, s| p.join(s));
         if path.exists() {
             fs::remove_file(&path)
                 .with_context(|| format!("failed to remove file: {}", path.display()))?;
@@ -132,8 +151,10 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
             INSTALLABLE_FILES
                 .iter()
                 .map(|f| {
-                    let filename = f.segments.last().unwrap();
-                    format!("Write {} to {}", filename, dir.join(filename).display())
+                    let path = output_dir_segments(f)
+                        .iter()
+                        .fold(dir.clone(), |p, s| p.join(s));
+                    format!("Write {}", path.display())
                 })
                 .collect()
         } else {
@@ -164,11 +185,17 @@ pub fn skill_install(cli: &Cli, output_dir: Option<PathBuf>, yes: bool, force: b
             clean_install_targets_flat(&dir)?;
         }
         for file in INSTALLABLE_FILES {
-            let filename = file.segments.last().unwrap();
-            let path = dir.join(filename);
+            let path = output_dir_segments(file)
+                .iter()
+                .fold(dir.clone(), |p, s| p.join(s));
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).with_context(|| {
+                    format!("failed to create directory: {}", parent.display())
+                })?;
+            }
             if should_write_file(&path, file.content, yes)? {
                 fs::write(&path, file.content)?;
-                println!("{} written to {}", filename, path.display());
+                println!("written to {}", path.display());
             }
         }
         return Ok(());
@@ -264,11 +291,12 @@ mod tests {
         // Verify reviewer agents are also installed
         assert!(dir.path().join("single-task-reviewer.md").exists());
         assert!(dir.path().join("task-contract-reviewer.md").exists());
-        // Verify workflow and other files are present (flat mode uses last segment as filename)
+        // Verify workflow and script files preserve their directory structure,
+        // matching the paths SKILL.md references via ${CLAUDE_SKILL_DIR}.
         assert!(dir.path().join("cli-reference.md").exists());
-        assert!(dir.path().join("add-task.md").exists());
-        assert!(dir.path().join("execute-task.md").exists());
-        assert!(dir.path().join("rebase-merge.sh").exists());
+        assert!(dir.path().join("workflows/add-task.md").exists());
+        assert!(dir.path().join("workflows/execute-task.md").exists());
+        assert!(dir.path().join("scripts/rebase-merge.sh").exists());
     }
 
     #[test]

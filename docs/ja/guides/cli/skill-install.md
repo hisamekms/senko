@@ -73,7 +73,7 @@ senko skill-install
 senko skill-install --output-dir /custom/path
 ```
 
-`--output-dir` 指定時はファイルがすべて **フラット配置** で出力されます。Claude Code の規約に従って認識させるには、最終的に `.claude/skills/<name>/SKILL.md` という階層に配置する必要があります。
+`--output-dir` 指定時も `workflows/` `scripts/` などのディレクトリ構造は保持されます（`SKILL.md` 自体が `${CLAUDE_SKILL_DIR}/workflows/...` のような相対パスで参照しているため）。Claude Code の規約に従って認識させるには、最終的に `.claude/skills/<name>/SKILL.md` という階層に配置する必要があります。
 
 ## プロジェクトの workflow 設定との関係
 
