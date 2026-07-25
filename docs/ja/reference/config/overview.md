@@ -6,12 +6,13 @@ senko の設定は TOML で、複数ファイルをマージしてから **実�
 
 値の解決順 (上が強い):
 
-1. **CLI フラグ** (`--config <path>`、`--port`、`--host` …)
+1. **CLI フラグ** (`--port`、`--host` …)
 2. **環境変数** (`SENKO_*`)
-3. **Local 設定** `.senko/config.local.toml` — git 管理外、開発者ごとの上書き
-4. **Project 設定** `.senko/config.toml` — git 管理、チーム共有
-5. **User 設定** `~/.config/senko/config.toml` — 全プロジェクト共通
-6. **組み込みデフォルト**
+3. **オーバーレイ設定** `--config <path>`（未指定なら `SENKO_CONFIG`）で指定したファイルとその sibling `config.local.toml` — 下位レイヤの**置換ではなく**、その上に merge される追加レイヤ
+4. **Local 設定** `.senko/config.local.toml` — git 管理外、開発者ごとの上書き
+5. **Project 設定** `.senko/config.toml` — git 管理、チーム共有（`--config` / `SENKO_CONFIG` 指定時も読まれる）
+6. **User 設定** `~/.config/senko/config.toml` — 全プロジェクト共通
+7. **組み込みデフォルト**
 
 同じキーが複数の層にあれば、**スカラーは上位が勝ち、テーブル (hook 等) は名前単位でマージ** されます。
 

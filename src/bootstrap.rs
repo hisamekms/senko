@@ -1177,6 +1177,11 @@ fn build_logger_provider(
     }
 }
 
+/// Load and merge config layers (low → high, higher wins per `RawConfig::merge`):
+/// user config → user local → project config (`.senko/config.toml`) → project
+/// local → overlay (`--config`, else `SENKO_CONFIG`) → overlay's sibling local.
+/// The overlay is an additional layer on top of the project config, not a
+/// replacement for it.
 pub fn load_config(
     project_root: &Path,
     explicit_config: Option<&Path>,
@@ -1185,27 +1190,31 @@ pub fn load_config(
     // 1. Load user config + user local overlay
     let (user_raw, user_local) = load_user_config(xdg)?;
 
-    // 2. Load project/explicit config + its local overlay
-    let (project_raw, project_local) = if let Some(path) = explicit_config {
+    // 2. Load project config + its local overlay (always, even when an
+    //    explicit/env overlay is given — the overlay merges on top of it)
+    let default_path = project_root.join(".senko").join("config.toml");
+    let (project_raw, project_local) = if default_path.exists() {
+        let raw = load_config_file(&default_path, false)?;
+        let local = load_local_overlay(&default_path)?;
+        (Some(raw), local)
+    } else {
+        (None, None)
+    };
+
+    // 3. Load the overlay config: --config wins over SENKO_CONFIG. The file
+    //    must exist; its sibling config.local.toml is layered on top of it.
+    let overlay_path = explicit_config
+        .map(Path::to_path_buf)
+        .or_else(env_config_path);
+    let (overlay_raw, overlay_local) = if let Some(path) = &overlay_path {
         let raw = load_config_file(path, true)?;
         let local = load_local_overlay(path)?;
         (Some(raw), local)
-    } else if let Some(env_path) = env_config_path() {
-        let raw = load_config_file(&env_path, true)?;
-        let local = load_local_overlay(&env_path)?;
-        (Some(raw), local)
     } else {
-        let default_path = project_root.join(".senko").join("config.toml");
-        if default_path.exists() {
-            let raw = load_config_file(&default_path, false)?;
-            let local = load_local_overlay(&default_path)?;
-            (Some(raw), local)
-        } else {
-            (None, None)
-        }
+        (None, None)
     };
 
-    // 3. Merge: user → user local → project → project local
+    // 4. Merge: user → user local → project → project local → overlay → overlay local
     let mut merged = user_raw.unwrap_or_default();
     if let Some(local) = user_local {
         merged = merged.merge(local);
@@ -1216,8 +1225,14 @@ pub fn load_config(
     if let Some(local) = project_local {
         merged = merged.merge(local);
     }
+    if let Some(overlay) = overlay_raw {
+        merged = merged.merge(overlay);
+    }
+    if let Some(local) = overlay_local {
+        merged = merged.merge(local);
+    }
 
-    // 4. Resolve to final Config and apply env overrides
+    // 5. Resolve to final Config and apply env overrides
     let mut config = merged.resolve();
     config.apply_env();
     config.xdg = xdg.clone();
@@ -1437,14 +1452,22 @@ name = "custom-local-user"
 
     #[test]
     #[serial]
-    fn load_config_explicit_config_ignores_project_local() {
+    fn load_config_explicit_config_overrides_project_local() {
         let dir = tempfile::tempdir().unwrap();
         let senko_dir = dir.path().join(".senko");
         let custom_dir = dir.path().join("custom");
         fs::create_dir_all(&senko_dir).unwrap();
         fs::create_dir_all(&custom_dir).unwrap();
 
-        // Project local overlay should NOT be loaded when --config is used
+        // Project local is a lower layer than the --config overlay
+        fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[user]
+name = "project-user"
+"#,
+        )
+        .unwrap();
         fs::write(
             senko_dir.join("config.local.toml"),
             r#"
@@ -1466,8 +1489,186 @@ name = "custom-user"
         clear_senko_env();
         let xdg = isolated_xdg(dir.path());
         let config = load_config(dir.path(), Some(&custom_dir.join("config.toml")), &xdg).unwrap();
-        // Should be "custom-user", NOT "project-local-user"
+        // Overlay wins over project local
         assert_eq!(config.user.name.as_deref(), Some("custom-user"));
+    }
+
+    /// Set SENKO_CONFIG for the duration of a test body.
+    /// SAFETY: callers are marked #[serial].
+    fn with_senko_config(path: &Path, f: impl FnOnce()) {
+        unsafe {
+            std::env::set_var("SENKO_CONFIG", path);
+        }
+        f();
+        unsafe {
+            std::env::remove_var("SENKO_CONFIG");
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn load_config_explicit_config_overlays_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let senko_dir = dir.path().join(".senko");
+        let custom_dir = dir.path().join("custom");
+        fs::create_dir_all(&senko_dir).unwrap();
+        fs::create_dir_all(&custom_dir).unwrap();
+
+        fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[user]
+name = "project-user"
+
+[project]
+name = "my-project"
+"#,
+        )
+        .unwrap();
+
+        // Overlay overrides user.name but leaves project.name alone
+        fs::write(
+            custom_dir.join("config.toml"),
+            r#"
+[user]
+name = "overlay-user"
+"#,
+        )
+        .unwrap();
+
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        let config = load_config(dir.path(), Some(&custom_dir.join("config.toml")), &xdg).unwrap();
+        // Same key: overlay wins
+        assert_eq!(config.user.name.as_deref(), Some("overlay-user"));
+        // Key absent from the overlay: project config still applies
+        assert_eq!(config.project.name.as_deref(), Some("my-project"));
+    }
+
+    #[test]
+    #[serial]
+    fn load_config_env_config_overlays_project_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let senko_dir = dir.path().join(".senko");
+        let env_dir = dir.path().join("env");
+        fs::create_dir_all(&senko_dir).unwrap();
+        fs::create_dir_all(&env_dir).unwrap();
+
+        fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[user]
+name = "project-user"
+
+[project]
+name = "my-project"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            env_dir.join("config.toml"),
+            r#"
+[user]
+name = "env-user"
+"#,
+        )
+        .unwrap();
+
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        with_senko_config(&env_dir.join("config.toml"), || {
+            let config = load_config(dir.path(), None, &xdg).unwrap();
+            // Same key: overlay wins
+            assert_eq!(config.user.name.as_deref(), Some("env-user"));
+            // Key absent from the overlay: project config still applies
+            assert_eq!(config.project.name.as_deref(), Some("my-project"));
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn load_config_explicit_config_wins_over_env_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let custom_dir = dir.path().join("custom");
+        let env_dir = dir.path().join("env");
+        fs::create_dir_all(&custom_dir).unwrap();
+        fs::create_dir_all(&env_dir).unwrap();
+
+        fs::write(
+            custom_dir.join("config.toml"),
+            r#"
+[user]
+name = "explicit-user"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            env_dir.join("config.toml"),
+            r#"
+[user]
+name = "env-user"
+
+[project]
+name = "env-project"
+"#,
+        )
+        .unwrap();
+
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        with_senko_config(&env_dir.join("config.toml"), || {
+            let config =
+                load_config(dir.path(), Some(&custom_dir.join("config.toml")), &xdg).unwrap();
+            // --config wins; the SENKO_CONFIG file is not read at all
+            assert_eq!(config.user.name.as_deref(), Some("explicit-user"));
+            assert_eq!(config.project.name, None);
+        });
+    }
+
+    #[test]
+    #[serial]
+    fn load_config_env_config_overrides_project_local() {
+        let dir = tempfile::tempdir().unwrap();
+        let senko_dir = dir.path().join(".senko");
+        let env_dir = dir.path().join("env");
+        fs::create_dir_all(&senko_dir).unwrap();
+        fs::create_dir_all(&env_dir).unwrap();
+
+        // Project local is a lower layer than the SENKO_CONFIG overlay
+        fs::write(
+            senko_dir.join("config.toml"),
+            r#"
+[user]
+name = "project-user"
+"#,
+        )
+        .unwrap();
+        fs::write(
+            senko_dir.join("config.local.toml"),
+            r#"
+[user]
+name = "project-local-user"
+"#,
+        )
+        .unwrap();
+
+        fs::write(
+            env_dir.join("config.toml"),
+            r#"
+[user]
+name = "env-user"
+"#,
+        )
+        .unwrap();
+
+        clear_senko_env();
+        let xdg = isolated_xdg(dir.path());
+        with_senko_config(&env_dir.join("config.toml"), || {
+            let config = load_config(dir.path(), None, &xdg).unwrap();
+            assert_eq!(config.user.name.as_deref(), Some("env-user"));
+        });
     }
 
     #[test]

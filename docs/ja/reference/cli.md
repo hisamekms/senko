@@ -7,7 +7,7 @@
 ```
 --output <FORMAT>       json または text (既定: json)
 --project-root <PATH>   プロジェクトルート (省略時は自動検出)
---config <PATH>         設定ファイルのパス (env: SENKO_CONFIG, 既定: .senko/config.toml)
+--config <PATH>         指定ファイルを最上位レイヤとして merge (env: SENKO_CONFIG)。.senko/config.toml も引き続き読まれる
 --dry-run               実行せずに出力だけ表示 (状態変更コマンドのみ)
 --log-dir <PATH>        ログ出力ディレクトリ (既定: $XDG_STATE_HOME/senko)
 --db-path <PATH>        SQLite DB ファイルパス (env: SENKO_DB_PATH)

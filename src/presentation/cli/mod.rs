@@ -69,7 +69,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub project_root: Option<PathBuf>,
 
-    /// Path to config file (default: .senko/config.toml)
+    /// Extra config file merged as the top layer, on top of .senko/config.toml (env: SENKO_CONFIG)
     #[arg(long, global = true)]
     pub config: Option<PathBuf>,
 
