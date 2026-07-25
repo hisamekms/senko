@@ -23,7 +23,12 @@ OTEL_BSP_SCHEDULE_DELAY=200 \
 OTEL_BLRP_SCHEDULE_DELAY=200 \
 SENKO_LOG_FORMAT=json \
 SENKO_AUTH_API_KEY_MASTER_KEY=release-boot-check \
-timeout 3s ./target/debug/senko serve --port 0 >"$LOG" 2>&1 || true
+./target/debug/senko serve --port 0 >"$LOG" 2>&1 &
+SENKO_PID=$!
+# GNU `timeout` is unavailable on stock macOS — emulate `timeout 3s`.
+sleep 3
+kill "$SENKO_PID" 2>/dev/null || true
+wait "$SENKO_PID" 2>/dev/null || true
 
 echo "=== senko serve boot log ==="
 cat "$LOG"
