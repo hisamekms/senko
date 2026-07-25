@@ -16,7 +16,7 @@ echo "[1] add text output"
 ADD_TEXT="$(run_lf --output text task add --title "Text Test Task")"
 assert_contains "$ADD_TEXT" "Created task #" "add text contains 'Created task #'"
 assert_contains "$ADD_TEXT" "Text Test Task" "add text contains task title"
-TASK_ID="$(echo "$ADD_TEXT" | grep -oP '#\K[0-9]+')"
+TASK_ID="$(echo "$ADD_TEXT" | grep -o '#[0-9][0-9]*' | head -n1 | tr -d '#')"
 
 # 2. list --output text
 echo "[2] list text output"

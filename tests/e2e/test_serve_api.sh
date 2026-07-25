@@ -362,7 +362,14 @@ assert_eq "sort-c" "$(echo "$PAGE1" | jq -r '.items[0].title')" "page1 item is s
 P1_CURSOR=$(echo "$PAGE1" | jq -r '.next_cursor')
 [ "$P1_CURSOR" != "null" ] || { echo "FAIL: page1 next_cursor null"; exit 1; }
 # Cursor must be base64 of {"k":"updated_at","v":...,"id":...}.
-DECODED=$(printf '%s' "$P1_CURSOR" | base64 -d 2>/dev/null || true)
+# next_cursor is unpadded base64url; restore standard alphabet + padding so
+# both BSD and GNU base64 -d decode the full payload.
+P1_B64=$(printf '%s' "$P1_CURSOR" | tr '_-' '/+')
+case $(( ${#P1_B64} % 4 )) in
+  2) P1_B64="${P1_B64}==" ;;
+  3) P1_B64="${P1_B64}=" ;;
+esac
+DECODED=$(printf '%s' "$P1_B64" | base64 -d 2>/dev/null || true)
 echo "$DECODED" | jq -e '.k == "updated_at" and (.id | type == "number") and (.v | type == "string")' >/dev/null \
   || { echo "FAIL: composite cursor shape unexpected: $DECODED"; exit 1; }
 echo "PASS: composite cursor has shape {k:updated_at,v,id}"

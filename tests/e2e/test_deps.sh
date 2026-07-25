@@ -47,7 +47,7 @@ SET_DEPS_LEN="$(echo "$SET_OUTPUT" | jq -r '.dependencies | length')"
 assert_eq "2" "$SET_DEPS_LEN" "A has 2 dependencies after set"
 
 SET_DEPS="$(echo "$SET_OUTPUT" | jq -r '.dependencies | sort | map(tostring) | join(",")')"
-EXPECTED_DEPS="$(echo -e "$B_ID\n$C_ID" | sort | paste -sd ',')"
+EXPECTED_DEPS="$(echo -e "$B_ID\n$C_ID" | sort | paste -sd ',' -)"
 assert_eq "$EXPECTED_DEPS" "$SET_DEPS" "deps set replaced with B and C"
 
 # Clear deps for next tests

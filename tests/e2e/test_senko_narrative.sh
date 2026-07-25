@@ -32,6 +32,12 @@ SENKO_WRAPPER="$TEST_DIR/senko-wrapper.sh"
 chmod +x "$SENKO_WRAPPER"
 export SENKO_BIN="$SENKO_WRAPPER"
 
+# Set a file's mtime to N seconds in the past. BSD touch has no GNU-style
+# relative `-d '14 days ago'`, so use perl's utime (portable across macOS/Linux).
+touch_ago() { # touch_ago <seconds-ago> <file>
+  perl -e 'my $t = time - $ARGV[0]; utime($t, $t, $ARGV[1]) or die "utime $ARGV[1]: $!\n";' "$1" "$2"
+}
+
 echo "--- Test: senko-narrative.sh ---"
 
 # 1. init: produces valid ID, creates state dir, narrative.md, metadata.json
@@ -160,7 +166,7 @@ echo "--- Test: senko-gc.sh ---"
 echo "[14] senko-gc.sh removes state dirs older than cutoff"
 NOLD="$(echo '{"intent":"will be swept"}' | bash "$NARRATIVE" init)"
 NFRESH="$(echo '{"intent":"will be kept"}' | bash "$NARRATIVE" init)"
-touch -d '14 days ago' "$STATE_DIR/$NOLD/metadata.json"
+touch_ago $((14 * 24 * 3600)) "$STATE_DIR/$NOLD/metadata.json"
 SENKO_GC_CUTOFF_DAYS=7 bash "$GC"
 [[ ! -d "$STATE_DIR/$NOLD" ]] && { echo "  PASS: old state dir removed"; PASS_COUNT=$((PASS_COUNT + 1)); } \
   || { echo "  FAIL: old state dir still exists"; FAIL_COUNT=$((FAIL_COUNT + 1)); }
@@ -172,8 +178,8 @@ echo "--- Test: lazy GC ---"
 # 15. Lazy GC fires when .last-gc is older than 1h
 echo "[15] Lazy GC sweeps when .last-gc is >1h old"
 NSTALE="$(echo '{"intent":"stale"}' | bash "$NARRATIVE" init)"
-touch -d '14 days ago' "$STATE_DIR/$NSTALE/metadata.json"
-touch -d '2 hours ago' "$STATE_DIR/.last-gc"
+touch_ago $((14 * 24 * 3600)) "$STATE_DIR/$NSTALE/metadata.json"
+touch_ago $((2 * 3600)) "$STATE_DIR/.last-gc"
 # Trigger lazy GC via another init
 SENKO_GC_CUTOFF_DAYS=7 bash "$NARRATIVE" init <<< '{"intent":"trigger lazy gc"}' >/dev/null
 [[ ! -d "$STATE_DIR/$NSTALE" ]] && { echo "  PASS: lazy GC swept stale entry"; PASS_COUNT=$((PASS_COUNT + 1)); } \
@@ -182,7 +188,7 @@ SENKO_GC_CUTOFF_DAYS=7 bash "$NARRATIVE" init <<< '{"intent":"trigger lazy gc"}'
 # 16. Lazy GC throttled when .last-gc is fresh
 echo "[16] Lazy GC throttles when .last-gc is fresh (<1h)"
 NSTALE2="$(echo '{"intent":"stale2"}' | bash "$NARRATIVE" init)"
-touch -d '14 days ago' "$STATE_DIR/$NSTALE2/metadata.json"
+touch_ago $((14 * 24 * 3600)) "$STATE_DIR/$NSTALE2/metadata.json"
 touch "$STATE_DIR/.last-gc"  # fresh marker (now)
 SENKO_GC_CUTOFF_DAYS=7 bash "$NARRATIVE" init <<< '{"intent":"second"}' >/dev/null
 [[ -d "$STATE_DIR/$NSTALE2" ]] && { echo "  PASS: lazy GC throttled (entry preserved)"; PASS_COUNT=$((PASS_COUNT + 1)); } \

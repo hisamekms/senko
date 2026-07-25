@@ -94,7 +94,7 @@ run_otel_case() {
   OTEL_BLRP_SCHEDULE_DELAY=200 \
   SENKO_LOG_FORMAT=json \
   SENKO_AUTH_API_KEY_MASTER_KEY="otel-smoke-${case_label}" \
-  "${extra_prefix[@]}" \
+  ${extra_prefix[@]+"${extra_prefix[@]}"} \
   "$SENKO" --project-root "$TEST_PROJECT_ROOT" "${SENKO_DB_ARGS[@]}" serve --port "$senko_port" \
     >"$senko_log" 2>&1 &
   SENKO_PID=$!
