@@ -39,7 +39,7 @@ ADD_FULL="$(run_lf --output json task add \
   --description "det" \
   --priority p1 \
   --tag t1 --tag t2 \
-  --definition-of-done "dod1" --definition-of-done "dod2" \
+  --definition-of-done "[manual] dod1" --definition-of-done "[manual] dod2" \
   --in-scope "is1" \
   --out-of-scope "os1" \
   --depends-on "$DEP_ID")"
@@ -83,7 +83,7 @@ cat > "$JSON_FILE" <<'JSONEOF'
   "title": "From JSON File",
   "description": "file-description",
   "priority": "P3",
-  "definition_of_done": ["done1"]
+  "definition_of_done": [{"content": "done1", "verification_type": "manual"}]
 }
 JSONEOF
 
@@ -109,7 +109,7 @@ ADD_JSON_FULL="$(cat <<JSONEOF | run_lf --output json task add --from-json
   "description": "json-description-full",
   "priority": "P1",
   "tags": ["x", "y"],
-  "definition_of_done": ["check1", "check2"],
+  "definition_of_done": [{"content": "check1", "verification_type": "manual"}, {"content": "check2", "verification_type": "manual"}],
   "in_scope": ["scope-in-1", "scope-in-2"],
   "out_of_scope": ["scope-out-1"],
   "branch": "feature/json-test",

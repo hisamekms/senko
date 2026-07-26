@@ -53,6 +53,7 @@ senko task add --from-json-file task.json
 - 新規タスクは `draft` で作成される
 - 既定 priority: `p2`
 - `--depends-on` は繰り返し可能 (`--depends-on 3 --depends-on 5`)
+- `--definition-of-done` は検証タイプの宣言が必須。プレフィックス形式 `"[static|execution|manual] <内容>[ :: <検証手順>]"` か、JSON オブジェクト `{"content":"...","verification_type":"...","verification_method":"..."}` で指定する。タグなしのプレーン文字列はエラー。`unspecified` は移行前データ専用で新規指定不可
 
 ### `task list`
 
@@ -117,6 +118,8 @@ senko task edit 1 --clear-contract --clear-assignee-user-id
 senko task edit 1 --set-tags "a" "b" "c"
 senko task edit 1 --add-tag x --add-tag y
 senko task edit 1 --remove-tag old
+senko task edit 1 --add-definition-of-done "[execution] テストが通る :: mise test を実行"
+senko task edit 1 --remove-definition-of-done "テストが通る"   # remove は content 一致
 
 # Metadata
 senko task edit 1 --metadata '{"key":"value"}'          # shallow merge
@@ -144,9 +147,12 @@ senko task cancel 1 [--reason "..."]
 ### `task dod`
 
 ```bash
-senko task dod check <task_id> <index>     # 1-based index
-senko task dod uncheck <task_id> <index>
+senko task dod check <task_id> <index> [--note "検証記録"]   # 1-based index
+senko task dod uncheck <task_id> <index>                     # note もクリアされる
 ```
+
+- `--note` は「実際にどう検証したか」（実行コマンドと結果など）を記録する。`verification_type: execution` の項目では実行の証跡として必ず記録することを推奨
+- 各 DoD 項目は `verification_type`（static / execution / manual / unspecified）と任意の `verification_method` を持つ。表示は `[x] <内容> [execution]` + `verify:` / `verified:` 行
 
 ### `task deps`
 
@@ -177,7 +183,7 @@ senko contract edit <id> --title ... --description ...
 
 senko contract delete <id>
 
-senko contract dod check <contract_id> <index>
+senko contract dod check <contract_id> <index> [--note "検証記録"]
 senko contract dod uncheck <contract_id> <index>
 
 senko contract note add <contract_id> --content "..." [--source-task <task_id>]

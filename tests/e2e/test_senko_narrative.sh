@@ -128,7 +128,7 @@ assert_json_field "$META" '.contract_id' "null" "metadata.contract_id == null"
 
 # 11. build-packet --mode split (real senko, contract + tasks)
 echo "[11] build-packet --mode split includes Contract section"
-CONTRACT_ID="$(run_lf contract add --title "Smoke contract" --description "for e2e" --definition-of-done "DoD A" | jq -r '.id')"
+CONTRACT_ID="$(run_lf contract add --title "Smoke contract" --description "for e2e" --definition-of-done "[manual] DoD A" | jq -r '.id')"
 run_lf contract note add "$CONTRACT_ID" --content "first note" >/dev/null
 TASK_ID2="$(run_lf task add --title "Smoke task B" --priority p2 | jq -r '.id')"
 PACKET_PATH2="$(bash "$NARRATIVE" build-packet "$NID" --mode split --contract "$CONTRACT_ID" --tasks "$TASK_ID" "$TASK_ID2")"

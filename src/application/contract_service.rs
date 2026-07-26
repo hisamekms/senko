@@ -184,6 +184,7 @@ impl ContractOperations for LocalContractOperations {
         _project_id: ProjectId,
         contract_id: ContractId,
         index: usize,
+        verification_note: Option<String>,
     ) -> Result<Contract> {
         let prev = self.backend.get_contract(contract_id).await?;
         let trigger = HookTrigger::Contract(ContractEvent::DodChecked { index });
@@ -199,7 +200,10 @@ impl ContractOperations for LocalContractOperations {
             .into());
         }
 
-        let contract = self.backend.check_dod(contract_id, index).await?;
+        let contract = self
+            .backend
+            .check_dod(contract_id, index, verification_note)
+            .await?;
 
         let _ = self
             .hooks
@@ -319,6 +323,14 @@ mod tests {
         Arc::new(NoOpHookExecutor)
     }
 
+    fn dod_input(content: &str) -> crate::domain::task::DodItemInput {
+        crate::domain::task::DodItemInput {
+            content: content.into(),
+            verification_type: crate::domain::task::VerificationType::Manual,
+            verification_method: None,
+        }
+    }
+
     async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, ProjectId) {
         let dir = tempdir().unwrap();
         let backend = SqliteBackend::new(
@@ -337,7 +349,7 @@ mod tests {
         CreateContractParams {
             title: "contract-title".to_string(),
             description: Some("desc".to_string()),
-            definition_of_done: vec!["dod-1".to_string(), "dod-2".to_string()],
+            definition_of_done: vec![dod_input("dod-1"), dod_input("dod-2")],
             tags: vec!["tag-a".to_string()],
             metadata: None,
         }
@@ -395,7 +407,7 @@ mod tests {
         };
         let array_update = UpdateContractArrayParams {
             add_tags: vec!["extra".to_string()],
-            add_definition_of_done: vec!["dod-3".to_string()],
+            add_definition_of_done: vec![dod_input("dod-3")],
             ..Default::default()
         };
 
@@ -417,7 +429,7 @@ mod tests {
             .await
             .unwrap();
 
-        let after_check = ops.check_dod(project_id, c.id(), 1).await.unwrap();
+        let after_check = ops.check_dod(project_id, c.id(), 1, None).await.unwrap();
         assert!(after_check.definition_of_done()[0].checked());
         assert!(!after_check.definition_of_done()[1].checked());
 

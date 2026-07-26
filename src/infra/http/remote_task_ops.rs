@@ -964,11 +964,13 @@ impl TaskOperations for RemoteTaskOperations {
         project_id: ProjectId,
         task_id: TaskId,
         index: usize,
+        verification_note: Option<String>,
     ) -> Result<Task> {
         let resp =
             self.prepare(self.client().post(
                 self.project_url(project_id, &format!("/tasks/{task_id}/dod/{index}/check")),
             ))
+            .json(&serde_json::json!({ "verification_note": verification_note }))
             .send()
             .await?;
         let task: Task = read_json_or_error(resp).await?;
@@ -1519,7 +1521,11 @@ mod tests {
             let ops = make_remote_ops(&base);
             let params = UpdateTaskArrayParams {
                 set_tags: Some(vec!["a".into()]),
-                add_definition_of_done: vec!["b".into()],
+                add_definition_of_done: vec![crate::domain::task::DodItemInput {
+                    content: "b".into(),
+                    verification_type: crate::domain::task::VerificationType::Manual,
+                    verification_method: None,
+                }],
                 ..empty_array_params()
             };
             ops.edit_task_arrays(ProjectId(7), TaskId(1), &params)
@@ -1559,7 +1565,7 @@ mod tests {
         let records = with_business_records(|| async {
             let base = spawn_mock_upstream().await;
             let ops = make_remote_ops(&base);
-            ops.check_dod(ProjectId(7), TaskId(1), 2).await.unwrap();
+            ops.check_dod(ProjectId(7), TaskId(1), 2, None).await.unwrap();
         });
 
         let r = one(&records, "senko.task.dod_checked");
@@ -1699,7 +1705,7 @@ mod tests {
             ops.edit_task_arrays(ProjectId(7), TaskId(1), &arr_upd)
                 .await
                 .unwrap();
-            ops.check_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.check_dod(ProjectId(7), TaskId(1), 1, None).await.unwrap();
             ops.uncheck_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
             ops.add_dependency(ProjectId(7), TaskId(1), TaskId(9))
                 .await
@@ -1773,7 +1779,7 @@ mod tests {
             ops.edit_task_arrays(ProjectId(7), TaskId(1), &arr_upd)
                 .await
                 .unwrap();
-            ops.check_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
+            ops.check_dod(ProjectId(7), TaskId(1), 1, None).await.unwrap();
             ops.uncheck_dod(ProjectId(7), TaskId(1), 1).await.unwrap();
             ops.add_dependency(ProjectId(7), TaskId(1), TaskId(9))
                 .await

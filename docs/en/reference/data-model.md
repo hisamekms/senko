@@ -107,6 +107,9 @@ The plaintext API key is not stored; it's returned only at issue time. Verificat
 | `task_id` | INTEGER FK(tasks) | ON DELETE CASCADE |
 | `content` | TEXT | |
 | `checked` | INTEGER | 0/1 |
+| `verification_type` | TEXT | `static` / `execution` / `manual` / `unspecified` (default `unspecified`; reserved for rows migrated from before this column existed — new items cannot set it) |
+| `verification_method` | TEXT? | Free-text verification procedure declared at registration |
+| `verification_note` | TEXT? | Free-text record of how the item was actually verified, written by `dod check --note`; cleared on uncheck |
 
 The index reflects insertion order (1-based when specified from the CLI).
 
@@ -168,7 +171,10 @@ UNIQUE(project_id, name).
 
 ```
 id PK / contract_id FK / content / checked (0/1)
+  / verification_type / verification_method? / verification_note?
 ```
+
+Columns carry the same meaning as `task_definition_of_done`.
 
 ## contract_tags
 

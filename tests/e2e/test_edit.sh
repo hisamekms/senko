@@ -66,7 +66,7 @@ assert_eq "new1,new2" "$TAGS" "set-tags replaces all"
 # 4. Array field operations (definition_of_done)
 echo "[4] Array field operations (definition_of_done)"
 
-OUT="$(run_lf --output json task edit "$TASK_ID" --add-definition-of-done "item1")"
+OUT="$(run_lf --output json task edit "$TASK_ID" --add-definition-of-done "[manual] item1")"
 DOD="$(echo "$OUT" | jq -r '[.definition_of_done[].content] | join(",")')"
 assert_eq "item1" "$DOD" "add-definition-of-done item1"
 
@@ -78,10 +78,10 @@ assert_eq "0" "$DOD" "remove-definition-of-done item1"
 echo "[4b] --set-definition-of-done (replace all)"
 
 # First add some items
-run_lf --output json task edit "$TASK_ID" --add-definition-of-done "old1" --add-definition-of-done "old2" >/dev/null
+run_lf --output json task edit "$TASK_ID" --add-definition-of-done "[manual] old1" --add-definition-of-done "[manual] old2" >/dev/null
 
 # Replace all with --set-definition-of-done
-OUT="$(run_lf --output json task edit "$TASK_ID" --set-definition-of-done "new1" "new2" "new3")"
+OUT="$(run_lf --output json task edit "$TASK_ID" --set-definition-of-done "[manual] new1" "[manual] new2" "[manual] new3")"
 DOD="$(echo "$OUT" | jq -r '[.definition_of_done[].content] | join(",")')"
 assert_eq "new1,new2,new3" "$DOD" "set-definition-of-done replaces all"
 
@@ -93,7 +93,7 @@ DOD_CHECKED="$(echo "$OUT" | jq -r '[.definition_of_done[].checked] | all(. == f
 assert_eq "true" "$DOD_CHECKED" "set-definition-of-done items are unchecked"
 
 # Replace again with fewer items to confirm full replacement
-OUT="$(run_lf --output json task edit "$TASK_ID" --set-definition-of-done "only1")"
+OUT="$(run_lf --output json task edit "$TASK_ID" --set-definition-of-done "[manual] only1")"
 DOD="$(echo "$OUT" | jq -r '[.definition_of_done[].content] | join(",")')"
 assert_eq "only1" "$DOD" "set-definition-of-done replaces to single item"
 

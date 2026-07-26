@@ -52,7 +52,7 @@ Each stage supports:
 Stage-specific keys (unknown keys are preserved as pass-through extras):
 | Stage | Extra Keys | Description |
 |---|---|---|
-| `workflow.task_add` | `default_dod`, `default_tags`, `default_priority` | Defaults applied when creating new tasks. |
+| `workflow.task_add` | `default_dod`, `default_tags`, `default_priority` | Defaults applied when creating new tasks. `default_dod` entries use the DoD format `"[static|execution|manual] <content>[ :: <verification method>]"`. |
 | `workflow.plan` | `required_sections` | Required sections in the implementation plan. |
 
 > **Note**: The old `pre_hooks` / `post_hooks` arrays have been removed. Use the `hooks` map with `when = "pre"` or `when = "post"` on each HookDef instead.

@@ -79,7 +79,7 @@ assert_eq "0" "$READY_HAS_B" "ready excludes Beta (unmet dep on Alpha)"
 
 # --- Case 5: --contract <id> ---
 echo "[5] --contract filter"
-CONTRACT_ID="$(run_lf --output json contract add --title "ContractX" --definition-of-done "x" | jq -r '.id')"
+CONTRACT_ID="$(run_lf --output json contract add --title "ContractX" --definition-of-done "[manual] x" | jq -r '.id')"
 D_ID="$(run_lf --output json task add --title "Delta" | jq -r '.id')"
 run_lf task edit "$D_ID" --contract "$CONTRACT_ID" >/dev/null
 

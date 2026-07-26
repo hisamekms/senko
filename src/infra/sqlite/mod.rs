@@ -268,6 +268,18 @@ const MIGRATIONS: &[Migration] = &[
             ALTER TABLE tasks ADD COLUMN contract_id INTEGER REFERENCES contracts(id) ON DELETE SET NULL;
         ",
     },
+    Migration {
+        version: 11,
+        name: "add_dod_verification",
+        sql: "
+            ALTER TABLE task_definition_of_done ADD COLUMN verification_type TEXT NOT NULL DEFAULT 'unspecified';
+            ALTER TABLE task_definition_of_done ADD COLUMN verification_method TEXT;
+            ALTER TABLE task_definition_of_done ADD COLUMN verification_note TEXT;
+            ALTER TABLE contract_definition_of_done ADD COLUMN verification_type TEXT NOT NULL DEFAULT 'unspecified';
+            ALTER TABLE contract_definition_of_done ADD COLUMN verification_method TEXT;
+            ALTER TABLE contract_definition_of_done ADD COLUMN verification_note TEXT;
+        ",
+    },
 ];
 
 fn run_migrations(conn: &Connection) -> Result<()> {
@@ -1180,8 +1192,13 @@ fn create_task(
 
     for item in &params.definition_of_done {
         conn.execute(
-            "INSERT INTO task_definition_of_done (task_id, content) VALUES (?1, ?2)",
-            params![task_id, item],
+            "INSERT INTO task_definition_of_done (task_id, content, verification_type, verification_method) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                task_id,
+                item.content,
+                item.verification_type.as_str(),
+                item.verification_method
+            ],
         )?;
     }
     for item in &params.in_scope {
@@ -1445,15 +1462,25 @@ fn update_task_arrays(
         )?;
     }
 
-    // definition_of_done
-    update_content_array(
-        conn,
-        id,
-        ContentTable::DefinitionOfDone,
-        &params.set_definition_of_done,
-        &params.add_definition_of_done,
-        &params.remove_definition_of_done,
-    )?;
+    // definition_of_done (set/add carry verification metadata, remove matches by content)
+    if let Some(ref values) = params.set_definition_of_done {
+        conn.execute(
+            "DELETE FROM task_definition_of_done WHERE task_id = ?1",
+            params![id],
+        )?;
+        for item in values {
+            insert_task_dod_input(conn, id, item)?;
+        }
+    }
+    for item in &params.add_definition_of_done {
+        insert_task_dod_input(conn, id, item)?;
+    }
+    for content in &params.remove_definition_of_done {
+        conn.execute(
+            "DELETE FROM task_definition_of_done WHERE task_id = ?1 AND content = ?2",
+            params![id, content],
+        )?;
+    }
     // in_scope
     update_content_array(
         conn,
@@ -1494,6 +1521,23 @@ fn update_task_arrays(
         )?;
     }
 
+    Ok(())
+}
+
+fn insert_task_dod_input(
+    conn: &Connection,
+    id: TaskDbId,
+    item: &crate::domain::task::DodItemInput,
+) -> Result<()> {
+    conn.execute(
+        "INSERT INTO task_definition_of_done (task_id, content, verification_type, verification_method) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            id,
+            item.content,
+            item.verification_type.as_str(),
+            item.verification_method
+        ],
+    )?;
     Ok(())
 }
 
@@ -1544,8 +1588,15 @@ fn save_task(conn: &Connection, task: &Task) -> Result<()> {
     for dod in task.definition_of_done() {
         let checked_val: i32 = if dod.checked() { 1 } else { 0 };
         conn.execute(
-            "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES (?1, ?2, ?3)",
-            params![internal_id, dod.content(), checked_val],
+            "INSERT INTO task_definition_of_done (task_id, content, checked, verification_type, verification_method, verification_note) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                internal_id,
+                dod.content(),
+                checked_val,
+                dod.verification_type().as_str(),
+                dod.verification_method(),
+                dod.verification_note()
+            ],
         )?;
     }
 
@@ -1606,7 +1657,6 @@ impl TaskColumn {
 }
 
 enum ContentTable {
-    DefinitionOfDone,
     InScope,
     OutOfScope,
 }
@@ -1614,7 +1664,6 @@ enum ContentTable {
 impl ContentTable {
     fn as_str(&self) -> &'static str {
         match self {
-            ContentTable::DefinitionOfDone => "task_definition_of_done",
             ContentTable::InScope => "task_in_scope",
             ContentTable::OutOfScope => "task_out_of_scope",
         }
@@ -2037,14 +2086,26 @@ fn list_dependencies(
     Ok(build_page(tasks, filter.limit, |t| Cursor::encode(t.id())))
 }
 
+fn dod_item_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<DodItem> {
+    let verification_type = row
+        .get::<_, String>(2)?
+        .parse::<crate::domain::task::VerificationType>()
+        .unwrap_or_default();
+    Ok(DodItem::with_verification(
+        row.get(0)?,
+        row.get::<_, i32>(1)? != 0,
+        verification_type,
+        row.get(3)?,
+        row.get(4)?,
+    ))
+}
+
 fn query_dod_list(conn: &Connection, task_id: TaskDbId) -> Result<Vec<DodItem>> {
     let mut stmt = conn.prepare(
-        "SELECT content, checked FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
+        "SELECT content, checked, verification_type, verification_method, verification_note FROM task_definition_of_done WHERE task_id = ?1 ORDER BY id",
     )?;
     let items = stmt
-        .query_map(params![task_id], |row| {
-            Ok(DodItem::new(row.get(0)?, row.get::<_, i32>(1)? != 0))
-        })?
+        .query_map(params![task_id], dod_item_from_row)?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(items)
 }
@@ -2292,12 +2353,10 @@ fn get_contract(conn: &Connection, id: ContractId) -> Result<Contract> {
 
     let definition_of_done = {
         let mut stmt = conn.prepare(
-            "SELECT content, checked FROM contract_definition_of_done WHERE contract_id = ?1 ORDER BY id",
+            "SELECT content, checked, verification_type, verification_method, verification_note FROM contract_definition_of_done WHERE contract_id = ?1 ORDER BY id",
         )?;
-        stmt.query_map(params![id], |row| {
-            Ok(DodItem::new(row.get(0)?, row.get::<_, i32>(1)? != 0))
-        })?
-        .collect::<std::result::Result<Vec<_>, _>>()?
+        stmt.query_map(params![id], dod_item_from_row)?
+            .collect::<std::result::Result<Vec<_>, _>>()?
     };
 
     let tags: Vec<String> = {
@@ -2354,10 +2413,15 @@ fn create_contract(
     )?;
     let contract_id = ContractId(conn.last_insert_rowid());
 
-    for content in &params.definition_of_done {
+    for item in &params.definition_of_done {
         conn.execute(
-            "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
-            params![contract_id, content],
+            "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                contract_id,
+                item.content,
+                item.verification_type.as_str(),
+                item.verification_method
+            ],
         )?;
     }
     for tag in &params.tags {
@@ -2617,18 +2681,28 @@ fn update_contract(
             "DELETE FROM contract_definition_of_done WHERE contract_id = ?1",
             params![id],
         )?;
-        for content in set {
+        for item in set {
             conn.execute(
-                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
-                params![id, content],
+                "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    id,
+                    item.content,
+                    item.verification_type.as_str(),
+                    item.verification_method
+                ],
             )?;
         }
         touched = true;
     }
-    for content in &array_update.add_definition_of_done {
+    for item in &array_update.add_definition_of_done {
         conn.execute(
-            "INSERT INTO contract_definition_of_done (contract_id, content) VALUES (?1, ?2)",
-            params![id, content],
+            "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES (?1, ?2, ?3, ?4)",
+            params![
+                id,
+                item.content,
+                item.verification_type.as_str(),
+                item.verification_method
+            ],
         )?;
         touched = true;
     }
@@ -2693,6 +2767,7 @@ fn set_contract_dod_checked(
     contract_id: ContractId,
     index: usize,
     checked: bool,
+    verification_note: Option<&str>,
 ) -> Result<Contract> {
     // 1-based; verify exists
     let contract = get_contract(conn, contract_id)?;
@@ -2712,10 +2787,26 @@ fn set_contract_dod_checked(
         |row| row.get(0),
     )?;
 
-    conn.execute(
-        "UPDATE contract_definition_of_done SET checked = ?1 WHERE id = ?2",
-        params![if checked { 1i32 } else { 0i32 }, dod_row_id],
-    )?;
+    if checked {
+        // Preserve an existing note unless a new one is provided.
+        if let Some(note) = verification_note {
+            conn.execute(
+                "UPDATE contract_definition_of_done SET checked = 1, verification_note = ?1 WHERE id = ?2",
+                params![note, dod_row_id],
+            )?;
+        } else {
+            conn.execute(
+                "UPDATE contract_definition_of_done SET checked = 1 WHERE id = ?1",
+                params![dod_row_id],
+            )?;
+        }
+    } else {
+        // Unchecking invalidates the recorded verification.
+        conn.execute(
+            "UPDATE contract_definition_of_done SET checked = 0, verification_note = NULL WHERE id = ?1",
+            params![dod_row_id],
+        )?;
+    }
     conn.execute(
         "UPDATE contracts SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?1",
         params![contract_id],
@@ -3243,12 +3334,18 @@ impl ContractRepository for SqliteBackend {
         ))
     }
 
-    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
+    async fn check_dod(
+        &self,
+        contract_id: ContractId,
+        index: usize,
+        verification_note: Option<String>,
+    ) -> Result<Contract> {
         blocking!(self, |conn: &Connection| set_contract_dod_checked(
             conn,
             contract_id,
             index,
-            true
+            true,
+            verification_note.as_deref()
         ))
     }
 
@@ -3257,7 +3354,8 @@ impl ContractRepository for SqliteBackend {
             conn,
             contract_id,
             index,
-            false
+            false,
+            None
         ))
     }
 }
@@ -3316,7 +3414,17 @@ impl crate::application::port::SeederPort for SqliteBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::task::{AssigneeUserId, ListOrder, TaskOrderBy};
+    use crate::domain::task::{
+        AssigneeUserId, DodItemInput, ListOrder, TaskOrderBy, VerificationType,
+    };
+
+    fn dod_input(content: &str) -> DodItemInput {
+        DodItemInput {
+            content: content.into(),
+            verification_type: VerificationType::Manual,
+            verification_method: None,
+        }
+    }
 
     fn setup() -> (tempfile::TempDir, Connection) {
         let tmp = tempfile::tempdir().unwrap();
@@ -3479,7 +3587,7 @@ mod tests {
                 background: Some("bg".to_string()),
                 description: Some("det".to_string()),
                 priority: Some(Priority::P1),
-                definition_of_done: vec!["done1".to_string(), "done2".to_string()],
+                definition_of_done: vec![dod_input("done1"), dod_input("done2")],
                 in_scope: vec!["scope1".to_string()],
                 out_of_scope: vec!["out1".to_string()],
                 branch: None,
@@ -3501,8 +3609,8 @@ mod tests {
         assert_eq!(
             task.definition_of_done(),
             &[
-                DodItem::new("done1".to_string(), false),
-                DodItem::new("done2".to_string(), false),
+                DodItem::from_input(&dod_input("done1")),
+                DodItem::from_input(&dod_input("done2")),
             ]
         );
         assert_eq!(task.in_scope(), &["scope1"]);
@@ -3652,7 +3760,7 @@ mod tests {
                 background: None,
                 description: None,
                 priority: None,
-                definition_of_done: vec!["d".to_string()],
+                definition_of_done: vec![dod_input("d")],
                 in_scope: vec!["s".to_string()],
                 out_of_scope: vec!["o".to_string()],
                 branch: None,
@@ -4590,14 +4698,14 @@ mod tests {
             &CreateContractParams {
                 title: "all-checked".into(),
                 description: None,
-                definition_of_done: vec!["one".into(), "two".into()],
+                definition_of_done: vec![dod_input("one"), dod_input("two")],
                 tags: vec!["t1".into()],
                 metadata: None,
             },
         )
         .unwrap();
-        set_contract_dod_checked(&conn, all_checked.id(), 1, true).unwrap();
-        set_contract_dod_checked(&conn, all_checked.id(), 2, true).unwrap();
+        set_contract_dod_checked(&conn, all_checked.id(), 1, true, None).unwrap();
+        set_contract_dod_checked(&conn, all_checked.id(), 2, true, None).unwrap();
 
         // Partially checked → not completed.
         let partial = create_contract(
@@ -4606,13 +4714,13 @@ mod tests {
             &CreateContractParams {
                 title: "partial".into(),
                 description: None,
-                definition_of_done: vec!["a".into(), "b".into()],
+                definition_of_done: vec![dod_input("a"), dod_input("b")],
                 tags: vec!["t2".into()],
                 metadata: None,
             },
         )
         .unwrap();
-        set_contract_dod_checked(&conn, partial.id(), 1, true).unwrap();
+        set_contract_dod_checked(&conn, partial.id(), 1, true, None).unwrap();
 
         let completed_true = list_contracts(
             &conn,
@@ -5207,7 +5315,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                definition_of_done: vec!["old".to_string()],
+                definition_of_done: vec![dod_input("old")],
                 ..default_create_params("t")
             },
         )
@@ -5217,7 +5325,7 @@ mod tests {
             &conn,
             TaskDbId(task.id().into()),
             &UpdateTaskArrayParams {
-                set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
+                set_definition_of_done: Some(vec![dod_input("new1"), dod_input("new2")]),
                 ..default_array_params()
             },
         )
@@ -5227,8 +5335,8 @@ mod tests {
         assert_eq!(
             updated.definition_of_done(),
             &[
-                DodItem::new("new1".to_string(), false),
-                DodItem::new("new2".to_string(), false),
+                DodItem::from_input(&dod_input("new1")),
+                DodItem::from_input(&dod_input("new2")),
             ]
         );
     }
@@ -5757,7 +5865,7 @@ mod tests {
             &conn,
             ProjectId(1),
             &CreateTaskParams {
-                definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+                definition_of_done: vec![dod_input("item1"), dod_input("item2")],
                 ..default_create_params("t")
             },
         )
@@ -5766,7 +5874,7 @@ mod tests {
         // Check first item via domain method + save
         let task = get_task(&conn, TaskDbId(task.id().into())).unwrap();
         let (task, _) = task
-            .check_dod(1, "2025-01-01T00:00:00Z".to_string())
+            .check_dod(1, None, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
@@ -5775,7 +5883,7 @@ mod tests {
 
         // Check second item
         let (task, _) = updated
-            .check_dod(2, "2025-01-01T00:00:00Z".to_string())
+            .check_dod(2, None, "2025-01-01T00:00:00Z".to_string())
             .unwrap();
         save_task(&conn, &task).unwrap();
         let updated = get_task(&conn, TaskDbId(task.id().into())).unwrap();
@@ -5798,7 +5906,7 @@ mod tests {
     fn fresh_db_records_migration_version() {
         let (_tmp, conn) = setup();
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
     }
 
     #[test]
@@ -5899,7 +6007,7 @@ mod tests {
 
         // Version should include all migrations
         let version = current_schema_version(&conn).unwrap();
-        assert_eq!(version, 10);
+        assert_eq!(version, 11);
 
         // Legacy columns should have been migrated
         let has_description: bool = conn
@@ -5955,7 +6063,7 @@ mod tests {
                 row.get(0)
             })
             .unwrap();
-        assert_eq!(count, 10);
+        assert_eq!(count, 11);
     }
 
     #[test]
@@ -6009,7 +6117,7 @@ mod tests {
                     background: Some("bg".into()),
                     description: Some("desc".into()),
                     priority: Some(Priority::P1),
-                    definition_of_done: vec!["Write tests".into()],
+                    definition_of_done: vec![dod_input("Write tests")],
                     in_scope: vec!["API".into()],
                     out_of_scope: vec!["UI".into()],
                     branch: Some("feat/test".into()),
@@ -6260,13 +6368,13 @@ mod tests {
     async fn inmem_dod_check_uncheck() {
         let backend = mem_backend();
         let mut p = params("DoD test");
-        p.definition_of_done = vec!["Item A".into(), "Item B".into()];
+        p.definition_of_done = vec![dod_input("Item A"), dod_input("Item B")];
         let task = backend.create_task(ProjectId(1), &p).await.unwrap();
         assert!(!task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
 
         let (task, _) = task
-            .check_dod(1, "2026-01-01T00:00:00Z".to_string())
+            .check_dod(1, None, "2026-01-01T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
@@ -6274,7 +6382,7 @@ mod tests {
         assert!(!task.definition_of_done()[1].checked());
 
         let (task, _) = task
-            .check_dod(2, "2026-01-01T00:00:00Z".to_string())
+            .check_dod(2, None, "2026-01-01T00:00:00Z".to_string())
             .unwrap();
         backend.save(&task).await.unwrap();
         let task = backend.get_task(ProjectId(1), task.id()).await.unwrap();
@@ -6899,7 +7007,7 @@ mod tests {
         CreateContractParams {
             title: title.to_string(),
             description: Some("spec".to_string()),
-            definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+            definition_of_done: vec![dod_input("item1"), dod_input("item2")],
             tags: vec!["api".to_string()],
             metadata: Some(serde_json::json!({"owner": "team-a"})),
         }
@@ -6969,7 +7077,7 @@ mod tests {
                 },
                 &UpdateContractArrayParams {
                     add_tags: vec!["backend".to_string()],
-                    set_definition_of_done: Some(vec!["done-a".to_string()]),
+                    set_definition_of_done: Some(vec![dod_input("done-a")]),
                     ..Default::default()
                 },
             )
@@ -6994,7 +7102,7 @@ mod tests {
             .create_contract(ProjectId(1), &make_contract_params("DoD"))
             .await
             .unwrap();
-        let checked = backend.check_dod(c.id(), 1).await.unwrap();
+        let checked = backend.check_dod(c.id(), 1, None).await.unwrap();
         assert!(checked.definition_of_done()[0].checked());
         assert!(!checked.definition_of_done()[1].checked());
 
@@ -7002,8 +7110,8 @@ mod tests {
         assert!(!unchecked.definition_of_done()[0].checked());
 
         // Out-of-range returns an error
-        assert!(backend.check_dod(c.id(), 0).await.is_err());
-        assert!(backend.check_dod(c.id(), 99).await.is_err());
+        assert!(backend.check_dod(c.id(), 0, None).await.is_err());
+        assert!(backend.check_dod(c.id(), 99, None).await.is_err());
     }
 
     #[tokio::test]

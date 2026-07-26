@@ -59,7 +59,7 @@ Terminal tasks normally have no `branch` set (there's no code change). Skip work
 For each Contract DoD item with `"checked": false`:
 
 1. Launch the `dod-verifier` subagent (via the Agent tool) with:
-   - the Contract DoD text for that index
+   - the Contract DoD text for that index, including its `verification_type` and `verification_method`
    - the Contract's full note list (decisions, pitfalls, completion summaries from sibling tasks)
    - the `description`, `plan`, and `definition_of_done` of every linked sub-task (run `senko task get <sub_id>` for each)
    - the Contract's title and description for framing
@@ -67,7 +67,7 @@ For each Contract DoD item with `"checked": false`:
    - **VERIFIED**: wrap the check with `contract_dod_check` workflow-stage hooks:
      ```bash
      bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_dod_check pre
-     senko contract dod check <contract_id> <index>
+     senko contract dod check <contract_id> <index> --note "<how it was verified>"
      bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_dod_check post
      ```
      Execute any commands printed by the emit-hooks calls in order.
@@ -112,7 +112,7 @@ The Contract is not yet satisfied, but the terminal's own job — *verify-or-del
    ```bash
    senko task add --title "<title>" --assignee-user-id self
    senko task edit <new_id> --contract <contract_id> --description "<text>" \
-     --add-definition-of-done "<dod 1>"   # repeat for each DoD
+     --add-definition-of-done "[<type>] <dod 1>[ :: <verification method>]"   # repeat for each DoD
    # ...branch setting per add-task.md Phase 4 step 4...
    senko task publish <new_id>
    ```
@@ -120,7 +120,7 @@ The Contract is not yet satisfied, but the terminal's own job — *verify-or-del
    ```bash
    senko task add --title "Verify contract: <contract title> (retry)" --assignee-user-id self
    senko task edit <new_term_id> --contract <contract_id> --add-tag contract-terminal \
-     --add-definition-of-done "Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"
+     --add-definition-of-done "[manual] Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"
    senko task deps set <new_term_id> --on <follow_up_1> <follow_up_2>
    senko task publish <new_term_id>
    ```
@@ -135,7 +135,7 @@ The Contract is not yet satisfied, but the terminal's own job — *verify-or-del
    Execute any commands printed by the emit-hooks calls in order.
 5. **Check the current terminal's own DoD.** Its single DoD — `"Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"` — is now fully satisfied: the *verify met items* half came from Step 3's subagent results, and the *spawn follow-up tasks for any unmet items* half is what steps 1–3 of this Case B just performed. Mark it checked (DoD index is 1-based, so the seeded single DoD is index `1`):
    ```bash
-   senko task dod check <id> 1
+   senko task dod check <id> 1 --note "verified met items via dod-verifier; spawned follow-ups <fu1>, <fu2>"
    ```
    If the user has added extra DoD items to this terminal beyond the seed, run the `dod-verifier` subagent for each of them and process results the usual way (VERIFIED → `senko task dod check`, NEEDS_USER_APPROVAL → ask, NOT_ACHIEVED → address it) before moving on.
 6. **Complete the current terminal task** — its verify-or-delegate job is done and the new terminal will take it from here:

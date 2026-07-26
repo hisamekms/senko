@@ -14,7 +14,7 @@ echo "--- Test: DoD Check/Uncheck ---"
 # 1. dod check / uncheck
 echo "[1] dod check and uncheck"
 
-ADD_OUT="$(run_lf --output json task add --title "DoD Task" --definition-of-done "item1" --definition-of-done "item2")"
+ADD_OUT="$(run_lf --output json task add --title "DoD Task" --definition-of-done "[manual] item1" --definition-of-done "[manual] item2")"
 TASK_ID="$(echo "$ADD_OUT" | jq -r '.id')"
 
 # All unchecked initially
@@ -70,5 +70,44 @@ run_lf --output json task start "$NODOD_ID" >/dev/null
 
 OUT="$(run_lf --output json task complete "$NODOD_ID")"
 assert_json_field "$OUT" '.status' "completed" "complete without DoD items"
+
+# 6. Prefix format with verification method
+echo "[6] Prefix format with verification method"
+
+VT_OUT="$(run_lf --output json task add --title "Verification Task" \
+  --definition-of-done "[execution] run suite :: mise test" \
+  --definition-of-done "[static] types are sound")"
+VT_ID="$(echo "$VT_OUT" | jq -r '.id')"
+
+assert_json_field "$VT_OUT" '.definition_of_done[0].content' "run suite" "prefix: content stripped of tag and method"
+assert_json_field "$VT_OUT" '.definition_of_done[0].verification_type' "execution" "prefix: verification_type execution"
+assert_json_field "$VT_OUT" '.definition_of_done[0].verification_method' "mise test" "prefix: verification_method stored"
+assert_json_field "$VT_OUT" '.definition_of_done[1].verification_type' "static" "prefix: verification_type static"
+assert_json_field "$VT_OUT" '.definition_of_done[1].verification_method' "null" "prefix: no method is null"
+
+# 7. Untagged and [unspecified] items are rejected
+echo "[7] Untagged and [unspecified] items are rejected"
+assert_exit_code 1 run_lf --output json task add --title "Plain DoD" --definition-of-done "plain item"
+assert_exit_code 1 run_lf --output json task add --title "Unspecified DoD" --definition-of-done "[unspecified] item"
+
+# 8. JSON-object form of --definition-of-done
+echo "[8] JSON-object form of --definition-of-done"
+
+JSON_OUT="$(run_lf --output json task add --title "JSON DoD Task" \
+  --definition-of-done '{"content":"json item","verification_type":"manual","verification_method":"eyeball it"}')"
+assert_json_field "$JSON_OUT" '.definition_of_done[0].content' "json item" "json-object: content"
+assert_json_field "$JSON_OUT" '.definition_of_done[0].verification_type' "manual" "json-object: verification_type"
+assert_json_field "$JSON_OUT" '.definition_of_done[0].verification_method' "eyeball it" "json-object: verification_method"
+
+# 9. dod check --note stores verification_note; uncheck clears it
+echo "[9] dod check --note and uncheck clearing"
+
+OUT="$(run_lf --output json task dod check "$VT_ID" 1 --note "ran tests, all pass")"
+assert_json_field "$OUT" '.definition_of_done[0].checked' "true" "note: item checked"
+assert_json_field "$OUT" '.definition_of_done[0].verification_note' "ran tests, all pass" "note: verification_note stored"
+
+OUT="$(run_lf --output json task dod uncheck "$VT_ID" 1)"
+assert_json_field "$OUT" '.definition_of_done[0].checked' "false" "note: item unchecked"
+assert_json_field "$OUT" '.definition_of_done[0].verification_note' "null" "note: uncheck clears verification_note"
 
 test_summary

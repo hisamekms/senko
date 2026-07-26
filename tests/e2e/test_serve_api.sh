@@ -61,7 +61,7 @@ assert_json_field "$GOT" '.title' "Task One" "get task title"
 
 echo ""
 echo "=== Create second task ==="
-TASK2=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Task Two","priority":"P1","tags":["backend"],"definition_of_done":["Write tests","Deploy"]}')
+TASK2=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Task Two","priority":"P1","tags":["backend"],"definition_of_done":[{"content":"Write tests","verification_type":"manual"},{"content":"Deploy","verification_type":"manual"}]}')
 TASK2_ID=$(echo "$TASK2" | jq -r '.id')
 assert_json_field "$TASK2" '.priority' "P1" "task2 priority"
 assert_eq "2" "$(echo "$TASK2" | jq '.definition_of_done | length')" "task2 has 2 DoD items"
@@ -166,7 +166,7 @@ assert_json_field "$CANCELED" '.cancel_reason' "no longer needed" "cancel reason
 
 echo ""
 echo "=== Next task: add(assignee=self, DoD) → ready → next → dod check → complete ==="
-TASK5=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Next Candidate","priority":"P0","assignee_user_id":"self","definition_of_done":["Next DoD"]}')
+TASK5=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Next Candidate","priority":"P0","assignee_user_id":"self","definition_of_done":[{"content":"Next DoD","verification_type":"manual"}]}')
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 api_json -X POST "$PBASE/tasks/$TASK5_ID/publish" -d '{}' >/dev/null
 
@@ -239,7 +239,7 @@ assert_json_field "$PREVIEW_NG" '.allowed' "false" "preview draft->completed not
 
 echo ""
 echo "=== Preview transition: unchecked DoD blocks complete ==="
-PT_DOD=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Preview DoD","definition_of_done":["Check me"]}')
+PT_DOD=$(api_json -X POST "$PBASE/tasks" -d '{"title":"Preview DoD","definition_of_done":[{"content":"Check me","verification_type":"manual"}]}')
 PT_DOD_ID=$(echo "$PT_DOD" | jq -r '.id')
 api_json -X POST "$PBASE/tasks/$PT_DOD_ID/publish" -d '{}' >/dev/null
 api_json -X POST "$PBASE/tasks/$PT_DOD_ID/start" -d '{}' >/dev/null

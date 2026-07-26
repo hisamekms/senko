@@ -34,7 +34,7 @@ Contract (粗い粒度)
 | `id` | int | Contract ID |
 | `title` | string | Contract 名 (必須) |
 | `description` | string? | 概要 |
-| `definition_of_done` | `{content, checked}[]` | Contract レベルの完了条件 |
+| `definition_of_done` | `{content, checked, verification_type, verification_method, verification_note}[]` | Contract レベルの完了条件 |
 | `tags` | string[] | 分類 |
 | `metadata` | JSON | 任意 (Project 単位の MetadataField で schema 化可) |
 | `notes` | `{content, source_task_id, created_at}[]` | 作業中に得られた知見ログ |
@@ -162,8 +162,8 @@ when = "pre"
 
 ```
 1. senko contract add --title "Migrate auth to OIDC" \
-      --definition-of-done "Existing users can log in without disruption" \
-      --definition-of-done "Legacy API keys are revoked"
+      --definition-of-done "[execution] Existing users can log in without disruption :: run the login e2e suite" \
+      --definition-of-done "[static] Legacy API keys are revoked"
 
 2. senko task add --title "Add OIDC config skeleton" --contract 7
    senko task add --title "Wire JWT verifier" --contract 7

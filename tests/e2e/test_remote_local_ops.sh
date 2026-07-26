@@ -81,7 +81,7 @@ assert_json_field "$CANCELED" '.status' "canceled" "local: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "local: cancel reason"
 
 echo "[1.3] DoD operations"
-T3=$(run_lf task add --title "Local DoD" --definition-of-done "Item 1" --definition-of-done "Item 2")
+T3=$(run_lf task add --title "Local DoD" --definition-of-done "[manual] Item 1" --definition-of-done "[manual] Item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
 run_lf task publish "$T3_ID" >/dev/null
 run_lf task start "$T3_ID" >/dev/null
@@ -119,7 +119,7 @@ assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "local: deps rem
 
 echo "[1.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
 export SENKO_USER="default"
-T6=$(run_lf task add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "Local DoD")
+T6=$(run_lf task add --title "Local next" --priority p0 --assignee-user-id self --definition-of-done "[manual] Local DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_lf task publish "$T6_ID" >/dev/null
 NEXT=$(run_lf task next)
@@ -163,7 +163,7 @@ assert_json_field "$CANCELED" '.status' "canceled" "remote: cancel works"
 assert_json_field "$CANCELED" '.cancel_reason' "http cancel" "remote: cancel reason"
 
 echo "[2.3] DoD operations via HTTP"
-T3=$(run_http task add --title "Remote DoD" --definition-of-done "HTTP item 1" --definition-of-done "HTTP item 2")
+T3=$(run_http task add --title "Remote DoD" --definition-of-done "[manual] HTTP item 1" --definition-of-done "[manual] HTTP item 2")
 T3_ID=$(echo "$T3" | jq -r '.id')
 run_http task publish "$T3_ID" >/dev/null
 run_http task start "$T3_ID" >/dev/null
@@ -198,7 +198,7 @@ DEP_RM=$(run_http task deps remove "$T5_ID" --on "$T4_ID")
 assert_eq "0" "$(echo "$DEP_RM" | jq '.dependencies | length')" "remote: deps remove"
 
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
-T6=$(run_http task add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "Remote DoD")
+T6=$(run_http task add --title "Remote next" --priority p0 --assignee-user-id self --definition-of-done "[manual] Remote DoD")
 T6_ID=$(echo "$T6" | jq -r '.id')
 run_http task publish "$T6_ID" >/dev/null
 NEXT=$(run_http task next)

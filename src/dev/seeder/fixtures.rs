@@ -15,11 +15,23 @@ use crate::domain::DEFAULT_PROJECT_ID;
 use crate::domain::contract::{ContractId, ContractNote, CreateContractParams};
 use crate::domain::project::CreateProjectParams;
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, DodItem, Priority, Task, TaskId, TaskStatus,
+    AssigneeUserId, CreateTaskParams, DodItem, DodItemInput, Priority, Task, TaskId, TaskStatus,
+    VerificationType,
 };
 use crate::domain::user::{AddProjectMemberParams, CreateUserParams, Role, UserId, Username};
 
 const SEED_TAG: &str = "seed";
+
+/// Convert a fixture DoD content string into a registration input. All seeded
+/// items use `manual` verification — the fixtures predate verification types
+/// and carry no per-item method.
+fn dod_input(content: &str) -> DodItemInput {
+    DodItemInput {
+        content: content.to_string(),
+        verification_type: VerificationType::Manual,
+        verification_method: None,
+    }
+}
 
 /// Top-level entrypoint: load every fixture into the backend.
 pub async fn load(backend: &dyn TaskBackend) -> Result<()> {
@@ -119,14 +131,14 @@ const CONTRACTS: &[ContractFixture] = &[
 async fn create_contracts(backend: &dyn TaskBackend) -> Result<Vec<ContractId>> {
     let mut ids = Vec::with_capacity(CONTRACTS.len());
     for fx in CONTRACTS {
-        let dod_strings: Vec<String> = fx.dod.iter().map(|(s, _)| (*s).to_string()).collect();
+        let dod_inputs: Vec<DodItemInput> = fx.dod.iter().map(|(s, _)| dod_input(s)).collect();
         let contract = backend
             .create_contract(
                 DEFAULT_PROJECT_ID,
                 &CreateContractParams {
                     title: fx.title.to_string(),
                     description: Some(fx.description.to_string()),
-                    definition_of_done: dod_strings,
+                    definition_of_done: dod_inputs,
                     tags: vec![SEED_TAG.to_string()],
                     metadata: None,
                 },
@@ -136,7 +148,7 @@ async fn create_contracts(backend: &dyn TaskBackend) -> Result<Vec<ContractId>> 
         // indexing per the contract aggregate.
         for (idx, (_, checked)) in fx.dod.iter().enumerate() {
             if *checked {
-                backend.check_dod(contract.id(), idx + 1).await?;
+                backend.check_dod(contract.id(), idx + 1, None).await?;
             }
         }
         ids.push(contract.id());
@@ -785,7 +797,7 @@ async fn create_tasks(
 ) -> Result<Vec<TaskId>> {
     let mut ids = Vec::with_capacity(TASKS.len());
     for fx in TASKS {
-        let dod_strings: Vec<String> = fx.dod.iter().map(|s| (*s).to_string()).collect();
+        let dod_inputs: Vec<DodItemInput> = fx.dod.iter().map(|s| dod_input(s)).collect();
         let assignee = resolve_assignee(fx.assignee_idx, user_ids);
         let contract_id = fx.contract_idx.map(|i| contract_ids[i]);
         let task = backend
@@ -796,7 +808,7 @@ async fn create_tasks(
                     background: None,
                     description: Some(fx.description.to_string()),
                     priority: Some(fx.priority),
-                    definition_of_done: dod_strings,
+                    definition_of_done: dod_inputs,
                     in_scope: Vec::new(),
                     out_of_scope: Vec::new(),
                     branch: None,
@@ -925,7 +937,13 @@ fn build_dod(fx: &TaskFixture) -> Vec<DodItem> {
             } else {
                 idx < total / 2
             };
-            DodItem::new((*content).to_string(), checked)
+            DodItem::with_verification(
+                (*content).to_string(),
+                checked,
+                VerificationType::Manual,
+                None,
+                None,
+            )
         })
         .collect()
 }

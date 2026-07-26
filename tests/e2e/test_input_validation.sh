@@ -63,7 +63,7 @@ assert_eq "20" "$TAG_COUNT" "20 tags accepted"
 
 echo "[6] DoD item over limit (501 chars)"
 DOD_501="$(gen_chars 501)"
-assert_exit_code 1 run_lf task add --title "DoD Test" --definition-of-done "$DOD_501"
+assert_exit_code 1 run_lf task add --title "DoD Test" --definition-of-done "[manual] $DOD_501"
 
 # ===== [7] Edit: title over limit → error =====
 

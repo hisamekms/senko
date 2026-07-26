@@ -43,6 +43,9 @@ pub enum DomainError {
     #[error("invalid role: {value}")]
     InvalidRole { value: String },
 
+    #[error("invalid verification type: {value} (expected static, execution, or manual)")]
+    InvalidVerificationType { value: String },
+
     #[error("a task cannot depend on itself")]
     SelfDependency,
 
