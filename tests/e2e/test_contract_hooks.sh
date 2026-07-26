@@ -184,8 +184,8 @@ clear_markers
 
 CID=$(run_lf --output json contract add \
   --title "CLI Contract" \
-  --definition-of-done "item1" \
-  --definition-of-done "item2" | jq -r '.id')
+  --definition-of-done "[manual] item1" \
+  --definition-of-done "[manual] item2" | jq -r '.id')
 run_lf contract edit "$CID" --title "CLI Contract v2" >/dev/null 2>&1
 run_lf contract dod check "$CID" 1 >/dev/null 2>&1
 run_lf contract dod uncheck "$CID" 1 >/dev/null 2>&1
@@ -219,8 +219,8 @@ clear_markers
 
 CID2=$(run_http --output json contract add \
   --title "HTTP Contract" \
-  --definition-of-done "a" \
-  --definition-of-done "b" | jq -r '.id')
+  --definition-of-done "[manual] a" \
+  --definition-of-done "[manual] b" | jq -r '.id')
 run_http contract edit "$CID2" --title "HTTP Contract v2" >/dev/null 2>&1
 run_http contract dod check "$CID2" 1 >/dev/null 2>&1
 run_http contract dod uncheck "$CID2" 1 >/dev/null 2>&1
@@ -253,8 +253,8 @@ clear_markers
 # uses RemoteContractOperations and fires hooks under the server.relay runtime.
 CID3=$(run_relay --output json contract add \
   --title "Relay Contract" \
-  --definition-of-done "x" \
-  --definition-of-done "y" | jq -r '.id')
+  --definition-of-done "[manual] x" \
+  --definition-of-done "[manual] y" | jq -r '.id')
 run_relay contract edit "$CID3" --title "Relay Contract v2" >/dev/null 2>&1
 run_relay contract dod check "$CID3" 1 >/dev/null 2>&1
 run_relay contract dod uncheck "$CID3" 1 >/dev/null 2>&1

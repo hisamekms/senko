@@ -7,7 +7,7 @@
       "name": "MIT",
       "identifier": "MIT"
     },
-    "version": "0.45.0"
+    "version": "0.50.0"
   },
   "paths": {
     "/api/v1/config": {
@@ -466,7 +466,7 @@
           {
             "name": "order_by",
             "in": "query",
-            "description": "Sort key. One of `id` (default), `updated_at`.",
+            "description": "Sort key. One of `id` (default), `updated_at`.\nTie-breaker is `id` in the same direction as the primary key.",
             "required": false,
             "schema": {
               "type": "string"
@@ -876,6 +876,22 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CheckDodBody"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -2024,7 +2040,7 @@
           {
             "name": "order_by",
             "in": "query",
-            "description": "Sort key. One of `id` (default), `updated_at`, `priority`.",
+            "description": "Sort key. One of `id` (default), `updated_at`, `priority`.\nTie-breaker is `id` in the same direction as the primary key.",
             "required": false,
             "schema": {
               "type": "string"
@@ -3122,6 +3138,22 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "$ref": "#/components/schemas/CheckDodBody"
+                  }
+                ]
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "",
@@ -4619,6 +4651,19 @@
           }
         }
       },
+      "CheckDodBody": {
+        "type": "object",
+        "description": "Optional body for DoD check endpoints. Older clients send no body at all,\nso handlers take `Option<Json<..>>`.",
+        "properties": {
+          "verification_note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Free-text record of how the item was actually verified\n(e.g. the command that was run and its result)."
+          }
+        }
+      },
       "CompleteBody": {
         "type": "object",
         "properties": {
@@ -4768,7 +4813,7 @@
           "definition_of_done": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "description": {
@@ -4872,7 +4917,7 @@
           "definition_of_done": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "dependencies": {
@@ -4972,17 +5017,55 @@
           }
         }
       },
+      "DodItemInput": {
+        "type": "object",
+        "description": "Input shape for registering a DoD item (create/set/add). Unlike a stored\n[`DodItem`], the verification type is mandatory and `unspecified` is\nrejected — that value exists only for items migrated from before\nverification types were introduced.",
+        "required": [
+          "content",
+          "verification_type"
+        ],
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "verification_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_type": {
+            "$ref": "#/components/schemas/VerificationType"
+          }
+        }
+      },
       "DodItemResponse": {
         "type": "object",
         "required": [
           "content",
-          "checked"
+          "checked",
+          "verification_type"
         ],
         "properties": {
           "checked": {
             "type": "boolean"
           },
           "content": {
+            "type": "string"
+          },
+          "verification_method": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "verification_type": {
             "type": "string"
           }
         }
@@ -4993,7 +5076,7 @@
           "add_definition_of_done": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "add_tags": {
@@ -5044,7 +5127,7 @@
               "null"
             ],
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "set_tags": {
@@ -5070,7 +5153,7 @@
           "add_definition_of_done": {
             "type": "array",
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "add_in_scope": {
@@ -5213,7 +5296,7 @@
               "null"
             ],
             "items": {
-              "type": "string"
+              "$ref": "#/components/schemas/DodItemInput"
             }
           },
           "set_in_scope": {
@@ -6085,6 +6168,16 @@
       "Username": {
         "type": "string",
         "description": "Newtype wrapper around a user's login name.\n\nWraps `String` with `#[serde(transparent)]` so the JSON wire format stays a\nbare string (e.g. `\"alice\"`). Every `Username` in memory is guaranteed\nnon-empty after trimming and at most [`MAX_USERNAME_LEN`] characters long —\nconstruction via `FromStr` / `TryFrom<String>` enforces the invariant, and\nthe manual [`Deserialize`] impl runs the same validation so JSON inputs\n(HTTP bodies, config files) cannot bypass it.\n\nDB reads skip the validation on purpose (see `src/infra/mod.rs`): rows were\nvalidated on write, and re-validating on read would cause historical data\nto surface as errors."
+      },
+      "VerificationType": {
+        "type": "string",
+        "description": "How a DoD item must be verified before it can be checked.",
+        "enum": [
+          "static",
+          "execution",
+          "manual",
+          "unspecified"
+        ]
       }
     },
     "securitySchemes": {

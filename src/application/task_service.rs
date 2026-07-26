@@ -943,10 +943,11 @@ impl TaskOperations for LocalTaskOperations {
         project_id: ProjectId,
         task_id: TaskId,
         index: usize,
+        verification_note: Option<String>,
     ) -> Result<Task> {
         let task = self.backend.get_task(project_id, task_id).await?;
         let now = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-        let (task, events) = task.check_dod(index, now)?;
+        let (task, events) = task.check_dod(index, verification_note, now)?;
         self.backend.save(&task).await?;
         emit_task_events(project_id, task_id, task.contract_id(), &events);
         Ok(task)
@@ -1136,7 +1137,8 @@ mod tests {
     use crate::domain::contract::CreateContractParams;
     use crate::domain::project::ProjectId;
     use crate::domain::task::{
-        CompletionPolicy, CreateTaskParams, MergeVia, UpdateTaskArrayParams, UpdateTaskParams,
+        CompletionPolicy, CreateTaskParams, DodItemInput, MergeVia, UpdateTaskArrayParams,
+        UpdateTaskParams, VerificationType,
     };
     use crate::infra::sqlite::SqliteBackend;
 
@@ -1154,6 +1156,14 @@ mod tests {
 
     fn noop_hooks() -> Arc<dyn HookExecutor> {
         Arc::new(NoOpHookExecutor)
+    }
+
+    fn dod_input(content: &str) -> DodItemInput {
+        DodItemInput {
+            content: content.into(),
+            verification_type: VerificationType::Manual,
+            verification_method: None,
+        }
     }
 
     async fn new_backend() -> (tempfile::TempDir, Arc<dyn TaskBackend>, ProjectId) {
@@ -1188,7 +1198,7 @@ mod tests {
             background: None,
             description: None,
             priority: None,
-            definition_of_done: vec!["dod-1".into()],
+            definition_of_done: vec![dod_input("dod-1")],
             in_scope: vec![],
             out_of_scope: vec![],
             branch: None,
@@ -1267,7 +1277,7 @@ mod tests {
                 .await
                 .unwrap();
             // dod
-            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.check_dod(project_id, t.id(), 1, None).await.unwrap();
             ops.uncheck_dod(project_id, t.id(), 1).await.unwrap();
             // deps — need a second task as the dependency
             let dep = ops.create_task(project_id, &create_params()).await.unwrap();
@@ -1281,7 +1291,7 @@ mod tests {
                 .await
                 .unwrap();
             // complete → first need to check the only DoD
-            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.check_dod(project_id, t.id(), 1, None).await.unwrap();
             ops.complete_task(project_id, t.id(), false).await.unwrap();
         });
 
@@ -1346,7 +1356,7 @@ mod tests {
             ops.edit_task_arrays(project_id, t.id(), &arr)
                 .await
                 .unwrap();
-            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.check_dod(project_id, t.id(), 1, None).await.unwrap();
             ops.uncheck_dod(project_id, t.id(), 1).await.unwrap();
             // deps need a sibling task linked to the same contract is fine
             let dep_params = CreateTaskParams {
@@ -1363,7 +1373,7 @@ mod tests {
             ops.set_dependencies(project_id, t.id(), &[dep.id()])
                 .await
                 .unwrap();
-            ops.check_dod(project_id, t.id(), 1).await.unwrap();
+            ops.check_dod(project_id, t.id(), 1, None).await.unwrap();
             ops.complete_task(project_id, t.id(), false).await.unwrap();
 
             // separately exercise cancel via a fresh task (cancel rejects completed)

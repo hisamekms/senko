@@ -59,7 +59,7 @@ TOML
 
 CID="$(run_lf --output json contract add \
   --title "Abort DoD Contract" \
-  --definition-of-done "item1" | jq -r '.id')"
+  --definition-of-done "[manual] item1" | jq -r '.id')"
 
 BEFORE_DOD="$(run_lf --output json contract get "$CID" | jq -c '[.definition_of_done[].checked]')"
 assert_eq '[false]' "$BEFORE_DOD" "initial dod state"

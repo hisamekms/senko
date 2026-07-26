@@ -34,7 +34,7 @@ Contract (coarse grain)
 | `id` | int | Contract ID |
 | `title` | string | Contract name (required) |
 | `description` | string? | Summary |
-| `definition_of_done` | `{content, checked}[]` | Contract-level completion conditions |
+| `definition_of_done` | `{content, checked, verification_type, verification_method, verification_note}[]` | Contract-level completion conditions |
 | `tags` | string[] | Categorization |
 | `metadata` | JSON | Freeform (can be schema'd via project-level MetadataField) |
 | `notes` | `{content, source_task_id, created_at}[]` | Findings collected along the way |
@@ -162,8 +162,8 @@ when = "pre"
 
 ```
 1. senko contract add --title "Migrate auth to OIDC" \
-      --definition-of-done "Existing users can log in without disruption" \
-      --definition-of-done "Legacy API keys are revoked"
+      --definition-of-done "[execution] Existing users can log in without disruption :: run the login e2e suite" \
+      --definition-of-done "[static] Legacy API keys are revoked"
 
 2. senko task add --title "Add OIDC config skeleton" --contract 7
    senko task add --title "Wire JWT verifier" --contract 7

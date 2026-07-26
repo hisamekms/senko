@@ -433,15 +433,153 @@ impl TaskOrderBy {
     }
 }
 
+/// How a DoD item must be verified before it can be checked.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum VerificationType {
+    /// Verifiable by static inspection (file/code existence, content patterns).
+    Static,
+    /// Requires actually running something (tests, commands, the app).
+    Execution,
+    /// Requires human judgment or approval.
+    Manual,
+    /// Legacy items created before verification types existed. Not allowed on
+    /// newly registered items.
+    #[default]
+    Unspecified,
+}
+
+impl VerificationType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            VerificationType::Static => "static",
+            VerificationType::Execution => "execution",
+            VerificationType::Manual => "manual",
+            VerificationType::Unspecified => "unspecified",
+        }
+    }
+}
+
+impl std::fmt::Display for VerificationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl std::str::FromStr for VerificationType {
+    type Err = DomainError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "static" => Ok(VerificationType::Static),
+            "execution" => Ok(VerificationType::Execution),
+            "manual" => Ok(VerificationType::Manual),
+            "unspecified" => Ok(VerificationType::Unspecified),
+            other => Err(DomainError::InvalidVerificationType {
+                value: other.to_string(),
+            }),
+        }
+    }
+}
+
+/// Input shape for registering a DoD item (create/set/add). Unlike a stored
+/// [`DodItem`], the verification type is mandatory and `unspecified` is
+/// rejected — that value exists only for items migrated from before
+/// verification types were introduced.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct DodItemInput {
+    pub content: String,
+    pub verification_type: VerificationType,
+    #[serde(default)]
+    pub verification_method: Option<String>,
+}
+
+impl DodItemInput {
+    pub fn validate(&self, field: &str) -> Result<(), DomainError> {
+        use super::validator::*;
+        validate_string_length(field, &self.content, MAX_SHORT_TEXT_LEN)?;
+        if let Some(ref method) = self.verification_method {
+            validate_string_length(field, method, MAX_SHORT_TEXT_LEN)?;
+        }
+        if self.verification_type == VerificationType::Unspecified {
+            return Err(DomainError::ValidationError {
+                field: field.to_string(),
+                message: format!(
+                    "{field}: verification_type \"unspecified\" is reserved for migrated items; use static, execution, or manual"
+                ),
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Validate a list of DoD inputs: item count plus per-item rules.
+pub fn validate_dod_inputs(field: &str, items: &[DodItemInput]) -> Result<(), DomainError> {
+    use super::validator::*;
+    if items.len() > MAX_ITEMS_COUNT {
+        return Err(DomainError::ValidationError {
+            field: field.to_string(),
+            message: format!(
+                "{field} exceeds maximum of {MAX_ITEMS_COUNT} items (got {})",
+                items.len()
+            ),
+        });
+    }
+    for item in items {
+        item.validate(field)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DodItem {
     content: String,
     checked: bool,
+    #[serde(default)]
+    verification_type: VerificationType,
+    #[serde(default)]
+    verification_method: Option<String>,
+    #[serde(default)]
+    verification_note: Option<String>,
 }
 
 impl DodItem {
+    /// Legacy constructor: an item without verification info (`unspecified`).
     pub fn new(content: String, checked: bool) -> Self {
-        Self { content, checked }
+        Self {
+            content,
+            checked,
+            verification_type: VerificationType::Unspecified,
+            verification_method: None,
+            verification_note: None,
+        }
+    }
+
+    pub fn with_verification(
+        content: String,
+        checked: bool,
+        verification_type: VerificationType,
+        verification_method: Option<String>,
+        verification_note: Option<String>,
+    ) -> Self {
+        Self {
+            content,
+            checked,
+            verification_type,
+            verification_method,
+            verification_note,
+        }
+    }
+
+    /// Build an unchecked item from a registration input.
+    pub fn from_input(input: &DodItemInput) -> Self {
+        Self {
+            content: input.content.clone(),
+            checked: false,
+            verification_type: input.verification_type,
+            verification_method: input.verification_method.clone(),
+            verification_note: None,
+        }
     }
 
     pub fn content(&self) -> &str {
@@ -450,6 +588,18 @@ impl DodItem {
 
     pub fn checked(&self) -> bool {
         self.checked
+    }
+
+    pub fn verification_type(&self) -> VerificationType {
+        self.verification_type
+    }
+
+    pub fn verification_method(&self) -> Option<&str> {
+        self.verification_method.as_deref()
+    }
+
+    pub fn verification_note(&self) -> Option<&str> {
+        self.verification_note.as_deref()
     }
 }
 
@@ -803,14 +953,10 @@ impl Task {
         // Definition of Done
         let prev_dod = self.definition_of_done.clone();
         if let Some(ref set_dod) = params.set_definition_of_done {
-            self.definition_of_done = set_dod
-                .iter()
-                .map(|c| DodItem::new(c.clone(), false))
-                .collect();
+            self.definition_of_done = set_dod.iter().map(DodItem::from_input).collect();
         }
-        for content in &params.add_definition_of_done {
-            self.definition_of_done
-                .push(DodItem::new(content.clone(), false));
+        for input in &params.add_definition_of_done {
+            self.definition_of_done.push(DodItem::from_input(input));
         }
         if !params.remove_definition_of_done.is_empty() {
             self.definition_of_done
@@ -1045,10 +1191,12 @@ impl Task {
         ))
     }
 
-    /// Check a DoD item by 1-based index.
+    /// Check a DoD item by 1-based index, optionally recording how it was
+    /// actually verified (e.g. the command that was run and its result).
     pub fn check_dod(
         mut self,
         index: usize,
+        verification_note: Option<String>,
         now: String,
     ) -> anyhow::Result<(Task, Vec<TaskEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
@@ -1059,12 +1207,17 @@ impl Task {
             }
             .into());
         }
-        self.definition_of_done[index - 1].checked = true;
+        let item = &mut self.definition_of_done[index - 1];
+        item.checked = true;
+        if verification_note.is_some() {
+            item.verification_note = verification_note;
+        }
         self.updated_at = now;
         Ok((self, vec![TaskEvent::DodChecked { index }]))
     }
 
-    /// Uncheck a DoD item by 1-based index.
+    /// Uncheck a DoD item by 1-based index. Clears any recorded verification
+    /// note, since the note documents the check that is being undone.
     pub fn uncheck_dod(
         mut self,
         index: usize,
@@ -1078,7 +1231,9 @@ impl Task {
             }
             .into());
         }
-        self.definition_of_done[index - 1].checked = false;
+        let item = &mut self.definition_of_done[index - 1];
+        item.checked = false;
+        item.verification_note = None;
         self.updated_at = now;
         Ok((self, vec![TaskEvent::DodUnchecked { index }]))
     }
@@ -1183,7 +1338,7 @@ pub struct CreateTaskParams {
     pub description: Option<String>,
     pub priority: Option<Priority>,
     #[serde(default)]
-    pub definition_of_done: Vec<String>,
+    pub definition_of_done: Vec<DodItemInput>,
     #[serde(default)]
     pub in_scope: Vec<String>,
     #[serde(default)]
@@ -1262,12 +1417,7 @@ impl CreateTaskParams {
         validate_optional_string_length("background", &self.background, MAX_LONG_TEXT_LEN)?;
         validate_optional_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
         validate_string_vec_items("tags", &self.tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
-        validate_string_vec_items(
-            "definition_of_done",
-            &self.definition_of_done,
-            MAX_SHORT_TEXT_LEN,
-            MAX_ITEMS_COUNT,
-        )?;
+        validate_dod_inputs("definition_of_done", &self.definition_of_done)?;
         validate_string_vec_items(
             "in_scope",
             &self.in_scope,
@@ -1385,8 +1535,8 @@ pub struct UpdateTaskArrayParams {
     pub set_tags: Option<Vec<String>>,
     pub add_tags: Vec<String>,
     pub remove_tags: Vec<String>,
-    pub set_definition_of_done: Option<Vec<String>>,
-    pub add_definition_of_done: Vec<String>,
+    pub set_definition_of_done: Option<Vec<DodItemInput>>,
+    pub add_definition_of_done: Vec<DodItemInput>,
     pub remove_definition_of_done: Vec<String>,
     pub set_in_scope: Option<Vec<String>>,
     pub add_in_scope: Vec<String>,
@@ -1404,19 +1554,9 @@ impl UpdateTaskArrayParams {
         }
         validate_string_vec_items("add_tags", &self.add_tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
         if let Some(ref dod) = self.set_definition_of_done {
-            validate_string_vec_items(
-                "set_definition_of_done",
-                dod,
-                MAX_SHORT_TEXT_LEN,
-                MAX_ITEMS_COUNT,
-            )?;
+            validate_dod_inputs("set_definition_of_done", dod)?;
         }
-        validate_string_vec_items(
-            "add_definition_of_done",
-            &self.add_definition_of_done,
-            MAX_SHORT_TEXT_LEN,
-            MAX_ITEMS_COUNT,
-        )?;
+        validate_dod_inputs("add_definition_of_done", &self.add_definition_of_done)?;
         if let Some(ref scope) = self.set_in_scope {
             validate_string_vec_items("set_in_scope", scope, MAX_SHORT_TEXT_LEN, MAX_ITEMS_COUNT)?;
         }
@@ -1535,6 +1675,14 @@ pub trait TaskRepository: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn dod_input(content: &str) -> DodItemInput {
+        DodItemInput {
+            content: content.into(),
+            verification_type: VerificationType::Manual,
+            verification_method: None,
+        }
+    }
 
     #[test]
     fn status_display_roundtrip() {
@@ -2145,7 +2293,7 @@ mod tests {
         let task = make_task(TaskStatus::Todo);
         let params = UpdateTaskArrayParams {
             add_tags: vec!["backend".to_string()],
-            add_definition_of_done: vec!["unit test".to_string()],
+            add_definition_of_done: vec![dod_input("unit test")],
             set_in_scope: Some(vec!["domain".to_string()]),
             ..default_update_array_params()
         };
@@ -2343,10 +2491,10 @@ mod tests {
     fn task_complete_with_all_dod_checked() {
         let task = make_task_with_dod();
         let (task, _) = task
-            .check_dod(1, "2026-01-03T00:00:00Z".to_string())
+            .check_dod(1, None, "2026-01-03T00:00:00Z".to_string())
             .unwrap();
         let (task, _) = task
-            .check_dod(2, "2026-01-03T00:00:00Z".to_string())
+            .check_dod(2, None, "2026-01-03T00:00:00Z".to_string())
             .unwrap();
         let (task, _) = task.complete("2026-01-03T00:00:00Z".to_string()).unwrap();
         assert_eq!(task.status(), TaskStatus::Completed);
@@ -2500,7 +2648,7 @@ mod tests {
     fn task_check_dod() {
         let task = make_task_with_dod();
         let (task, events) = task
-            .check_dod(1, "2026-01-05T00:00:00Z".to_string())
+            .check_dod(1, None, "2026-01-05T00:00:00Z".to_string())
             .unwrap();
         assert!(task.definition_of_done()[0].checked());
         assert!(!task.definition_of_done()[1].checked());
@@ -2552,7 +2700,7 @@ mod tests {
     fn task_check_dod_index_zero() {
         let task = make_task_with_dod();
         assert!(
-            task.check_dod(0, "2026-01-05T00:00:00Z".to_string())
+            task.check_dod(0, None, "2026-01-05T00:00:00Z".to_string())
                 .is_err()
         );
     }
@@ -2561,7 +2709,7 @@ mod tests {
     fn task_check_dod_index_out_of_range() {
         let task = make_task_with_dod();
         assert!(
-            task.check_dod(3, "2026-01-05T00:00:00Z".to_string())
+            task.check_dod(3, None, "2026-01-05T00:00:00Z".to_string())
                 .is_err()
         );
     }
@@ -2570,7 +2718,7 @@ mod tests {
     fn task_check_dod_empty_list() {
         let task = make_task(TaskStatus::InProgress);
         assert!(
-            task.check_dod(1, "2026-01-05T00:00:00Z".to_string())
+            task.check_dod(1, None, "2026-01-05T00:00:00Z".to_string())
                 .is_err()
         );
     }

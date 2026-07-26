@@ -19,8 +19,8 @@ Manage and execute project tasks using the `senko` CLI. senko is a SQLite-backed
 - `/senko graph` — Show dependency graph (Mermaid diagram)
 - `/senko complete <id>` — Mark a task as completed
 - `/senko cancel <id>` — Cancel a task
-- `/senko dod check <task_id> <index>` — Mark a DoD item as checked
-- `/senko dod uncheck <task_id> <index>` — Unmark a DoD item
+- `/senko dod check <task_id> <index> [--note "..."]` — Mark a DoD item as checked, optionally recording how it was verified
+- `/senko dod uncheck <task_id> <index>` — Unmark a DoD item (clears the verification note)
 - `/senko deps add <task_id> --on <dep_id>` — Add a dependency
 - `/senko deps remove <task_id> --on <dep_id>` — Remove a dependency
 - `/senko deps list <task_id>` — List dependencies of a task

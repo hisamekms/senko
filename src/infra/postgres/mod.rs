@@ -23,9 +23,9 @@ use crate::domain::project::{
     UpdateProjectParams,
 };
 use crate::domain::task::{
-    self, CreateTaskParams, DodItem, ListTaskDepsFilter, ListTasksFilter, ListTasksPage,
-    MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
-    shallow_merge_metadata,
+    self, CreateTaskParams, DodItem, DodItemInput, ListTaskDepsFilter, ListTasksFilter,
+    ListTasksPage, MetadataUpdate, Priority, Task, TaskId, TaskStatus, UpdateTaskArrayParams,
+    UpdateTaskParams, shallow_merge_metadata,
 };
 use crate::domain::user::{
     AddProjectMemberParams, ApiKey, ApiKeyWithSecret, CreateUserParams, ListSessionsFilter,
@@ -116,6 +116,11 @@ const MIGRATIONS: &[Migration] = &[
         description: "add_contracts",
         sql: include_str!("migrations/20260417000000_add_contracts.sql"),
     },
+    Migration {
+        version: 8,
+        description: "add_dod_verification",
+        sql: include_str!("migrations/20260726000000_add_dod_verification.sql"),
+    },
 ];
 
 async fn run_migrations(pool: &PgPool) -> Result<()> {
@@ -189,13 +194,13 @@ async fn get_task_by_id(pool: &PgPool, id: TaskDbId) -> Result<Task> {
         .context("invalid metadata JSON in database")?;
 
     let definition_of_done = sqlx::query(
-        "SELECT content, checked FROM task_definition_of_done WHERE task_id = $1 ORDER BY id",
+        "SELECT content, checked, verification_type, verification_method, verification_note FROM task_definition_of_done WHERE task_id = $1 ORDER BY id",
     )
     .bind(id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| DodItem::new(r.get("content"), r.get::<i32, _>("checked") != 0))
+    .map(dod_item_from_pg_row)
     .collect();
 
     let in_scope: Vec<String> =
@@ -965,11 +970,15 @@ impl TaskRepository for PostgresBackend {
         }
 
         for item in &params.definition_of_done {
-            sqlx::query("INSERT INTO task_definition_of_done (task_id, content) VALUES ($1, $2)")
-                .bind(task_id)
-                .bind(item)
-                .execute(&mut *tx)
-                .await?;
+            sqlx::query(
+                "INSERT INTO task_definition_of_done (task_id, content, verification_type, verification_method) VALUES ($1, $2, $3, $4)",
+            )
+            .bind(task_id)
+            .bind(&item.content)
+            .bind(item.verification_type.as_str())
+            .bind(&item.verification_method)
+            .execute(&mut *tx)
+            .await?;
         }
         for item in &params.in_scope {
             sqlx::query("INSERT INTO task_in_scope (task_id, content) VALUES ($1, $2)")
@@ -1214,10 +1223,9 @@ impl TaskRepository for PostgresBackend {
         }
 
         // definition_of_done
-        update_content_array(
+        update_dod_array(
             &mut tx,
             id,
-            "task_definition_of_done",
             &params.set_definition_of_done,
             &params.add_definition_of_done,
             &params.remove_definition_of_done,
@@ -1373,11 +1381,14 @@ impl TaskRepository for PostgresBackend {
         for dod in task.definition_of_done() {
             let checked_val: i32 = if dod.checked() { 1 } else { 0 };
             sqlx::query(
-                "INSERT INTO task_definition_of_done (task_id, content, checked) VALUES ($1, $2, $3)",
+                "INSERT INTO task_definition_of_done (task_id, content, checked, verification_type, verification_method, verification_note) VALUES ($1, $2, $3, $4, $5, $6)",
             )
             .bind(internal_id)
             .bind(dod.content())
             .bind(checked_val)
+            .bind(dod.verification_type().as_str())
+            .bind(dod.verification_method())
+            .bind(dod.verification_note())
             .execute(&mut *tx)
             .await?;
         }
@@ -1784,6 +1795,71 @@ impl TaskQueryPort for PostgresBackend {
 
 // --- Helper for update_task_arrays ---
 
+fn dod_item_from_pg_row(r: sqlx::postgres::PgRow) -> DodItem {
+    let verification_type = r
+        .get::<String, _>("verification_type")
+        .parse::<crate::domain::task::VerificationType>()
+        .unwrap_or_default();
+    DodItem::with_verification(
+        r.get("content"),
+        r.get::<i32, _>("checked") != 0,
+        verification_type,
+        r.get("verification_method"),
+        r.get("verification_note"),
+    )
+}
+
+/// Insert an unchecked DoD row with its verification metadata.
+async fn insert_dod_row(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    table: &str,
+    owner_column: &str,
+    owner_id: i64,
+    item: &DodItemInput,
+) -> Result<()> {
+    sqlx::query(&format!(
+        "INSERT INTO {table} ({owner_column}, content, verification_type, verification_method) VALUES ($1, $2, $3, $4)"
+    ))
+    .bind(owner_id)
+    .bind(&item.content)
+    .bind(item.verification_type.as_str())
+    .bind(&item.verification_method)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+/// DoD-specific variant of `update_content_array`: set/add carry verification
+/// metadata, remove still matches by content.
+async fn update_dod_array(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    task_id: TaskDbId,
+    set: &Option<Vec<DodItemInput>>,
+    add: &[DodItemInput],
+    remove: &[String],
+) -> Result<()> {
+    if let Some(values) = set {
+        sqlx::query("DELETE FROM task_definition_of_done WHERE task_id = $1")
+            .bind(task_id)
+            .execute(&mut **tx)
+            .await?;
+        for item in values {
+            insert_dod_row(tx, "task_definition_of_done", "task_id", task_id.0, item).await?;
+        }
+    }
+    for item in add {
+        insert_dod_row(tx, "task_definition_of_done", "task_id", task_id.0, item).await?;
+    }
+    for content in remove {
+        sqlx::query("DELETE FROM task_definition_of_done WHERE task_id = $1 AND content = $2")
+            .bind(task_id)
+            .bind(content)
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn update_content_array(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     task_id: TaskDbId,
@@ -2011,13 +2087,13 @@ async fn get_contract_by_id(pool: &PgPool, id: ContractId) -> Result<Contract> {
     let metadata: Option<serde_json::Value> = row.get("metadata");
 
     let definition_of_done: Vec<DodItem> = sqlx::query(
-        "SELECT content, checked FROM contract_definition_of_done WHERE contract_id = $1 ORDER BY id",
+        "SELECT content, checked, verification_type, verification_method, verification_note FROM contract_definition_of_done WHERE contract_id = $1 ORDER BY id",
     )
     .bind(id)
     .fetch_all(pool)
     .await?
     .into_iter()
-    .map(|r| DodItem::new(r.get("content"), r.get::<i32, _>("checked") != 0))
+    .map(dod_item_from_pg_row)
     .collect();
 
     let tags: Vec<String> =
@@ -2084,12 +2160,14 @@ impl ContractRepository for PostgresBackend {
         .await?;
         let contract_id: ContractId = row.get("id");
 
-        for content in &params.definition_of_done {
+        for item in &params.definition_of_done {
             sqlx::query(
-                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+                "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES ($1, $2, $3, $4)",
             )
             .bind(contract_id)
-            .bind(content)
+            .bind(&item.content)
+            .bind(item.verification_type.as_str())
+            .bind(&item.verification_method)
             .execute(&mut *tx)
             .await?;
         }
@@ -2386,23 +2464,27 @@ impl ContractRepository for PostgresBackend {
                 .bind(id)
                 .execute(&mut *tx)
                 .await?;
-            for content in set {
+            for item in set {
                 sqlx::query(
-                    "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+                    "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES ($1, $2, $3, $4)",
                 )
                 .bind(id)
-                .bind(content)
+                .bind(&item.content)
+                .bind(item.verification_type.as_str())
+                .bind(&item.verification_method)
                 .execute(&mut *tx)
                 .await?;
             }
             touched = true;
         }
-        for content in &array_update.add_definition_of_done {
+        for item in &array_update.add_definition_of_done {
             sqlx::query(
-                "INSERT INTO contract_definition_of_done (contract_id, content) VALUES ($1, $2)",
+                "INSERT INTO contract_definition_of_done (contract_id, content, verification_type, verification_method) VALUES ($1, $2, $3, $4)",
             )
             .bind(id)
-            .bind(content)
+            .bind(&item.content)
+            .bind(item.verification_type.as_str())
+            .bind(&item.verification_method)
             .execute(&mut *tx)
             .await?;
             touched = true;
@@ -2471,12 +2553,17 @@ impl ContractRepository for PostgresBackend {
         ))
     }
 
-    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
-        set_contract_dod_checked_pg(self, contract_id, index, true).await
+    async fn check_dod(
+        &self,
+        contract_id: ContractId,
+        index: usize,
+        verification_note: Option<String>,
+    ) -> Result<Contract> {
+        set_contract_dod_checked_pg(self, contract_id, index, true, verification_note).await
     }
 
     async fn uncheck_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract> {
-        set_contract_dod_checked_pg(self, contract_id, index, false).await
+        set_contract_dod_checked_pg(self, contract_id, index, false, None).await
     }
 }
 
@@ -2485,6 +2572,7 @@ async fn set_contract_dod_checked_pg(
     contract_id: ContractId,
     index: usize,
     checked: bool,
+    verification_note: Option<String>,
 ) -> Result<Contract> {
     let pool = backend.pool().await?;
     let contract = get_contract_by_id(pool, contract_id).await?;
@@ -2507,11 +2595,31 @@ async fn set_contract_dod_checked_pg(
     .await?;
 
     let mut tx = pool.begin().await?;
-    sqlx::query("UPDATE contract_definition_of_done SET checked = $1 WHERE id = $2")
-        .bind(if checked { 1i32 } else { 0i32 })
+    if checked {
+        // Preserve an existing note unless a new one is provided.
+        if let Some(ref note) = verification_note {
+            sqlx::query(
+                "UPDATE contract_definition_of_done SET checked = 1, verification_note = $1 WHERE id = $2",
+            )
+            .bind(note)
+            .bind(dod_row_id)
+            .execute(&mut *tx)
+            .await?;
+        } else {
+            sqlx::query("UPDATE contract_definition_of_done SET checked = 1 WHERE id = $1")
+                .bind(dod_row_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    } else {
+        // Unchecking invalidates the recorded verification.
+        sqlx::query(
+            "UPDATE contract_definition_of_done SET checked = 0, verification_note = NULL WHERE id = $1",
+        )
         .bind(dod_row_id)
         .execute(&mut *tx)
         .await?;
+    }
     sqlx::query("UPDATE contracts SET updated_at = $1 WHERE id = $2")
         .bind(now_utc())
         .bind(contract_id)
@@ -2592,6 +2700,14 @@ mod tests {
 
     fn test_url() -> Option<String> {
         std::env::var("SENKO_TEST_POSTGRES_URL").ok()
+    }
+
+    fn dod_input(content: &str) -> DodItemInput {
+        DodItemInput {
+            content: content.into(),
+            verification_type: task::VerificationType::Manual,
+            verification_method: None,
+        }
     }
 
     async fn setup() -> PostgresBackend {
@@ -2764,7 +2880,7 @@ mod tests {
         let backend = setup().await;
 
         let mut p = params("DoD test");
-        p.definition_of_done = vec!["Write tests".to_string(), "Review code".to_string()];
+        p.definition_of_done = vec![dod_input("Write tests"), dod_input("Review code")];
         p.tags = vec!["backend".to_string(), "postgres".to_string()];
 
         let task = backend.create_task(ProjectId(1), &p).await.unwrap();
@@ -2797,11 +2913,11 @@ mod tests {
         assert_eq!(t2.dependencies(), vec![t1.id()]);
 
         let deps = backend
-            .list_dependencies(ProjectId(1), t2.id())
+            .list_dependencies(ProjectId(1), t2.id(), &ListTaskDepsFilter::default())
             .await
             .unwrap();
-        assert_eq!(deps.len(), 1);
-        assert_eq!(deps[0].id(), t1.id());
+        assert_eq!(deps.items.len(), 1);
+        assert_eq!(deps.items[0].id(), t1.id());
 
         let (t2, _) = t2.remove_dependency(t1.id(), Some(now_utc())).unwrap();
         backend.save(&t2).await.unwrap();
@@ -3168,7 +3284,7 @@ mod tests {
                     add_tags: vec!["tag1".to_string(), "tag2".to_string()],
                     remove_tags: vec![],
                     set_definition_of_done: None,
-                    add_definition_of_done: vec!["DoD item".to_string()],
+                    add_definition_of_done: vec![dod_input("DoD item")],
                     remove_definition_of_done: vec![],
                     set_in_scope: None,
                     add_in_scope: vec![],
@@ -3268,8 +3384,11 @@ mod tests {
             .await
             .unwrap();
 
-        let fields = backend.list_metadata_fields(ProjectId(1)).await.unwrap();
-        assert_eq!(fields.len(), 2);
+        let fields = backend
+            .list_metadata_fields(ProjectId(1), &ListMetadataFieldsFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(fields.items.len(), 2);
     }
 
     #[tokio::test]
@@ -3409,7 +3528,7 @@ mod tests {
         CreateContractParams {
             title: title.to_string(),
             description: Some("spec".to_string()),
-            definition_of_done: vec!["item1".to_string(), "item2".to_string()],
+            definition_of_done: vec![dod_input("item1"), dod_input("item2")],
             tags: vec!["api".to_string()],
             metadata: Some(serde_json::json!({"owner": "team-a"})),
         }
@@ -3470,7 +3589,7 @@ mod tests {
             Some(&serde_json::json!({"owner": "team-a", "stage": "review"}))
         );
 
-        let checked = backend.check_dod(c.id(), 1).await.unwrap();
+        let checked = backend.check_dod(c.id(), 1, None).await.unwrap();
         assert!(checked.definition_of_done()[0].checked());
         assert!(!checked.definition_of_done()[1].checked());
 
@@ -3571,7 +3690,7 @@ mod tests {
         let mk = |title: &str, dod: Vec<&str>| CreateContractParams {
             title: title.to_string(),
             description: None,
-            definition_of_done: dod.iter().map(|s| s.to_string()).collect(),
+            definition_of_done: dod.iter().map(|s| dod_input(s)).collect(),
             tags: vec![],
             metadata: None,
         };
@@ -3584,8 +3703,8 @@ mod tests {
             .create_contract(ProjectId(1), &mk("api docs", vec!["one", "two"]))
             .await
             .unwrap();
-        backend.check_dod(all_done.id(), 1).await.unwrap();
-        backend.check_dod(all_done.id(), 2).await.unwrap();
+        backend.check_dod(all_done.id(), 1, None).await.unwrap();
+        backend.check_dod(all_done.id(), 2, None).await.unwrap();
         let _partial = backend
             .create_contract(ProjectId(1), &mk("Mobile launch", vec!["x"]))
             .await

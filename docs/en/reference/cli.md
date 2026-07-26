@@ -53,6 +53,7 @@ senko task add --from-json-file task.json
 - New tasks start as `draft`.
 - Default priority: `p2`.
 - `--depends-on` is repeatable (`--depends-on 3 --depends-on 5`).
+- `--definition-of-done` must declare a verification type: either the prefix format `"[static|execution|manual] <content>[ :: <verification method>]"` or a JSON object `{"content":"...","verification_type":"...","verification_method":"..."}`. Plain untagged strings are rejected. `unspecified` is reserved for pre-migration data and cannot be set on new items.
 
 ### `task list`
 
@@ -117,6 +118,8 @@ senko task edit 1 --clear-contract --clear-assignee-user-id
 senko task edit 1 --set-tags "a" "b" "c"
 senko task edit 1 --add-tag x --add-tag y
 senko task edit 1 --remove-tag old
+senko task edit 1 --add-definition-of-done "[execution] Tests pass :: run mise test"
+senko task edit 1 --remove-definition-of-done "Tests pass"   # remove matches by content
 
 # Metadata
 senko task edit 1 --metadata '{"key":"value"}'          # shallow merge
@@ -144,9 +147,12 @@ senko task cancel 1 [--reason "..."]
 ### `task dod`
 
 ```bash
-senko task dod check <task_id> <index>     # 1-based index
-senko task dod uncheck <task_id> <index>
+senko task dod check <task_id> <index> [--note "how it was verified"]   # 1-based index
+senko task dod uncheck <task_id> <index>                                # also clears the note
 ```
+
+- `--note` records how the item was actually verified (e.g. the command run and its result). Strongly recommended for `verification_type: execution` items, as the audit trail proving the item was executed rather than statically inspected.
+- Each DoD item carries a `verification_type` (static / execution / manual / unspecified) and an optional `verification_method`. Text output renders `[x] <content> [execution]` plus `verify:` / `verified:` lines.
 
 ### `task deps`
 
@@ -177,7 +183,7 @@ senko contract edit <id> --title ... --description ...
 
 senko contract delete <id>
 
-senko contract dod check <contract_id> <index>
+senko contract dod check <contract_id> <index> [--note "how it was verified"]
 senko contract dod uncheck <contract_id> <index>
 
 senko contract note add <contract_id> --content "..." [--source-task <task_id>]

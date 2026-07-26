@@ -28,7 +28,7 @@ echo "[2] Full contract (all fields)"
 ADD_FULL="$(run_lf --output json contract add \
   --title "Full Contract" \
   --description "desc text" \
-  --definition-of-done "dod1" --definition-of-done "dod2" \
+  --definition-of-done "[manual] dod1" --definition-of-done "[manual] dod2" \
   --tag "t1" --tag "t2" \
   --metadata '{"k":"v"}')"
 
@@ -43,7 +43,7 @@ FULL_ID="$(echo "$ADD_FULL" | jq -r '.id')"
 
 # 3. add --from-json (stdin)
 echo "[3] Add from JSON (stdin)"
-ADD_JSON="$(echo '{"title":"From JSON","description":"json-desc","tags":["a","b"],"definition_of_done":["x","y"]}' \
+ADD_JSON="$(echo '{"title":"From JSON","description":"json-desc","tags":["a","b"],"definition_of_done":[{"content":"x","verification_type":"manual"},{"content":"y","verification_type":"manual"}]}' \
   | run_lf --output json contract add --from-json)"
 
 assert_json_field "$ADD_JSON" '.title' "From JSON" "from-json: title"
@@ -55,7 +55,7 @@ assert_eq '["x","y"]' "$(echo "$ADD_JSON" | jq -c '[.definition_of_done[].conten
 echo "[4] Add from JSON file"
 JSON_FILE="$TEST_DIR/contract_input.json"
 cat > "$JSON_FILE" <<'EOF'
-{"title":"From File","tags":["file-tag"],"definition_of_done":["file-dod"]}
+{"title":"From File","tags":["file-tag"],"definition_of_done":[{"content":"file-dod","verification_type":"manual"}]}
 EOF
 ADD_FILE="$(run_lf --output json contract add --from-json-file "$JSON_FILE")"
 
@@ -184,7 +184,7 @@ assert_eq "alpha,beta" "$TAGS" "edit: set-tags alpha beta"
 
 # 11. edit DoD (add / remove / set)
 echo "[11] Edit DoD"
-OUT="$(run_lf --output json contract edit "$FULL_ID" --add-definition-of-done "dod3")"
+OUT="$(run_lf --output json contract edit "$FULL_ID" --add-definition-of-done "[manual] dod3")"
 DODS="$(echo "$OUT" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["dod1","dod2","dod3"]' "$DODS" "edit: add-definition-of-done dod3"
 
@@ -192,7 +192,7 @@ OUT="$(run_lf --output json contract edit "$FULL_ID" --remove-definition-of-done
 DODS="$(echo "$OUT" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["dod1","dod3"]' "$DODS" "edit: remove-definition-of-done dod2"
 
-OUT="$(run_lf --output json contract edit "$FULL_ID" --set-definition-of-done "only")"
+OUT="$(run_lf --output json contract edit "$FULL_ID" --set-definition-of-done "[manual] only")"
 DODS="$(echo "$OUT" | jq -c '[.definition_of_done[].content]')"
 assert_eq '["only"]' "$DODS" "edit: set-definition-of-done"
 

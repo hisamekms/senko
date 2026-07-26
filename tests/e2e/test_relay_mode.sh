@@ -148,7 +148,7 @@ assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 
 echo "[2.5] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
-TASK4=$(run_relay task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
+TASK4=$(run_relay task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "[manual] Next DoD")
 TASK4_ID=$(echo "$TASK4" | jq -r '.id')
 run_relay task publish "$TASK4_ID" >/dev/null
 NEXT=$(run_relay task next)
@@ -184,7 +184,7 @@ assert_eq "0" "$(echo "$DEP_REMOVED" | jq '.dependencies | length')" "deps remov
 # ========================================
 echo "--- Section 4: DoD operations via relay ---"
 
-TASK5=$(run_relay task add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
+TASK5=$(run_relay task add --title "DoD Task" --definition-of-done "[manual] Write tests" --definition-of-done "[manual] Deploy")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 run_relay task publish "$TASK5_ID" >/dev/null
 run_relay task start "$TASK5_ID" >/dev/null
@@ -244,7 +244,7 @@ echo "--- Section 7: Metadata happy path via relay ---"
 echo "[7.1] Create task with DoD and assignee=self"
 META_TASK=$(run_relay task add --title "Metadata Relay Task" \
   --assignee-user-id self \
-  --definition-of-done "Write tests" --definition-of-done "Review code")
+  --definition-of-done "[manual] Write tests" --definition-of-done "[manual] Review code")
 META_TASK_ID=$(echo "$META_TASK" | jq -r '.id')
 assert_json_field "$META_TASK" '.status' "draft" "meta: created as draft"
 

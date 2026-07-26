@@ -116,8 +116,13 @@ pub trait TaskOperations: Send + Sync {
 
     // --- Definition of Done ---
 
-    async fn check_dod(&self, project_id: ProjectId, task_id: TaskId, index: usize)
-    -> Result<Task>;
+    async fn check_dod(
+        &self,
+        project_id: ProjectId,
+        task_id: TaskId,
+        index: usize,
+        verification_note: Option<String>,
+    ) -> Result<Task>;
     async fn uncheck_dod(
         &self,
         project_id: ProjectId,

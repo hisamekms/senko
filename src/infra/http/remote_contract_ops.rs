@@ -317,6 +317,7 @@ impl ContractOperations for RemoteContractOperations {
         project_id: ProjectId,
         contract_id: ContractId,
         index: usize,
+        verification_note: Option<String>,
     ) -> Result<Contract> {
         let trigger = HookTrigger::Contract(ContractEvent::DodChecked { index });
         self.fire_pre(&trigger, None).await?;
@@ -325,7 +326,11 @@ impl ContractOperations for RemoteContractOperations {
             project_id,
             &format!("/contracts/{contract_id}/dod/{index}/check"),
         );
-        let resp = self.prepare(self.client().post(&url)).send().await?;
+        let resp = self
+            .prepare(self.client().post(&url))
+            .json(&serde_json::json!({ "verification_note": verification_note }))
+            .send()
+            .await?;
         let contract: Contract = read_json_or_error(resp).await?;
 
         self.fire_post(&trigger, Some(&contract)).await;

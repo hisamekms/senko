@@ -128,8 +128,8 @@ X-Senko-Version: 1.0.0
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/deps` | 依存追加 |
 | PUT | `/api/v1/projects/{project_id}/tasks/{id}/deps` | 依存全置換 |
 | DELETE | `/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}` | 依存削除 |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check` | DoD check (1-based index) |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check` | DoD check (1-based index)。任意 body `{"verification_note": "..."}` で検証記録を保存 |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck` | DoD uncheck（verification_note もクリア） |
 
 ### Contract
 
@@ -140,8 +140,8 @@ X-Senko-Version: 1.0.0
 | GET | `/api/v1/projects/{project_id}/contracts/{id}` | 取得 |
 | PUT | `/api/v1/projects/{project_id}/contracts/{id}` | 更新 |
 | DELETE | `/api/v1/projects/{project_id}/contracts/{id}` | 削除 |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check` | DoD check (1-based index) |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check` | DoD check (1-based index)。任意 body `{"verification_note": "..."}` で検証記録を保存 |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck` | DoD uncheck（verification_note もクリア） |
 | GET | `/api/v1/projects/{project_id}/contracts/{id}/notes` | Notes 一覧 |
 | POST | `/api/v1/projects/{project_id}/contracts/{id}/notes` | Note 追加 |
 
@@ -188,7 +188,10 @@ Content-Type: application/json
   "title": "Implement webhook",
   "background": "External integration",
   "priority": "P1",
-  "definition_of_done": ["Tests pass", "Docs updated"],
+  "definition_of_done": [
+    {"content": "Tests pass", "verification_type": "execution", "verification_method": "run the test suite"},
+    {"content": "Docs updated", "verification_type": "static"}
+  ],
   "in_scope": ["endpoint"],
   "out_of_scope": ["GraphQL"],
   "tags": ["backend"],

@@ -107,6 +107,9 @@ API キーの平文は DB に保存されず、発行時のみ返される。検
 | `task_id` | INTEGER FK(tasks) | ON DELETE CASCADE |
 | `content` | TEXT | |
 | `checked` | INTEGER | 0/1 |
+| `verification_type` | TEXT | `static` / `execution` / `manual` / `unspecified`（デフォルト `unspecified`、移行前の既存行専用。新規登録では `unspecified` 不可） |
+| `verification_method` | TEXT? | 登録時に宣言する検証手順（自由記述） |
+| `verification_note` | TEXT? | check 時に記録する検証記録（`dod check --note`）。uncheck でクリア |
 
 挿入順で index が決まる (1-based で CLI が指定)。
 
@@ -168,7 +171,10 @@ UNIQUE(project_id, name)。
 
 ```
 id PK / contract_id FK / content / checked (0/1)
+  / verification_type / verification_method? / verification_note?
 ```
+
+カラムの意味は `task_definition_of_done` と同じ。
 
 ## contract_tags
 

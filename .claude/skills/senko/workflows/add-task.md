@@ -113,9 +113,10 @@ Capture the `id` as `$TASK_ID`.
    senko contract add \
      --title "<contract_title>" \
      --description "<contract_description>" \
-     --definition-of-done "<dod 1>" \
-     --definition-of-done "<dod 2>"
+     --definition-of-done "[execution] <dod 1> :: <how to verify>" \
+     --definition-of-done "[static] <dod 2>"
      # ... --tag for each contract_tag
+     # DoD format: "[static|execution|manual] <content>[ :: <verification method>]" — see "Writing DoD items" below
 
    bash ${CLAUDE_SKILL_DIR}/scripts/emit-hooks.sh contract_add post
    ```
@@ -145,7 +146,7 @@ Capture the `id` as `$TASK_ID`.
    senko task edit $SUB_ID_2 --contract $CONTRACT_ID
    # ...
    senko task edit $TERMINAL_ID --contract $CONTRACT_ID --add-tag contract-terminal \
-     --add-definition-of-done "Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"
+     --add-definition-of-done "[manual] Reconcile Contract DoD: verify met items; spawn follow-up tasks for any unmet items"
    ```
 
    The `contract-terminal` tag routes the terminal task to the Contract-verification workflow at execute/complete time. Do NOT omit it.
@@ -206,7 +207,7 @@ senko task edit <id> \
   --description "<description>" \
   --priority p1 \
   --add-tag <tag> \
-  --add-definition-of-done "<dod>" \
+  --add-definition-of-done "[<type>] <dod>[ :: <verification method>]" \
   --add-in-scope "<scope>" \
   --add-out-of-scope "<non-goal>"
 ```
@@ -216,11 +217,19 @@ For the split path, also refine the Contract if needed:
 ```bash
 senko contract edit $CONTRACT_ID \
   --description "<description>" \
-  --add-definition-of-done "<dod>" \
+  --add-definition-of-done "[<type>] <dod>[ :: <verification method>]" \
   --add-tag <tag>
 ```
 
 Do not pass `--plan` / `--plan-file`.
+
+**Writing DoD items.** Every DoD item must declare a verification type; plain untagged strings are rejected:
+
+- `[static]` — verifiable by inspecting code/artifacts (file exists, section added, dead code removed)
+- `[execution]` — must actually be run to verify (tests pass, command succeeds, app behavior). Whenever a concrete command exists, declare it after ` :: ` (e.g. `"[execution] E2E tests pass :: run mise run e2e, all green"`), so the verifier at completion time runs exactly that.
+- `[manual]` — needs human judgment (UX quality, wording, approval)
+
+Choose `[execution]` whenever the item's real intent is "it works", not "the code is there" — this prevents the completion-time verifier from checking off runtime behavior via static inspection alone.
 
 #### 4.2 Branch setting
 

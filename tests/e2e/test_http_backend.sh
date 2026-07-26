@@ -63,7 +63,7 @@ COMPLETED=$(run_http task complete "$TASK1_ID")
 assert_json_field "$COMPLETED" '.status' "completed" "complete: status is completed"
 
 echo "[8] Add task with DoD for DoD check/uncheck test"
-TASK2=$(run_http task add --title "DoD Task" --definition-of-done "Write tests" --definition-of-done "Deploy")
+TASK2=$(run_http task add --title "DoD Task" --definition-of-done "[manual] Write tests" --definition-of-done "[manual] Deploy")
 TASK2_ID=$(echo "$TASK2" | jq -r '.id')
 run_http task publish "$TASK2_ID" >/dev/null
 run_http task start "$TASK2_ID" >/dev/null
@@ -108,7 +108,7 @@ assert_json_field "$CANCELED" '.status' "canceled" "cancel: status is canceled"
 assert_json_field "$CANCELED" '.cancel_reason' "not needed" "cancel: reason set"
 
 echo "[15] Next task: add(assignee=self, DoD) → ready → next → dod check → complete"
-TASK5=$(run_http task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "Next DoD")
+TASK5=$(run_http task add --title "Next Candidate" --priority p0 --assignee-user-id self --definition-of-done "[manual] Next DoD")
 TASK5_ID=$(echo "$TASK5" | jq -r '.id')
 run_http task publish "$TASK5_ID" >/dev/null
 NEXT=$(run_http task next)

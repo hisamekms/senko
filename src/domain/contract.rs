@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 
 use super::error::DomainError;
 use super::project::ProjectId;
-use super::task::{DodItem, MetadataUpdate, TaskId, shallow_merge_metadata};
+use super::task::{
+    DodItem, DodItemInput, MetadataUpdate, TaskId, shallow_merge_metadata, validate_dod_inputs,
+};
 use super::validator::{
-    MAX_ITEMS_COUNT, MAX_LONG_TEXT_LEN, MAX_SHORT_TEXT_LEN, MAX_TAG_LEN, MAX_TAGS_COUNT,
+    MAX_LONG_TEXT_LEN, MAX_TAG_LEN, MAX_TAGS_COUNT,
     MAX_TITLE_LEN, validate_metadata, validate_optional_nullable_string_length,
     validate_optional_string_length, validate_string_length, validate_string_vec_items,
 };
@@ -278,16 +280,12 @@ impl Contract {
         }
 
         if let Some(ref set_dod) = params.set_definition_of_done {
-            self.definition_of_done = set_dod
-                .iter()
-                .map(|c| DodItem::new(c.clone(), false))
-                .collect();
+            self.definition_of_done = set_dod.iter().map(DodItem::from_input).collect();
             dod_changed = true;
         }
         if !params.add_definition_of_done.is_empty() {
-            for content in &params.add_definition_of_done {
-                self.definition_of_done
-                    .push(DodItem::new(content.clone(), false));
+            for input in &params.add_definition_of_done {
+                self.definition_of_done.push(DodItem::from_input(input));
             }
             dod_changed = true;
         }
@@ -322,10 +320,12 @@ impl Contract {
         (self, vec![ContractEvent::NoteAdded])
     }
 
-    /// Check a DoD item by 1-based index.
+    /// Check a DoD item by 1-based index, optionally recording how it was
+    /// actually verified.
     pub fn check_dod(
         mut self,
         index: usize,
+        verification_note: Option<String>,
         now: String,
     ) -> Result<(Contract, Vec<ContractEvent>)> {
         if index == 0 || index > self.definition_of_done.len() {
@@ -337,12 +337,20 @@ impl Contract {
             .into());
         }
         let item = &self.definition_of_done[index - 1];
-        self.definition_of_done[index - 1] = DodItem::new(item.content().to_string(), true);
+        let note = verification_note.or_else(|| item.verification_note().map(str::to_string));
+        self.definition_of_done[index - 1] = DodItem::with_verification(
+            item.content().to_string(),
+            true,
+            item.verification_type(),
+            item.verification_method().map(str::to_string),
+            note,
+        );
         self.updated_at = now;
         Ok((self, vec![ContractEvent::DodChecked { index }]))
     }
 
-    /// Uncheck a DoD item by 1-based index.
+    /// Uncheck a DoD item by 1-based index. Clears any recorded verification
+    /// note, since the note documents the check that is being undone.
     pub fn uncheck_dod(
         mut self,
         index: usize,
@@ -357,7 +365,13 @@ impl Contract {
             .into());
         }
         let item = &self.definition_of_done[index - 1];
-        self.definition_of_done[index - 1] = DodItem::new(item.content().to_string(), false);
+        self.definition_of_done[index - 1] = DodItem::with_verification(
+            item.content().to_string(),
+            false,
+            item.verification_type(),
+            item.verification_method().map(str::to_string),
+            None,
+        );
         self.updated_at = now;
         Ok((self, vec![ContractEvent::DodUnchecked { index }]))
     }
@@ -370,7 +384,7 @@ pub struct CreateContractParams {
     pub title: String,
     pub description: Option<String>,
     #[serde(default)]
-    pub definition_of_done: Vec<String>,
+    pub definition_of_done: Vec<DodItemInput>,
     #[serde(default)]
     pub tags: Vec<String>,
     #[serde(default)]
@@ -381,12 +395,7 @@ impl CreateContractParams {
     pub fn validate(&self) -> Result<(), DomainError> {
         validate_string_length("title", &self.title, MAX_TITLE_LEN)?;
         validate_optional_string_length("description", &self.description, MAX_LONG_TEXT_LEN)?;
-        validate_string_vec_items(
-            "definition_of_done",
-            &self.definition_of_done,
-            MAX_SHORT_TEXT_LEN,
-            MAX_ITEMS_COUNT,
-        )?;
+        validate_dod_inputs("definition_of_done", &self.definition_of_done)?;
         validate_string_vec_items("tags", &self.tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
         if let Some(ref meta) = self.metadata {
             validate_metadata(meta)?;
@@ -426,8 +435,8 @@ pub struct UpdateContractArrayParams {
     pub set_tags: Option<Vec<String>>,
     pub add_tags: Vec<String>,
     pub remove_tags: Vec<String>,
-    pub set_definition_of_done: Option<Vec<String>>,
-    pub add_definition_of_done: Vec<String>,
+    pub set_definition_of_done: Option<Vec<DodItemInput>>,
+    pub add_definition_of_done: Vec<DodItemInput>,
     pub remove_definition_of_done: Vec<String>,
 }
 
@@ -438,19 +447,9 @@ impl UpdateContractArrayParams {
         }
         validate_string_vec_items("add_tags", &self.add_tags, MAX_TAG_LEN, MAX_TAGS_COUNT)?;
         if let Some(ref dod) = self.set_definition_of_done {
-            validate_string_vec_items(
-                "set_definition_of_done",
-                dod,
-                MAX_SHORT_TEXT_LEN,
-                MAX_ITEMS_COUNT,
-            )?;
+            validate_dod_inputs("set_definition_of_done", dod)?;
         }
-        validate_string_vec_items(
-            "add_definition_of_done",
-            &self.add_definition_of_done,
-            MAX_SHORT_TEXT_LEN,
-            MAX_ITEMS_COUNT,
-        )?;
+        validate_dod_inputs("add_definition_of_done", &self.add_definition_of_done)?;
         Ok(())
     }
 }
@@ -555,7 +554,12 @@ pub trait ContractRepository: Send + Sync {
         filter: &ListContractNotesFilter,
     ) -> Result<crate::domain::pagination::ListPage<ContractNote>>;
 
-    async fn check_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract>;
+    async fn check_dod(
+        &self,
+        contract_id: ContractId,
+        index: usize,
+        verification_note: Option<String>,
+    ) -> Result<Contract>;
 
     async fn uncheck_dod(&self, contract_id: ContractId, index: usize) -> Result<Contract>;
 }
@@ -565,6 +569,16 @@ pub trait ContractRepository: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::task::VerificationType;
+    use crate::domain::validator::MAX_ITEMS_COUNT;
+
+    fn dod_input(content: &str) -> DodItemInput {
+        DodItemInput {
+            content: content.into(),
+            verification_type: VerificationType::Manual,
+            verification_method: None,
+        }
+    }
 
     fn make_contract(dod: Vec<DodItem>) -> Contract {
         Contract::new(
@@ -661,7 +675,9 @@ mod tests {
             DodItem::new("a".to_string(), false),
             DodItem::new("b".to_string(), false),
         ]);
-        let (c, events) = c.check_dod(1, "2026-01-02T00:00:00Z".to_string()).unwrap();
+        let (c, events) = c
+            .check_dod(1, None, "2026-01-02T00:00:00Z".to_string())
+            .unwrap();
         assert_eq!(events, vec![ContractEvent::DodChecked { index: 1 }]);
         assert!(c.definition_of_done()[0].checked());
         assert!(!c.definition_of_done()[1].checked());
@@ -671,13 +687,13 @@ mod tests {
     #[test]
     fn check_dod_index_zero_errors() {
         let c = make_contract(vec![DodItem::new("a".to_string(), false)]);
-        assert!(c.check_dod(0, "t".to_string()).is_err());
+        assert!(c.check_dod(0, None, "t".to_string()).is_err());
     }
 
     #[test]
     fn check_dod_out_of_range_errors() {
         let c = make_contract(vec![DodItem::new("a".to_string(), false)]);
-        assert!(c.check_dod(2, "t".to_string()).is_err());
+        assert!(c.check_dod(2, None, "t".to_string()).is_err());
     }
 
     #[test]
@@ -797,7 +813,7 @@ mod tests {
     fn array_update_set_dod_resets_checked() {
         let c = make_contract(vec![DodItem::new("old".to_string(), true)]);
         let params = UpdateContractArrayParams {
-            set_definition_of_done: Some(vec!["new1".to_string(), "new2".to_string()]),
+            set_definition_of_done: Some(vec![dod_input("new1"), dod_input("new2")]),
             ..Default::default()
         };
         let (c, events) = c.apply_array_update(&params, "2026-01-02T00:00:00Z".to_string());
@@ -842,7 +858,7 @@ mod tests {
         let p = CreateContractParams {
             title: "t".to_string(),
             description: Some("d".to_string()),
-            definition_of_done: vec!["a".to_string()],
+            definition_of_done: vec![dod_input("a")],
             tags: vec!["x".to_string()],
             metadata: Some(serde_json::json!({"k": "v"})),
         };
@@ -885,7 +901,9 @@ mod tests {
     #[test]
     fn update_array_params_validate_too_many_dod() {
         let p = UpdateContractArrayParams {
-            add_definition_of_done: (0..=MAX_ITEMS_COUNT).map(|i| format!("d{i}")).collect(),
+            add_definition_of_done: (0..=MAX_ITEMS_COUNT)
+                .map(|i| dod_input(&format!("d{i}")))
+                .collect(),
             ..Default::default()
         };
         assert!(p.validate().is_err());

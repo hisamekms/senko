@@ -52,9 +52,9 @@ use crate::domain::project::{
     UpdateProjectParams,
 };
 use crate::domain::task::{
-    AssigneeUserId, CompletionPolicy, CreateTaskParams, ListOrder, ListTaskDepsFilter,
-    ListTasksFilter, MetadataUpdate, Priority, Task, TaskId, TaskOrderBy, TaskStatus,
-    UpdateTaskArrayParams, UpdateTaskParams,
+    AssigneeUserId, CompletionPolicy, CreateTaskParams, DodItemInput, ListOrder,
+    ListTaskDepsFilter, ListTasksFilter, MetadataUpdate, Priority, Task, TaskId, TaskOrderBy,
+    TaskStatus, UpdateTaskArrayParams, UpdateTaskParams,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateApiKeyParams, CreateUserParams, ListSessionsFilter,
@@ -376,6 +376,7 @@ fn classify_error(e: anyhow::Error) -> ApiError {
             DomainError::InvalidTaskStatus { .. }
             | DomainError::InvalidPriority { .. }
             | DomainError::InvalidRole { .. }
+            | DomainError::InvalidVerificationType { .. }
             | DomainError::SelfDependency
             | DomainError::DependencyCycle { .. }
             | DomainError::DodIndexOutOfRange { .. }
@@ -739,9 +740,9 @@ struct EditTaskBody {
     add_tags: Vec<String>,
     #[serde(default)]
     remove_tags: Vec<String>,
-    set_definition_of_done: Option<Vec<String>>,
+    set_definition_of_done: Option<Vec<DodItemInput>>,
     #[serde(default)]
-    add_definition_of_done: Vec<String>,
+    add_definition_of_done: Vec<DodItemInput>,
     #[serde(default)]
     remove_definition_of_done: Vec<String>,
     set_in_scope: Option<Vec<String>>,
@@ -2117,6 +2118,16 @@ async fn set_deps(
     Ok(Json(TaskResponse::from_parts(task, assignee_user.as_ref())))
 }
 
+/// Optional body for DoD check endpoints. Older clients send no body at all,
+/// so handlers take `Option<Json<..>>`.
+#[derive(Default, Deserialize, ToSchema)]
+struct CheckDodBody {
+    /// Free-text record of how the item was actually verified
+    /// (e.g. the command that was run and its result).
+    #[serde(default)]
+    verification_note: Option<String>,
+}
+
 #[utoipa::path(
     post,
     path = "/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check",
@@ -2125,6 +2136,7 @@ async fn set_deps(
         ("id" = i64, Path),
         ("index" = u32, Path, description = "1-based DoD item index"),
     ),
+    request_body(content = Option<CheckDodBody>),
     responses(
         (status = 200, body = TaskResponse),
         (status = 400, body = ErrorBody),
@@ -2139,11 +2151,13 @@ async fn check_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id, index)): Path<(ProjectId, TaskId, usize)>,
+    body: Option<Json<CheckDodBody>>,
 ) -> Result<Json<TaskResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let note = body.and_then(|Json(b)| b.verification_note);
     let task = state
         .task_service
-        .check_dod(project_id, id, index)
+        .check_dod(project_id, id, index, note)
         .await
         .map_err(classify_error)?;
     let assignee_user = resolve_assignee(&state, &task).await;
@@ -2191,7 +2205,7 @@ struct CreateContractBody {
     #[serde(default)]
     description: Option<String>,
     #[serde(default)]
-    definition_of_done: Vec<String>,
+    definition_of_done: Vec<DodItemInput>,
     #[serde(default)]
     tags: Vec<String>,
     #[serde(default)]
@@ -2216,9 +2230,9 @@ struct EditContractBody {
     add_tags: Vec<String>,
     #[serde(default)]
     remove_tags: Vec<String>,
-    set_definition_of_done: Option<Vec<String>>,
+    set_definition_of_done: Option<Vec<DodItemInput>>,
     #[serde(default)]
-    add_definition_of_done: Vec<String>,
+    add_definition_of_done: Vec<DodItemInput>,
     #[serde(default)]
     remove_definition_of_done: Vec<String>,
 }
@@ -2444,6 +2458,7 @@ async fn delete_contract(
         ("id" = i64, Path),
         ("index" = u32, Path, description = "1-based DoD item index"),
     ),
+    request_body(content = Option<CheckDodBody>),
     responses(
         (status = 200, body = ContractResponse),
         (status = 400, body = ErrorBody),
@@ -2458,11 +2473,13 @@ async fn check_contract_dod(
     State(state): State<AppState>,
     auth: OptionalAuthUser,
     Path((project_id, id, index)): Path<(ProjectId, ContractId, usize)>,
+    body: Option<Json<CheckDodBody>>,
 ) -> Result<Json<ContractResponse>, ApiError> {
     check_project_permission(&state, &auth, project_id, Permission::Edit).await?;
+    let note = body.and_then(|Json(b)| b.verification_note);
     let contract = state
         .contract_service
-        .check_dod(project_id, id, index)
+        .check_dod(project_id, id, index, note)
         .await
         .map_err(classify_error)?;
     Ok(Json(ContractResponse::from(contract)))

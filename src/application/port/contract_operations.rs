@@ -49,6 +49,7 @@ pub trait ContractOperations: Send + Sync {
         project_id: ProjectId,
         contract_id: ContractId,
         index: usize,
+        verification_note: Option<String>,
     ) -> Result<Contract>;
     async fn uncheck_dod(
         &self,

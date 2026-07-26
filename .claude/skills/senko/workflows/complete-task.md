@@ -10,10 +10,10 @@ senko task get <id>
 
 1. Verify the task is in `in_progress` status. If not, inform the user and stop.
 2. Check if any DoD items are unchecked (`"checked": false` in JSON, or `[ ]` in text output). If unchecked items exist:
-   - Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items
+   - Launch the `dod-verifier` agent (via Agent tool) with the task ID and unchecked DoD items — include each item's `verification_type` and `verification_method` so the agent knows whether it must actually run something (`execution`) or may verify by inspection (`static`)
    - Process the subagent's results for each item:
-     - **VERIFIED**: `senko task dod check <id> <index>`
-     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved
+     - **VERIFIED**: `senko task dod check <id> <index> --note "<how it was verified>"` — pass the agent's Note (for `execution` items: the exact command run and its result) so the audit trail shows the item was actually executed, not just statically inspected
+     - **NEEDS_USER_APPROVAL**: Use `AskUserQuestion` to confirm with the user, then check if approved (`--note "approved by user"`)
      - **NOT_ACHIEVED**: Inform the user that the item is not yet achieved
    - All DoD items must be checked before proceeding to complete
 3. Check the workflow configuration (`senko config`):

@@ -260,6 +260,7 @@ pub enum TaskAction {
         /// Priority (p0-p3)
         #[arg(long)]
         priority: Option<String>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long)]
         definition_of_done: Vec<String>,
         #[arg(long)]
@@ -427,6 +428,7 @@ pub enum TaskAction {
         // Array set
         #[arg(long, num_args = 0..)]
         set_tags: Option<Vec<String>>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long, num_args = 0..)]
         set_definition_of_done: Option<Vec<String>>,
         #[arg(long, num_args = 0..)]
@@ -436,6 +438,7 @@ pub enum TaskAction {
         // Array add
         #[arg(long)]
         add_tag: Vec<String>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long)]
         add_definition_of_done: Vec<String>,
         #[arg(long)]
@@ -445,6 +448,7 @@ pub enum TaskAction {
         // Array remove
         #[arg(long)]
         remove_tag: Vec<String>,
+        /// Remove DoD items by content match
         #[arg(long)]
         remove_definition_of_done: Vec<String>,
         #[arg(long)]
@@ -488,6 +492,7 @@ pub enum ContractAction {
         title: Option<String>,
         #[arg(long)]
         description: Option<String>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long)]
         definition_of_done: Vec<String>,
         #[arg(long)]
@@ -546,14 +551,17 @@ pub enum ContractAction {
         clear_metadata: bool,
         #[arg(long, num_args = 0..)]
         set_tags: Option<Vec<String>>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long, num_args = 0..)]
         set_definition_of_done: Option<Vec<String>>,
         #[arg(long)]
         add_tag: Vec<String>,
+        /// DoD item: "[static|execution|manual] <content>[ :: <verification method>]" or a JSON object
         #[arg(long)]
         add_definition_of_done: Vec<String>,
         #[arg(long)]
         remove_tag: Vec<String>,
+        /// Remove DoD items by content match
         #[arg(long)]
         remove_definition_of_done: Vec<String>,
     },
@@ -582,6 +590,9 @@ pub enum ContractDodCommand {
         contract_id: ContractId,
         /// DoD item index (1-based)
         index: usize,
+        /// Record how the item was actually verified (e.g. command run and its result)
+        #[arg(long)]
+        note: Option<String>,
     },
     /// Unmark a DoD item
     Uncheck {
@@ -728,6 +739,9 @@ pub enum TaskDodCommand {
         task_id: TaskId,
         /// DoD item index (1-based)
         index: usize,
+        /// Record how the item was actually verified (e.g. command run and its result)
+        #[arg(long)]
+        note: Option<String>,
     },
     /// Unmark a DoD item
     Uncheck {
@@ -998,7 +1012,7 @@ pub const CONFIG_TEMPLATE: &str = r#"# senko configuration
 # create = true       # false reuses an existing worktree/branch (errors if absent)
 
 # [workflow.task_add]
-# default_dod = ["Write unit tests", "Update documentation"]
+# default_dod = ["[execution] Unit tests pass :: run the test suite", "[static] Documentation updated"]
 # default_tags = ["backend"]
 # default_priority = "p2"
 # instructions = ["Include acceptance criteria in the description"]
@@ -1995,11 +2009,17 @@ mod tests {
             Command::Task {
                 action:
                     TaskAction::Dod {
-                        command: TaskDodCommand::Check { task_id, index },
+                        command:
+                            TaskDodCommand::Check {
+                                task_id,
+                                index,
+                                note,
+                            },
                     },
             } => {
                 assert_eq!(task_id, TaskId(7));
                 assert_eq!(index, 2);
+                assert_eq!(note, None);
             }
             _ => panic!("expected Dod Check"),
         }

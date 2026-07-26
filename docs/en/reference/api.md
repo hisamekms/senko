@@ -132,8 +132,8 @@ Clients can use it to check server compatibility.
 | POST | `/api/v1/projects/{project_id}/tasks/{id}/deps` | Add a dependency |
 | PUT | `/api/v1/projects/{project_id}/tasks/{id}/deps` | Replace dependencies |
 | DELETE | `/api/v1/projects/{project_id}/tasks/{id}/deps/{dep_id}` | Remove a dependency |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check` | DoD check (1-based index) |
-| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/check` | DoD check (1-based index); optional body `{"verification_note": "..."}` records how it was verified |
+| POST | `/api/v1/projects/{project_id}/tasks/{id}/dod/{index}/uncheck` | DoD uncheck (also clears verification_note) |
 
 ### Contracts
 
@@ -144,8 +144,8 @@ Clients can use it to check server compatibility.
 | GET | `/api/v1/projects/{project_id}/contracts/{id}` | Get |
 | PUT | `/api/v1/projects/{project_id}/contracts/{id}` | Update |
 | DELETE | `/api/v1/projects/{project_id}/contracts/{id}` | Delete |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check` | DoD check (1-based index) |
-| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck` | DoD uncheck |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/check` | DoD check (1-based index); optional body `{"verification_note": "..."}` records how it was verified |
+| POST | `/api/v1/projects/{project_id}/contracts/{id}/dod/{index}/uncheck` | DoD uncheck (also clears verification_note) |
 | GET | `/api/v1/projects/{project_id}/contracts/{id}/notes` | List notes |
 | POST | `/api/v1/projects/{project_id}/contracts/{id}/notes` | Add a note |
 
@@ -192,7 +192,10 @@ Content-Type: application/json
   "title": "Implement webhook",
   "background": "External integration",
   "priority": "P1",
-  "definition_of_done": ["Tests pass", "Docs updated"],
+  "definition_of_done": [
+    {"content": "Tests pass", "verification_type": "execution", "verification_method": "run the test suite"},
+    {"content": "Docs updated", "verification_type": "static"}
+  ],
   "in_scope": ["endpoint"],
   "out_of_scope": ["GraphQL"],
   "tags": ["backend"],

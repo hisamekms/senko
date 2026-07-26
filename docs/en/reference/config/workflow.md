@@ -119,7 +119,7 @@ branch_template = "senko/{{id}}-{{slug}}"
 merge_via = "pr"
 
 [workflow.task_add]
-default_dod = ["Unit tests pass", "Docs updated"]
+default_dod = ["[execution] Unit tests pass :: run the test suite", "[static] Docs updated"]
 default_priority = "p2"
 
 [workflow.plan]

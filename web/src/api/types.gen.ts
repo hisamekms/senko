@@ -644,6 +644,17 @@ export interface components {
         CancelBody: {
             reason?: string | null;
         };
+        /**
+         * @description Optional body for DoD check endpoints. Older clients send no body at all,
+         *     so handlers take `Option<Json<..>>`.
+         */
+        CheckDodBody: {
+            /**
+             * @description Free-text record of how the item was actually verified
+             *     (e.g. the command that was run and its result).
+             */
+            verification_note?: string | null;
+        };
         CompleteBody: {
             skip_pr_check?: boolean;
         };
@@ -691,7 +702,7 @@ export interface components {
             name?: string | null;
         };
         CreateContractBody: {
-            definition_of_done?: string[];
+            definition_of_done?: components["schemas"]["DodItemInput"][];
             description?: string | null;
             metadata?: Record<string, never> | null;
             tags?: string[];
@@ -712,7 +723,7 @@ export interface components {
             background?: string | null;
             branch?: string | null;
             contract_id?: null | components["schemas"]["ContractId"];
-            definition_of_done?: string[];
+            definition_of_done?: components["schemas"]["DodItemInput"][];
             dependencies?: components["schemas"]["TaskId"][];
             description?: string | null;
             in_scope?: string[];
@@ -732,12 +743,26 @@ export interface components {
             sub?: string | null;
             username: components["schemas"]["Username"];
         };
+        /**
+         * @description Input shape for registering a DoD item (create/set/add). Unlike a stored
+         *     [`DodItem`], the verification type is mandatory and `unspecified` is
+         *     rejected — that value exists only for items migrated from before
+         *     verification types were introduced.
+         */
+        DodItemInput: {
+            content: string;
+            verification_method?: string | null;
+            verification_type: components["schemas"]["VerificationType"];
+        };
         DodItemResponse: {
             checked: boolean;
             content: string;
+            verification_method?: string | null;
+            verification_note?: string | null;
+            verification_type: string;
         };
         EditContractBody: {
-            add_definition_of_done?: string[];
+            add_definition_of_done?: components["schemas"]["DodItemInput"][];
             add_tags?: string[];
             clear_description?: boolean;
             clear_metadata?: boolean;
@@ -746,12 +771,12 @@ export interface components {
             remove_definition_of_done?: string[];
             remove_tags?: string[];
             replace_metadata?: Record<string, never> | null;
-            set_definition_of_done?: string[] | null;
+            set_definition_of_done?: components["schemas"]["DodItemInput"][] | null;
             set_tags?: string[] | null;
             title?: string | null;
         };
         EditTaskBody: {
-            add_definition_of_done?: string[];
+            add_definition_of_done?: components["schemas"]["DodItemInput"][];
             add_in_scope?: string[];
             add_out_of_scope?: string[];
             add_tags?: string[];
@@ -777,7 +802,7 @@ export interface components {
             remove_out_of_scope?: string[];
             remove_tags?: string[];
             replace_metadata?: Record<string, never> | null;
-            set_definition_of_done?: string[] | null;
+            set_definition_of_done?: components["schemas"]["DodItemInput"][] | null;
             set_in_scope?: string[] | null;
             set_out_of_scope?: string[] | null;
             set_tags?: string[] | null;
@@ -1017,6 +1042,11 @@ export interface components {
          *     to surface as errors.
          */
         Username: string;
+        /**
+         * @description How a DoD item must be verified before it can be checked.
+         * @enum {string}
+         */
+        VerificationType: "static" | "execution" | "manual" | "unspecified";
     };
     responses: never;
     parameters: never;
@@ -1319,7 +1349,10 @@ export interface operations {
                 completed?: boolean;
                 limit?: number;
                 after?: string;
-                /** @description Sort key. One of `id` (default), `updated_at`. */
+                /**
+                 * @description Sort key. One of `id` (default), `updated_at`.
+                 *     Tie-breaker is `id` in the same direction as the primary key.
+                 */
                 order_by?: string;
                 /** @description Sort direction. One of `asc` (default), `desc`. */
                 order?: string;
@@ -1575,7 +1608,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["CheckDodBody"];
+            };
+        };
         responses: {
             200: {
                 headers: {
@@ -2213,7 +2250,10 @@ export interface operations {
                 title?: string;
                 limit?: number;
                 after?: string;
-                /** @description Sort key. One of `id` (default), `updated_at`, `priority`. */
+                /**
+                 * @description Sort key. One of `id` (default), `updated_at`, `priority`.
+                 *     Tie-breaker is `id` in the same direction as the primary key.
+                 */
                 order_by?: string;
                 /** @description Sort direction. One of `asc` (default), `desc`. */
                 order?: string;
@@ -2887,7 +2927,11 @@ export interface operations {
             };
             cookie?: never;
         };
-        requestBody?: never;
+        requestBody?: {
+            content: {
+                "application/json": null | components["schemas"]["CheckDodBody"];
+            };
+        };
         responses: {
             200: {
                 headers: {

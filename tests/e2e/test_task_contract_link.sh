@@ -12,7 +12,7 @@ trap cleanup_test_env EXIT
 echo "--- Test: Task-Contract Link ---"
 
 # Setup: create a contract to link against
-CID="$(run_lf --output json contract add --title "Link Target" --definition-of-done "x" | jq -r '.id')"
+CID="$(run_lf --output json contract add --title "Link Target" --definition-of-done "[manual] x" | jq -r '.id')"
 
 # 1. edit --contract links an existing task
 echo "[1] edit --contract sets contract_id"

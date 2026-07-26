@@ -35,15 +35,63 @@ use crate::domain::project::{
     CreateProjectParams, ListProjectMembersFilter, ListProjectsFilter, ProjectId,
 };
 use crate::domain::task::{
-    AssigneeUserId, CreateTaskParams, ListOrder, ListTaskDepsFilter, ListTasksFilter,
-    MetadataUpdate, Priority, TaskId, TaskOrderBy, TaskStatus, UpdateTaskArrayParams,
-    UpdateTaskParams,
+    AssigneeUserId, CreateTaskParams, DodItemInput, ListOrder, ListTaskDepsFilter,
+    ListTasksFilter, MetadataUpdate, Priority, TaskId, TaskOrderBy, TaskStatus,
+    UpdateTaskArrayParams, UpdateTaskParams, VerificationType,
 };
 use crate::domain::user::{
     AddProjectMemberParams, CreateUserParams, ListUsersFilter, UpdateUserParams, UserId,
 };
 use crate::infra::config::{CliOverrides, Config};
 use crate::presentation::dto::{ContractNoteResponse, ContractResponse};
+
+/// Parse a `--definition-of-done` CLI value into a structured DoD input.
+///
+/// Two formats are accepted:
+/// - Prefix format: `[static|execution|manual] <content>`, optionally followed
+///   by ` :: <verification method>`.
+/// - A JSON object: `{"content": "...", "verification_type": "...", "verification_method": "..."}`.
+pub(crate) fn parse_dod_arg(s: &str) -> Result<DodItemInput> {
+    let trimmed = s.trim();
+    if trimmed.starts_with('{') {
+        return serde_json::from_str::<DodItemInput>(trimmed).with_context(|| {
+            format!("invalid JSON object for definition of done item: \"{trimmed}\"")
+        });
+    }
+    let Some(rest) = trimmed.strip_prefix('[') else {
+        bail!(
+            "definition of done item must declare a verification type: \"[static|execution|manual] <content>\" (optionally \" :: <verification method>\") or a JSON object, got: \"{trimmed}\""
+        );
+    };
+    let Some((tag, rest)) = rest.split_once(']') else {
+        bail!("unclosed verification type tag in definition of done item: \"{trimmed}\"");
+    };
+    let verification_type = tag.trim().parse::<VerificationType>()?;
+    let (content, method) = match rest.split_once("::") {
+        Some((c, m)) => (c.trim(), Some(m.trim())),
+        None => (rest.trim(), None),
+    };
+    if content.is_empty() {
+        bail!("empty content in definition of done item: \"{trimmed}\"");
+    }
+    Ok(DodItemInput {
+        content: content.to_string(),
+        verification_type,
+        verification_method: method.filter(|m| !m.is_empty()).map(str::to_string),
+    })
+}
+
+fn parse_dod_args(items: &[String]) -> Result<Vec<DodItemInput>> {
+    items.iter().map(|s| parse_dod_arg(s)).collect()
+}
+
+/// One-line summary of a DoD input for dry-run output.
+fn dod_input_summary(item: &DodItemInput) -> String {
+    match item.verification_method {
+        Some(ref m) => format!("[{}] {} :: {}", item.verification_type, item.content, m),
+        None => format!("[{}] {}", item.verification_type, item.content),
+    }
+}
 
 fn build_cli_overrides(cli: &Cli) -> CliOverrides {
     CliOverrides {
@@ -268,7 +316,7 @@ pub async fn cmd_add(
             background,
             description,
             priority,
-            definition_of_done,
+            definition_of_done: parse_dod_args(&definition_of_done)?,
             in_scope,
             out_of_scope,
             branch,
@@ -319,10 +367,12 @@ pub async fn cmd_add(
             operations.push(format!("Set dependencies: {}", deps.join(", ")));
         }
         if !params.definition_of_done.is_empty() {
-            operations.push(format!(
-                "Set definition of done: {}",
-                params.definition_of_done.join(", ")
-            ));
+            let items: Vec<String> = params
+                .definition_of_done
+                .iter()
+                .map(dod_input_summary)
+                .collect();
+            operations.push(format!("Set definition of done: {}", items.join(", ")));
         }
         if !params.in_scope.is_empty() {
             operations.push(format!("Set in scope: {}", params.in_scope.join(", ")));
@@ -544,10 +594,7 @@ pub async fn cmd_get(cli: &Cli, task_id: TaskId) -> Result<()> {
             }
             if !task.definition_of_done().is_empty() {
                 println!("DoD:");
-                for item in task.definition_of_done() {
-                    let mark = if item.checked() { "x" } else { " " };
-                    println!("  [{mark}] {}", item.content());
-                }
+                print_dod_items(task.definition_of_done());
             }
             if !task.in_scope().is_empty() {
                 println!("In scope:");
@@ -1731,8 +1778,11 @@ pub async fn cmd_edit(
         set_tags: set_tags.clone(),
         add_tags: add_tag.to_vec(),
         remove_tags: remove_tag.to_vec(),
-        set_definition_of_done: set_definition_of_done.clone(),
-        add_definition_of_done: add_definition_of_done.to_vec(),
+        set_definition_of_done: set_definition_of_done
+            .as_ref()
+            .map(|v| parse_dod_args(v))
+            .transpose()?,
+        add_definition_of_done: parse_dod_args(add_definition_of_done)?,
         remove_definition_of_done: remove_definition_of_done.to_vec(),
         set_in_scope: set_in_scope.clone(),
         add_in_scope: add_in_scope.to_vec(),
@@ -1790,10 +1840,17 @@ pub async fn cmd_dod(cli: &Cli, command: &TaskDodCommand) -> Result<()> {
     let project_id = resolve_project_id(&*project_ops, &config).await?;
 
     match command {
-        TaskDodCommand::Check { task_id, index } => {
+        TaskDodCommand::Check {
+            task_id,
+            index,
+            note,
+        } => {
             let (task_id, index) = (*task_id, *index);
             if cli.dry_run {
-                let operations = vec![format!("Check DoD item #{index} of task #{task_id}")];
+                let mut operations = vec![format!("Check DoD item #{index} of task #{task_id}")];
+                if let Some(n) = note {
+                    operations.push(format!("Record verification note: \"{n}\""));
+                }
                 return print_dry_run(
                     &cli.output,
                     &DryRunOperation {
@@ -1802,7 +1859,9 @@ pub async fn cmd_dod(cli: &Cli, command: &TaskDodCommand) -> Result<()> {
                     },
                 );
             }
-            let task = task_ops.check_dod(project_id, task_id, index).await?;
+            let task = task_ops
+                .check_dod(project_id, task_id, index, note.clone())
+                .await?;
             match cli.output {
                 OutputFormat::Json => println!("{}", serde_json::to_string_pretty(&task)?),
                 OutputFormat::Text => {
@@ -1839,7 +1898,17 @@ pub async fn cmd_dod(cli: &Cli, command: &TaskDodCommand) -> Result<()> {
 fn print_dod_items(items: &[crate::domain::task::DodItem]) {
     for item in items {
         let mark = if item.checked() { "x" } else { " " };
-        println!("  [{mark}] {}", item.content());
+        println!(
+            "  [{mark}] {} [{}]",
+            item.content(),
+            item.verification_type()
+        );
+        if let Some(method) = item.verification_method() {
+            println!("        verify: {method}");
+        }
+        if let Some(note) = item.verification_note() {
+            println!("        verified: {note}");
+        }
     }
 }
 
@@ -2873,7 +2942,18 @@ fn print_contract_text(c: &crate::domain::contract::Contract) {
 fn print_dod_items_contract(items: &[crate::domain::task::DodItem]) {
     for (i, item) in items.iter().enumerate() {
         let mark = if item.checked() { "x" } else { " " };
-        println!("    {}. [{mark}] {}", i + 1, item.content());
+        println!(
+            "    {}. [{mark}] {} [{}]",
+            i + 1,
+            item.content(),
+            item.verification_type()
+        );
+        if let Some(method) = item.verification_method() {
+            println!("          verify: {method}");
+        }
+        if let Some(note) = item.verification_note() {
+            println!("          verified: {note}");
+        }
     }
 }
 
@@ -2920,7 +3000,7 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 CreateContractParams {
                     title,
                     description: description.clone(),
-                    definition_of_done: definition_of_done.clone(),
+                    definition_of_done: parse_dod_args(definition_of_done)?,
                     tags: tag.clone(),
                     metadata: metadata_val,
                 }
@@ -3142,8 +3222,11 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
                 set_tags: set_tags.clone(),
                 add_tags: add_tag.clone(),
                 remove_tags: remove_tag.clone(),
-                set_definition_of_done: set_definition_of_done.clone(),
-                add_definition_of_done: add_definition_of_done.clone(),
+                set_definition_of_done: set_definition_of_done
+                    .as_ref()
+                    .map(|v| parse_dod_args(v))
+                    .transpose()?,
+                add_definition_of_done: parse_dod_args(add_definition_of_done)?,
                 remove_definition_of_done: remove_definition_of_done.clone(),
             };
 
@@ -3187,18 +3270,28 @@ pub async fn cmd_contract(cli: &Cli, action: &ContractAction) -> Result<()> {
             }
         }
         ContractAction::Dod { command } => match command {
-            ContractDodCommand::Check { contract_id, index } => {
+            ContractDodCommand::Check {
+                contract_id,
+                index,
+                note,
+            } => {
                 let (cid, idx) = (*contract_id, *index);
                 if cli.dry_run {
+                    let mut operations = vec![format!("Check DoD item #{idx} of contract #{cid}")];
+                    if let Some(n) = note {
+                        operations.push(format!("Record verification note: \"{n}\""));
+                    }
                     return print_dry_run(
                         &cli.output,
                         &DryRunOperation {
                             command: "contract dod check".into(),
-                            operations: vec![format!("Check DoD item #{idx} of contract #{cid}")],
+                            operations,
                         },
                     );
                 }
-                let contract = contract_ops.check_dod(project_id, cid, idx).await?;
+                let contract = contract_ops
+                    .check_dod(project_id, cid, idx, note.clone())
+                    .await?;
                 match cli.output {
                     OutputFormat::Json => {
                         let response = ContractResponse::from(contract);
@@ -3396,7 +3489,7 @@ mod tests {
             Some("bg".to_string()),
             None,
             Some("p1".to_string()),
-            vec!["done".to_string()],
+            vec!["[manual] done".to_string()],
             vec![],
             vec![],
             vec!["rust".to_string()],

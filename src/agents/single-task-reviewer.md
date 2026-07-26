@@ -109,6 +109,12 @@ A good Task DoD should be:
 - More precise than vague wording like “investigate”, “handle”, “fix”, or “support”
 - Aligned with the original user intent and known constraints
 
+Each DoD item also carries a `verification_type` (`static` / `execution` / `manual`) and optionally a `verification_method`. Flag items where:
+
+- The type understates what the item really claims — an item asserting runtime behavior (“works”, “passes”, “responds”) marked `static` instead of `execution`
+- An `execution` item lacks a `verification_method` even though a concrete command exists to verify it
+- A `manual` item could actually be verified mechanically (should be `static` or `execution`)
+
 ### 4. Check scope
 
 Review `in_scope` and `out_of_scope`.

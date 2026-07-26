@@ -34,7 +34,7 @@ senko task cancel <id> --reason "Reason text"  # any active → canceled
 
 # Edit task fields (no status changes — use dedicated commands above)
 senko task edit <id> --title "New Title" --add-tag backend
-senko task edit <id> --add-definition-of-done "Write unit tests"
+senko task edit <id> --add-definition-of-done "[execution] Unit tests pass :: run mise test"
 senko task edit <id> --pr-url "https://github.com/org/repo/pull/42"
 senko task edit <id> --plan-file /path/to/plan.md  # read plan from file
 
@@ -44,8 +44,8 @@ senko task edit <id> --replace-metadata '{"key":"val"}'  # replace entire metada
 senko task edit <id> --clear-metadata                    # remove all metadata
 
 # Definition of Done (DoD) check/uncheck (1-based index)
-senko task dod check <task_id> <index>      # mark DoD item as done
-senko task dod uncheck <task_id> <index>    # unmark DoD item
+senko task dod check <task_id> <index> [--note "how it was verified"]  # mark DoD item as done
+senko task dod uncheck <task_id> <index>    # unmark DoD item (clears the recorded note)
 
 # Dependencies
 senko task deps add <task_id> --on <dep_id>
@@ -59,15 +59,15 @@ senko contract add --from-json                       # read JSON from stdin
 senko contract add --from-json-file <path>
 senko contract list [--tag <tag>] [--limit 20] [--after <cursor>]  # { items, next_cursor }
 senko contract get <id>
-senko contract edit <id> --title "New" --add-tag demo --add-definition-of-done "Verify X"
+senko contract edit <id> --title "New" --add-tag demo --add-definition-of-done "[static] Verify X"
 senko contract edit <id> --description "..." | --clear-description
 senko contract edit <id> --metadata '{"k":"v"}' | --replace-metadata '{...}' | --clear-metadata
 senko contract edit <id> --set-tags t1 t2 | --add-tag t | --remove-tag t
-senko contract edit <id> --set-definition-of-done "a" "b" | --add-definition-of-done "c" | --remove-definition-of-done "a"
+senko contract edit <id> --set-definition-of-done "[static] a" "[manual] b" | --add-definition-of-done "[execution] c :: how to run" | --remove-definition-of-done "a"
 senko contract delete <id>
 
 # Contract DoD (1-based index, same semantics as task DoD)
-senko contract dod check <contract_id> <index>
+senko contract dod check <contract_id> <index> [--note "how it was verified"]
 senko contract dod uncheck <contract_id> <index>
 
 # Contract notes (append-only, timestamped by server)
@@ -102,6 +102,7 @@ senko config --init                    # generate template config.toml
 - `--output text|json` and `--dry-run` are **global flags** — place them before the subcommand: `senko --output text task list`, `senko --dry-run task publish 1`
 - `--dry-run` shows what would happen without actually executing the command. Available for all state-changing commands (`task add`, `task edit`, `task publish`, `task start`, `task resume`, `task complete`, `task cancel`, `task next`, `task deps add/remove/set`, `task dod check/uncheck`). Read-only commands (`task list`, `task get`, `task deps list`) ignore it.
 - **DoD items have a checked state.** `task complete` will fail if any DoD items are unchecked. Use `task dod check <task_id> <index>` (1-based index) to mark items before completing. Tasks with no DoD items can complete freely.
+- **DoD items declare a verification type.** `--definition-of-done` (and `--set/--add-definition-of-done`) values must use the prefix format `"[static|execution|manual] <content>"`, optionally followed by `" :: <verification method>"` — or be a JSON object `{"content": "...", "verification_type": "...", "verification_method": "..."}`. Plain strings without a type tag are rejected. `unspecified` exists only on items migrated from older versions and cannot be set on new items. When checking an `execution` item, record how it was actually run with `dod check --note "..."`.
 - **Status transitions use dedicated commands**, not `task edit --status`:
   - `task publish`: draft → todo
   - `task start`: todo → in_progress

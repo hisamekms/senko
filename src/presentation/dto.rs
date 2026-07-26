@@ -63,6 +63,9 @@ impl From<MetadataField> for MetadataFieldResponse {
 pub struct DodItemResponse {
     content: String,
     checked: bool,
+    verification_type: String,
+    verification_method: Option<String>,
+    verification_note: Option<String>,
 }
 
 impl From<&DodItem> for DodItemResponse {
@@ -70,6 +73,9 @@ impl From<&DodItem> for DodItemResponse {
         Self {
             content: d.content().to_owned(),
             checked: d.checked(),
+            verification_type: d.verification_type().to_string(),
+            verification_method: d.verification_method().map(|s| s.to_owned()),
+            verification_note: d.verification_note().map(|s| s.to_owned()),
         }
     }
 }
