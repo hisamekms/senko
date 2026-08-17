@@ -171,6 +171,13 @@ impl UserOperations for UserService {
     /// Get a user by sub, creating them if they don't exist. When a creation
     /// happens, returns `[UserEvent::Created { source }]`; for an existing
     /// user the event vec is empty.
+    ///
+    /// When no user matches `sub` but one matches `username` or `email` (a
+    /// pre-registered user, or one provisioned under a previous IdP whose
+    /// subject changed), that user is linked to the incoming `sub` instead of
+    /// attempting an INSERT that would fail the username/email unique
+    /// constraints. Returns `[UserEvent::Updated { changed_fields: ["sub"] }]`
+    /// in that case.
     async fn get_or_create_user(
         &self,
         sub: &str,
@@ -179,20 +186,51 @@ impl UserOperations for UserService {
         email: Option<&str>,
         source: UserCreationSource,
     ) -> Result<(User, Vec<UserEvent>)> {
-        match self.backend.get_user_by_sub(sub).await {
-            Ok(user) => Ok((user, vec![])),
-            Err(_) => {
-                let params = CreateUserParams {
-                    username: username.clone(),
-                    sub: Some(sub.to_string()),
-                    display_name: display_name.map(String::from),
-                    email: email.map(String::from),
-                };
-                let user = self.backend.create_user(&params).await?;
+        if let Ok(user) = self.backend.get_user_by_sub(sub).await {
+            return Ok((user, vec![]));
+        }
+
+        let existing = match self.backend.get_user_by_username(username).await {
+            Ok(user) => Some(user),
+            Err(_) => match email {
+                Some(e) => self.backend.get_user_by_email(e).await.ok(),
+                None => None,
+            },
+        };
+        if let Some(user) = existing {
+            tracing::info!(
+                user_id = user.id().0,
+                username = %user.username(),
+                old_sub = user.sub(),
+                new_sub = sub,
+                "linking existing user to new IdP subject",
+            );
+            let user = self.backend.update_user_sub(user.id(), sub).await?;
+            let events = vec![UserEvent::Updated {
+                changed_fields: vec!["sub".to_string()],
+            }];
+            emit_user_events(user.id(), &events);
+            return Ok((user, events));
+        }
+
+        let params = CreateUserParams {
+            username: username.clone(),
+            sub: Some(sub.to_string()),
+            display_name: display_name.map(String::from),
+            email: email.map(String::from),
+        };
+        match self.backend.create_user(&params).await {
+            Ok(user) => {
                 let events = vec![UserEvent::Created { source }];
                 emit_user_events(user.id(), &events);
                 Ok((user, events))
             }
+            // A concurrent first login can create the row between our lookup
+            // and the INSERT; retry the sub lookup before surfacing the error.
+            Err(create_err) => match self.backend.get_user_by_sub(sub).await {
+                Ok(user) => Ok((user, vec![])),
+                Err(_) => Err(create_err),
+            },
         }
     }
 
@@ -595,6 +633,97 @@ mod tests {
             events,
             vec![UserEvent::Created {
                 source: UserCreationSource::TrustedHeadersProvisioning
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_links_preregistered_user_by_username() {
+        let svc = new_service();
+        // Pre-registered without an explicit sub: `create_user` stores
+        // sub = username, so the IdP-issued sub won't match on first login.
+        let (created, _) = svc
+            .create_user(
+                &CreateUserParams {
+                    username: Username("kate@example.com".to_string()),
+                    sub: None,
+                    display_name: None,
+                    email: Some("kate@example.com".to_string()),
+                },
+                UserCreationSource::Manual,
+            )
+            .await
+            .unwrap();
+
+        let (linked, events) = svc
+            .get_or_create_user(
+                "idp-sub-kate",
+                created.username(),
+                None,
+                Some("kate@example.com"),
+                UserCreationSource::TrustedHeadersProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(linked.id(), created.id());
+        assert_eq!(linked.sub(), "idp-sub-kate");
+        assert_eq!(
+            events,
+            vec![UserEvent::Updated {
+                changed_fields: vec!["sub".to_string()]
+            }]
+        );
+
+        // Subsequent logins resolve by sub with no events.
+        let (again, events) = svc
+            .get_or_create_user(
+                "idp-sub-kate",
+                created.username(),
+                None,
+                Some("kate@example.com"),
+                UserCreationSource::TrustedHeadersProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(again.id(), created.id());
+        assert!(events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn get_or_create_user_links_existing_user_by_email() {
+        let svc = new_service();
+        let (created, _) = svc
+            .create_user(
+                &CreateUserParams {
+                    username: Username("leo".to_string()),
+                    sub: Some("old-sub-leo".to_string()),
+                    display_name: None,
+                    email: Some("leo@example.com".to_string()),
+                },
+                UserCreationSource::Manual,
+            )
+            .await
+            .unwrap();
+
+        // Username from the new IdP differs, but the email matches the
+        // existing row (which has a UNIQUE constraint) — link, don't INSERT.
+        let (linked, events) = svc
+            .get_or_create_user(
+                "new-sub-leo",
+                &Username("leo.new".to_string()),
+                None,
+                Some("leo@example.com"),
+                UserCreationSource::OidcProvisioning,
+            )
+            .await
+            .unwrap();
+        assert_eq!(linked.id(), created.id());
+        assert_eq!(linked.sub(), "new-sub-leo");
+        assert_eq!(linked.username(), "leo");
+        assert_eq!(
+            events,
+            vec![UserEvent::Updated {
+                changed_fields: vec!["sub".to_string()]
             }]
         );
     }
