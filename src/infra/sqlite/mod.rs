@@ -816,6 +816,39 @@ fn get_user_by_sub(conn: &Connection, sub: &str) -> Result<User> {
     ))
 }
 
+fn get_user_by_email(conn: &Connection, email: &str) -> Result<User> {
+    let (id, username, sub, display_name, created_at): (
+        UserId,
+        Username,
+        String,
+        Option<String>,
+        String,
+    ) = conn
+        .query_row(
+            "SELECT id, username, sub, display_name, created_at FROM users WHERE email = ?1",
+            rusqlite::params![email],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
+        )
+        .optional()?
+        .ok_or(DomainError::UserNotFound)?;
+    Ok(User::new(
+        id,
+        username,
+        sub,
+        display_name,
+        Some(email.to_string()),
+        created_at,
+    ))
+}
+
 fn list_users(conn: &Connection, filter: &ListUsersFilter) -> Result<ListPage<User>> {
     let mut sql = String::from(
         "SELECT id, username, sub, display_name, email, created_at FROM users WHERE 1=1",
@@ -865,6 +898,17 @@ fn update_user(conn: &Connection, id: UserId, params: &UpdateUserParams) -> Resu
         )?;
     }
 
+    get_user(conn, id)
+}
+
+fn update_user_sub(conn: &Connection, id: UserId, sub: &str) -> Result<User> {
+    let affected = conn.execute(
+        "UPDATE users SET sub = ?1 WHERE id = ?2",
+        rusqlite::params![sub, id],
+    )?;
+    if affected == 0 {
+        return Err(DomainError::UserNotFound.into());
+    }
     get_user(conn, id)
 }
 
@@ -2997,9 +3041,19 @@ impl UserRepository for SqliteBackend {
         blocking!(self, |conn: &Connection| get_user_by_sub(conn, &sub))
     }
 
+    async fn get_user_by_email(&self, email: &str) -> Result<User> {
+        let email = email.to_owned();
+        blocking!(self, |conn: &Connection| get_user_by_email(conn, &email))
+    }
+
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let params = params.clone();
         blocking!(self, |conn: &Connection| update_user(conn, id, &params))
+    }
+
+    async fn update_user_sub(&self, id: UserId, sub: &str) -> Result<User> {
+        let sub = sub.to_owned();
+        blocking!(self, |conn: &Connection| update_user_sub(conn, id, &sub))
     }
 
     async fn delete_user(&self, id: UserId) -> Result<()> {

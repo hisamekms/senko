@@ -13,7 +13,7 @@ use crate::application::port::TaskBackend;
 use crate::application::port::auth::{AuthError, AuthProvider, AuthResult};
 use crate::application::port::user_operations::UserOperations;
 use crate::domain::duration::parse_duration;
-use crate::domain::user::{CreateUserParams, UserCreationSource, hash_api_key};
+use crate::domain::user::{UserCreationSource, hash_api_key};
 use crate::infra::config::SessionConfig;
 
 fn constant_time_key_eq(a: &str, b: &str) -> bool {
@@ -371,46 +371,36 @@ impl AuthProvider for JwtAuthProvider {
                 .is_some_and(|arr| arr.iter().any(|v| v.as_str() == Some(group)))
         });
 
-        // Try to find existing user by sub; auto-create if not found (standard OIDC provisioning)
-        let user = match self.user_ops.get_user_by_sub(sub).await {
-            Ok(user) => user,
-            Err(_) => {
-                let display_name = token_data
-                    .claims
-                    .get("name")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                let email = token_data
-                    .claims
-                    .get("email")
-                    .and_then(|v| v.as_str())
-                    .map(String::from);
-                // Contract #8 Phase B3: replaced by `senko.user.created`
-                // (source=oidc_provisioning) emitted from `UserService::create_user`.
-                let username = crate::domain::user::Username::try_from(username.to_string())
-                    .map_err(|e| {
-                        tracing::debug!(error = %e, "invalid username from OIDC claims");
-                        AuthError::InvalidToken
-                    })?;
-                let (user, _events) = self
-                    .user_ops
-                    .create_user(
-                        &CreateUserParams {
-                            username,
-                            sub: Some(sub.to_string()),
-                            display_name,
-                            email,
-                        },
-                        UserCreationSource::OidcProvisioning,
-                    )
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(error = %e, "failed to auto-provision OIDC user");
-                        AuthError::InvalidToken
-                    })?;
-                user
-            }
-        };
+        // Find by sub, link a pre-registered user by username/email, or
+        // auto-create (standard OIDC provisioning). `get_or_create_user`
+        // emits `senko.user.created` (source=oidc_provisioning) on creation.
+        let display_name = token_data.claims.get("name").and_then(|v| v.as_str());
+        let email = token_data.claims.get("email").and_then(|v| v.as_str());
+        let username =
+            crate::domain::user::Username::try_from(username.to_string()).map_err(|e| {
+                tracing::debug!(error = %e, "invalid username from OIDC claims");
+                AuthError::InvalidToken
+            })?;
+        let (user, _events) = self
+            .user_ops
+            .get_or_create_user(
+                sub,
+                &username,
+                display_name,
+                email,
+                UserCreationSource::OidcProvisioning,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    sub,
+                    username = %username,
+                    email,
+                    "failed to auto-provision OIDC user",
+                );
+                AuthError::InvalidToken
+            })?;
 
         Ok(AuthResult { user, is_master })
     }
@@ -528,35 +518,33 @@ impl TrustedHeadersAuthProvider {
             })
             .unwrap_or_default();
 
-        let user = match self.user_ops.get_user_by_sub(sub).await {
-            Ok(user) => user,
-            Err(_) => {
-                // Contract #8 Phase B3: replaced by `senko.user.created`
-                // (source=trusted_headers_provisioning) emitted from
-                // `UserService::create_user`.
-                let username = crate::domain::user::Username::try_from(username).map_err(|e| {
-                    tracing::debug!(error = %e, "invalid username from trusted headers");
-                    AuthError::InvalidToken
-                })?;
-                let (user, _events) = self
-                    .user_ops
-                    .create_user(
-                        &CreateUserParams {
-                            username,
-                            sub: Some(sub.to_string()),
-                            display_name,
-                            email,
-                        },
-                        UserCreationSource::TrustedHeadersProvisioning,
-                    )
-                    .await
-                    .map_err(|e| {
-                        tracing::warn!(error = %e, "failed to auto-provision trusted-headers user");
-                        AuthError::InvalidToken
-                    })?;
-                user
-            }
-        };
+        // Find by sub, link a pre-registered user by username/email, or
+        // auto-create. `get_or_create_user` emits `senko.user.created`
+        // (source=trusted_headers_provisioning) on creation.
+        let username = crate::domain::user::Username::try_from(username).map_err(|e| {
+            tracing::debug!(error = %e, "invalid username from trusted headers");
+            AuthError::InvalidToken
+        })?;
+        let (user, _events) = self
+            .user_ops
+            .get_or_create_user(
+                sub,
+                &username,
+                display_name.as_deref(),
+                email.as_deref(),
+                UserCreationSource::TrustedHeadersProvisioning,
+            )
+            .await
+            .map_err(|e| {
+                tracing::warn!(
+                    error = %e,
+                    sub,
+                    username = %username,
+                    email,
+                    "failed to auto-provision trusted-headers user",
+                );
+                AuthError::InvalidToken
+            })?;
 
         let is_master = self
             .master_group
@@ -773,6 +761,50 @@ mod tests {
 
         let result = provider.authenticate_from_headers(&headers).await.unwrap();
         assert_eq!(result.user.username(), "existing");
+    }
+
+    /// A pre-registered user (username = email, sub defaulted to username by
+    /// `create_user`) must be linked to the IdP-issued sub on first login
+    /// instead of failing the INSERT on the username unique constraint.
+    #[tokio::test]
+    async fn trusted_headers_preregistered_user_with_different_sub_is_linked() {
+        let backend: Arc<dyn TaskBackend> = Arc::new(SqliteBackend::new_in_memory().unwrap());
+        let existing = backend
+            .create_user(&CreateUserParams {
+                username: Username("takuwa.kei@example.com".to_string()),
+                sub: None,
+                display_name: None,
+                email: Some("takuwa.kei@example.com".to_string()),
+            })
+            .await
+            .unwrap();
+        assert_eq!(existing.sub(), "takuwa.kei@example.com");
+
+        let provider = TrustedHeadersAuthProvider::new(
+            make_user_ops(backend),
+            "x-senko-user-sub".to_string(),
+            None,
+            None,
+            Some("x-senko-user-email".to_string()),
+            None,
+            None,
+            None,
+        );
+
+        let mut headers = axum::http::HeaderMap::new();
+        headers.insert(
+            "x-senko-user-sub",
+            "d784aaa8-90f1-70cf-2d76-7ab5785f4465".parse().unwrap(),
+        );
+        headers.insert(
+            "x-senko-user-email",
+            "takuwa.kei@example.com".parse().unwrap(),
+        );
+
+        let result = provider.authenticate_from_headers(&headers).await.unwrap();
+        assert_eq!(result.user.id(), existing.id());
+        assert_eq!(result.user.sub(), "d784aaa8-90f1-70cf-2d76-7ab5785f4465");
+        assert_eq!(result.user.username(), "takuwa.kei@example.com");
     }
 
     #[tokio::test]

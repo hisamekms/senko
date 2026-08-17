@@ -590,6 +590,45 @@ impl UserRepository for PostgresBackend {
         ))
     }
 
+    async fn get_user_by_email(&self, email: &str) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "SELECT id, username, sub, display_name, created_at FROM users WHERE email = $1",
+        )
+        .bind(email)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(DomainError::UserNotFound)?;
+        Ok(User::new(
+            row.get("id"),
+            row.get::<Username, _>("username"),
+            row.get("sub"),
+            row.get("display_name"),
+            Some(email.to_string()),
+            row.get("created_at"),
+        ))
+    }
+
+    async fn update_user_sub(&self, id: UserId, sub: &str) -> Result<User> {
+        let pool = self.pool().await?;
+        let row = sqlx::query(
+            "UPDATE users SET sub = $1 WHERE id = $2 RETURNING id, username, sub, display_name, email, created_at",
+        )
+        .bind(sub)
+        .bind(id)
+        .fetch_optional(pool)
+        .await?
+        .ok_or(DomainError::UserNotFound)?;
+        Ok(User::new(
+            row.get("id"),
+            row.get::<Username, _>("username"),
+            row.get("sub"),
+            row.get("display_name"),
+            row.get("email"),
+            row.get("created_at"),
+        ))
+    }
+
     async fn update_user(&self, id: UserId, params: &UpdateUserParams) -> Result<User> {
         let pool = self.pool().await?;
 
