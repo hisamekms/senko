@@ -58,7 +58,7 @@ jobs:
       - name: Build senko binary (with dev-tools)
         run: mise run build
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
